@@ -154,6 +154,73 @@ def sample_local(dir_path: Path):
     return sampler
 
 
+# ------------------------- pipeline views ---------------------------------- #
+
+class PipelineViewer:
+    """
+    For a sampled MIDI, show what the training pipeline would do with it:
+    clean.py's keep/drop verdict, token stats, a decoded round-trip (the exact
+    representation the model trains on: time grid, velocity bins, tempo
+    stripped), and one concrete augmentation draw (drum-aware pitch shift +
+    velocity jitter) — both as playable MIDIs.
+    """
+
+    def __init__(self):
+        import numpy as np
+        from v2.data.augment import TokenAugmenter
+        from v2.tokenizer_v2 import build_tokenizer
+        self.np = np
+        self.tokenizer = build_tokenizer()
+        self.augmenter = TokenAugmenter(self.tokenizer)
+        self.rng = np.random.default_rng()
+        self.inv_vocab = {v: k for k, v in self.tokenizer.vocab.items()}
+
+    def views(self, midi_path: Path, out_dir: Path, ds_name: str) -> dict:
+        from v2.data.clean import inspect
+        out: dict = {}
+        stats, verdict = inspect(midi_path)
+        out["clean_verdict"] = "kept" if stats else f"DROPPED: {verdict}"
+
+        try:
+            ids = self.tokenizer(midi_path).ids
+        except Exception as e:
+            out["tokenize_error"] = type(e).__name__
+            return out
+
+        n_notes = sum(1 for i in ids
+                      if self.inv_vocab.get(i, "").startswith("NoteOn_"))
+        out["n_tokens"] = len(ids)
+        out["tokens_per_note"] = round(len(ids) / max(n_notes, 1), 2)
+        out["token_preview"] = " ".join(
+            self.inv_vocab.get(i, f"?{i}") for i in ids[:24])
+
+        stem = midi_path.stem
+        try:
+            self.tokenizer.decode(list(ids)).dump_midi(
+                out_dir / f"{stem}__proc.mid")
+            out["processed_url"] = f"/midi/{ds_name}/{stem}__proc.mid"
+        except Exception as e:
+            out["decode_error"] = type(e).__name__
+
+        try:
+            seq = self.np.asarray(ids, dtype=self.np.int64)
+            shift = int(self.rng.integers(-6, 7)) or 3
+            jitter = int(self.rng.integers(-1, 2))
+            aug = seq
+            if shift:
+                shifted = self.augmenter.pitch_tables[shift][seq]
+                aug = self.np.where(
+                    self.augmenter._drum_positions(seq), seq, shifted)
+            aug = self.augmenter.velocity_tables[jitter][aug]
+            self.tokenizer.decode([int(t) for t in aug]).dump_midi(
+                out_dir / f"{stem}__aug.mid")
+            out["augmented_url"] = f"/midi/{ds_name}/{stem}__aug.mid"
+            out["augmentation"] = f"pitch {shift:+d} semitones, velocity {jitter:+d} bin"
+        except Exception as e:
+            out["augment_error"] = type(e).__name__
+        return out
+
+
 # ------------------------------- app -------------------------------------- #
 
 def build_app(repo_root: Path) -> Flask:
@@ -175,6 +242,7 @@ def build_app(repo_root: Path) -> Flask:
     app = Flask(__name__,
                 template_folder=str(Path(__file__).parent.parent / "templates"))
     rng = random.Random()
+    viewer = PipelineViewer()
 
     @app.route("/")
     def index():
@@ -204,6 +272,8 @@ def build_app(repo_root: Path) -> Flask:
                 if it["file"]:
                     row["stats"] = note_stats(ds_dir / it["file"])
                     row["url"] = f"/midi/{ds_dir.name}/{it['file']}"
+                    row["pipeline"] = viewer.views(
+                        ds_dir / it["file"], ds_dir, ds_dir.name)
                 f.write(json.dumps(row) + "\n")
                 rows.append(row)
         return jsonify({"dataset": ds, "rows": rows})

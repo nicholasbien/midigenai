@@ -21,6 +21,10 @@
   .meta b { color: #333; font-weight: 600; }
   .stats span { display: inline-block; margin-right: 10px; color: #444; }
   .note { color: #888; font-size: 12px; margin-top: 6px; }
+  .kept { color: #047857; font-weight: 600; font-size: 12px; }
+  .dropped { color: #b91c1c; font-weight: 600; font-size: 12px; }
+  .tokens { font-family: ui-monospace, monospace; font-size: 10px; color: #777;
+            margin-top: 6px; max-width: 340px; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -36,6 +40,8 @@
   <div id="results"></div>
 
 <script>
+let reqSeq = 0;
+
 async function init() {
   const res = await fetch('/api/datasets');
   const d = await res.json();
@@ -44,6 +50,13 @@ async function init() {
     const o = document.createElement('option');
     o.value = o.textContent = name;
     sel.appendChild(o);
+  });
+  sel.addEventListener('change', () => {
+    reqSeq++;  // invalidate any in-flight request for the old dataset
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('err').textContent = '';
+    document.getElementById('status').textContent = `ready to sample ${sel.value}`;
+    document.getElementById('go').disabled = false;
   });
 }
 
@@ -54,20 +67,23 @@ async function sample() {
   const status = document.getElementById('status');
   document.getElementById('err').textContent = '';
   go.disabled = true;
+  const myReq = ++reqSeq;
   status.textContent = `sampling ${ds}… (remote sources can take ~30–90s)`;
   try {
     const res = await fetch('/api/sample', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dataset: ds, n: +n }) });
     const data = await res.json();
+    if (myReq !== reqSeq) return;  // user switched dataset while sampling
     if (!res.ok) throw new Error(data.error || res.statusText);
     render(data);
     status.textContent = `${data.rows.length} samples from ${ds}`;
   } catch (e) {
+    if (myReq !== reqSeq) return;
     document.getElementById('err').textContent = e.message;
     status.textContent = '';
   } finally {
-    go.disabled = false;
+    if (myReq === reqSeq) go.disabled = false;
   }
 }
 
@@ -78,15 +94,28 @@ function render(data) {
     const stats = r.stats ? Object.entries(r.stats)
       .map(([k, v]) => `<span><b>${k}</b> ${v}</span>`).join('') : '';
     const player = r.url ? `<midi-player src="${r.url}" sound-font></midi-player>` : '<i>no MIDI bytes</i>';
+    const pl = r.pipeline || {};
+    const verdict = pl.clean_verdict
+      ? `<span class="${pl.clean_verdict === 'kept' ? 'kept' : 'dropped'}">${pl.clean_verdict}</span>` : '';
+    const tokStats = pl.n_tokens
+      ? `<span><b>tokens</b> ${pl.n_tokens}</span><span><b>tok/note</b> ${pl.tokens_per_note}</span>` : '';
+    const procPlayer = pl.processed_url
+      ? `<div class="note">processed (training representation)</div><midi-player src="${pl.processed_url}" sound-font></midi-player>` : '';
+    const augPlayer = pl.augmented_url
+      ? `<div class="note">augmented: ${pl.augmentation}</div><midi-player src="${pl.augmented_url}" sound-font></midi-player>` : '';
+    const errs = ['tokenize_error','decode_error','augment_error']
+      .filter(k => pl[k]).map(k => `<div class="dropped">${k}: ${pl[k]}</div>`).join('');
+    const tokens = pl.token_preview ? `<div class="tokens">${pl.token_preview} …</div>` : '';
     return `<tr>
       <td>${player}<div class="note">${r.file || ''}</div></td>
       <td class="stats">${stats}</td>
+      <td>${verdict}<div class="stats">${tokStats}</div>${procPlayer}${augPlayer}${errs}${tokens}</td>
       <td class="meta">${meta}</td>
     </tr>`;
   }).join('');
   document.getElementById('results').innerHTML = `
     <table>
-      <thead><tr><th>listen</th><th>note stats</th><th>source metadata</th></tr></thead>
+      <thead><tr><th>listen (raw)</th><th>note stats</th><th>after pipeline + augmentation</th><th>source metadata</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 }
