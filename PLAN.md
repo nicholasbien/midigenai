@@ -131,6 +131,15 @@ accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
 
+- 2026-08-30 (later): NLL scoring RETIRED as a quality signal — both tails
+  human-audited: high-NLL files sound fine (unfamiliarity, not corruption)
+  and low-NLL files are just more repetitive (predictability, not quality).
+  Quality signal comes instead from: source-level curation via mixture
+  weights, GigaMIDI expressiveness/genre metadata (future conditioning or
+  weighting), and human preference labels. Open question for pilot scale:
+  whether long repetitive files are over-weighted by token-uniform sampling
+  (candidate remedy: repetition_rate-aware downweighting or a per-doc
+  sampling cap — NOT truncation, which would corrupt EOS semantics).
 - 2026-08-30 (late): DECISION — no NLL junk filter. Human audit of the
   worst-scored tail (500-file scoring under v2-100m, median 0.68, p99 2.13)
   found the high-NLL files sound completely fine: the scorer flags
