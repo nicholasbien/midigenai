@@ -29,7 +29,7 @@ from modal import Image, Volume
 CORPUS_VOLUME_NAME = "openmusenet2-v2-corpus"
 RUNS_VOLUME_NAME = "openmusenet2-v2-runs"
 
-app = modal.App("openmusenet2-train")
+app = modal.App("midigenai-train")
 
 corpus_volume = Volume.from_name(CORPUS_VOLUME_NAME, create_if_missing=True)
 runs_volume = Volume.from_name(RUNS_VOLUME_NAME, create_if_missing=True)

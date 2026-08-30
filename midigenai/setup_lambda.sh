@@ -8,17 +8,17 @@
 #   cd midigenai && bash midigenai/setup_lambda.sh
 #
 # Defaults:
-#   - clones repo to ~/openmusenet
+#   - clones repo to ~/midigenai
 #   - downloads Lakh + MAESTRO + POP909 + GiantMIDI into ~/data/raw
 #   - cleans, tokenizes, shards into ~/data/v2_corpus
 #   - kicks off pilot training to ~/runs/pilot
 #
 # Override with env vars:
-#   REPO_DIR=/workspace/openmusenet  DATASETS="lakh maestro" SIZE=production bash setup_lambda.sh
+#   REPO_DIR=/workspace/midigenai  DATASETS="lakh maestro" SIZE=production bash setup_lambda.sh
 
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-$HOME/openmusenet}"
+REPO_DIR="${REPO_DIR:-$HOME/midigenai}"
 DATA_ROOT="${DATA_ROOT:-$HOME/data}"
 RUNS_DIR="${RUNS_DIR:-$HOME/runs}"
 DATASETS="${DATASETS:-lakh maestro pop909 giantmidi}"
@@ -35,7 +35,7 @@ python3 --version
 
 echo "==> ensure repo at $REPO_DIR"
 if [ ! -d "$REPO_DIR" ]; then
-  git clone -b "$BRANCH" https://github.com/nicholasbien/openmusenet.git "$REPO_DIR"
+  git clone -b "$BRANCH" https://github.com/nicholasbien/midigenai.git "$REPO_DIR"
 elif [ -d "$REPO_DIR/.git" ]; then
   cd "$REPO_DIR" && git fetch origin "$BRANCH" && git checkout "$BRANCH" && git pull
 else

@@ -38,7 +38,7 @@ def _request(method: str, path: str, api_key: str, body: dict | None = None) -> 
     headers = {
         "Content-Type": "application/json",
         # Cloudflare blocks the default Python-urllib user-agent — masquerade as a normal client.
-        "User-Agent": "openmusenet-v2/0.1 (curl-equivalent)",
+        "User-Agent": "midigenai/0.1 (curl-equivalent)",
         "Accept": "application/json",
         **_auth_header(api_key),
     }
@@ -157,7 +157,7 @@ def main():
                     help="e.g. gpu_1x_h100_pcie or gpu_1x_a100")
     pl.add_argument("--region", required=True, help="e.g. us-west-1")
     pl.add_argument("--ssh-key", required=True, help="name of an SSH key in your account")
-    pl.add_argument("--name", default="openmusenet-v2", help="instance name tag")
+    pl.add_argument("--name", default="midigenai", help="instance name tag")
     pl.set_defaults(func=launch)
 
     pw = sub.add_parser("wait")
