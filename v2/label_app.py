@@ -99,15 +99,28 @@ class PairFactory:
         gen_kwargs = dict(max_new_tokens=args.max_new_tokens,
                           temperature=args.temperature, top_k=args.top_k)
 
+        from symusic import Tempo
+
         prompt_path = self.pairs_dir / f"{pair_id}_prompt.mid"
-        score = self.gen_a.tokenizer.decode(list(prompt_ids))
-        score.dump_midi(prompt_path)
+        prompt_score = self.gen_a.tokenizer.decode(list(prompt_ids))
+        prompt_score.tempos = [Tempo(time=0, qpm=tempo)]
+        prompt_score.dump_midi(prompt_path)
+        cut_tick = prompt_score.end()
 
         conts = {}
         for name, gen in (("a", self.gen_a), ("b", self.gen_b)):
-            out_path = self.pairs_dir / f"{pair_id}_{name}.mid"
-            conts[name] = gen.generate_to_midi(prompt_ids, out_path,
-                                               tempo_bpm=tempo, **gen_kwargs)
+            new_ids = list(gen.generate_ids(prompt_ids, **gen_kwargs))
+            conts[name] = new_ids
+            # Decode with full prompt context (programs, ringing notes), then
+            # trim to the continuation only: shorter files review much faster.
+            full = gen.tokenizer.decode(list(prompt_ids) + new_ids)
+            for track in full.tracks:
+                kept = [n for n in track.notes if n.start >= cut_tick]
+                for n in kept:
+                    n.start -= cut_tick
+                track.notes = kept
+            full.tempos = [Tempo(time=0, qpm=tempo)]
+            full.dump_midi(self.pairs_dir / f"{pair_id}_{name}.mid")
 
         meta = {
             "pair_id": pair_id,

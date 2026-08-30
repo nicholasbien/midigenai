@@ -6,13 +6,14 @@ the next stage (build_dataset.py) reads paths from the manifest.
 
 Filters:
 - file opens with symusic (drops corrupt MIDIs)
-- >= MIN_NOTES total notes, >= MIN_PITCHED_NOTES non-drum notes (drops
-  drum-only files: nothing melodic to learn)
+- >= MIN_NOTES total notes (drum-only files are KEPT: the model is general
+  and should learn drum tracks too)
 - <= MAX_DURATION_SECONDS (drops corrupt long-tail)
 - note density within [MIN_DENSITY_HZ, MAX_DENSITY_HZ] (drops near-empty
   files and broken-quantization note walls)
 - max internal silence <= MAX_GAP_SECONDS (drops files that are mostly gap)
-- >= MIN_DISTINCT_PITCHES distinct non-drum pitches (drops single-note spam)
+- pitched material spanning < MIN_DISTINCT_PITCHES distinct pitches with no
+  drums is dropped as single-note spam (metronomes, stuck-note exports)
 - exact-duplicate dedup via SHA1 of (pitch, start_tick, duration_tick) tuples
 
 Near-duplicate dedup is a separate pass: see v2/data/dedup.py.
@@ -29,8 +30,7 @@ from tqdm import tqdm
 
 MIN_NOTES = 32
 MAX_DURATION_SECONDS = 60 * 30  # 30 min — anything longer is almost certainly broken
-MIN_PITCHED_NOTES = 16          # non-drum notes; below this it's a drum loop
-MIN_DISTINCT_PITCHES = 4        # non-drum; below this it's single-note spam
+MIN_DISTINCT_PITCHES = 2        # pitched-only files below this are spam
 MIN_DENSITY_HZ = 0.3            # notes/sec; below: near-empty
 MAX_DENSITY_HZ = 80.0           # notes/sec; above: broken quantization
 MAX_GAP_SECONDS = 30.0          # longest silence between note onsets
@@ -100,9 +100,8 @@ def inspect(path: Path) -> tuple[FileStats | None, str]:
             return None, "too_few_notes"
         if duration_seconds > MAX_DURATION_SECONDS:
             return None, "too_long"
-        if n_pitched < MIN_PITCHED_NOTES:
-            return None, "drum_only"
-        if len(pitched_pitches) < MIN_DISTINCT_PITCHES:
+        n_drum = n_notes - n_pitched
+        if n_drum == 0 and len(pitched_pitches) < MIN_DISTINCT_PITCHES:
             return None, "single_pitch_spam"
         density = n_notes / duration_seconds if duration_seconds > 0 else float("inf")
         if density < MIN_DENSITY_HZ:

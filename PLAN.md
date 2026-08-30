@@ -54,9 +54,9 @@ we scale to 202M.
 
 ### 3. More data
 
-- [ ] GigaMIDI (~1.4M files, 2025, largest open MIDI corpus; includes
-      expressiveness annotations usable as quality signal)
-- [ ] Aria-MIDI (~1.2M piano transcriptions, high quality)
+- [x] GigaMIDI fetcher (`--datasets gigamidi`; gated auto-approve — accept terms
+      once at huggingface.co/datasets/Metacreation/GigaMIDI); ingestion pending
+- [x] Aria-MIDI fetcher (`--datasets aria`, pre-deduped 2GB variant); ingestion pending
 - [ ] MetaMIDI / MMD (~436k) and PDMX (~250k public domain)
 - [ ] All new sources go through clean + near-dup dedup against existing corpus
 - [ ] Later: own audio→MIDI transcription pipeline (unbounded data; heavy lift)
@@ -130,6 +130,19 @@ Lakh validation picks). Sessions:
 accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
+
+- 2026-08-30 (later still): Model scope decision: GENERAL — drums, mono, poly,
+  chords all in scope. clean.py drum-only filter removed (drum files stay in
+  training); culled drum prompts restored to evals/prompts. Workstream 3:
+  verified sources + fetchers for GigaMIDI V2 (5.5GB zip, gated auto-approve)
+  and Aria-MIDI (2GB pre-deduped tarball); PDMX deferred (MusicXML conversion).
+  New v2/data/explore_app.py (port 7790): browser sampler for candidate
+  corpora — GigaMIDI via parquet row-group range-reads, Aria/Lakh via
+  streaming-tar sampling, playback + metadata + note stats per file. Labeling
+  UX: continuation-only playback (decode with prompt context, trim at the
+  boundary) — much faster to review; also purifies reward metrics. Parallel
+  session's PR #13 renames v2/ -> midigenai/; plan is to merge this PR (#11)
+  first, then the rename stack resolves via git rename tracking.
 
 - 2026-08-30 (later): Workstream 2 core landed: v2/data/dedup.py (MinHash/LSH
   over pitch-interval 6-grams, transposition/velocity/quantization-invariant;
