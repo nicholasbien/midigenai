@@ -25,9 +25,10 @@ def _auto_device() -> torch.device:
     """
     Pick an inference device.
 
-    For our small 25M model with many tiny ops (RoPE rotate, RMSNorm), MPS kernel
-    dispatch overhead dominates and CPU is actually ~1.6x faster on M-series Macs
-    (CPU 278 t/s vs MPS 172 t/s, measured 2026-05-03). So skip MPS by default.
+    Even at 100M params, batch-1 decode does too little work per step for MPS:
+    kernel dispatch overhead dominates and CPU is ~3x faster on M-series Macs
+    (v2-100m fp32: CPU 146 t/s vs MPS 47 t/s, measured 2026-08-30 on M3 Max).
+    So skip MPS by default.
     Override with OMN_USE_MPS=1 if you have a larger model where MPS pays off.
     """
     import os
@@ -54,8 +55,20 @@ class V2Generator:
         tokenizer_path: str | Path | None = None,
         device: torch.device | None = None,
         inference_seq_len: int = 8192,
+        dtype: torch.dtype | str = torch.float16,
     ):
+        """
+        `dtype`: inference precision. fp16 decodes ~1.65x faster than fp32 on
+        CPU (243 vs 148 t/s for v2-100m on M3 Max) and nearly eliminates the
+        long-context slowdown (141 vs 78 t/s at ~1500-token context), since the
+        per-step KV-cache concat moves half the bytes. RMSNorm and sampling
+        logits are computed in fp32 internally regardless. Pass torch.float32
+        to exactly reproduce pre-fp16 outputs.
+        """
         self.device = device or _auto_device()
+        if isinstance(dtype, str):
+            dtype = getattr(torch, dtype)
+        self.dtype = dtype
         ckpt = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
         cfg_dict = ckpt["model_config"]
         cfg = ModelConfig(**cfg_dict)
@@ -63,6 +76,7 @@ class V2Generator:
         cfg.max_seq_len = max(cfg.max_seq_len, inference_seq_len)
         self.model = MusicTransformer(cfg).to(self.device).eval()
         self.model.load_state_dict(ckpt["model"])
+        self.model = self.model.to(self.dtype)
 
         self.tokenizer = (
             load_tokenizer(tokenizer_path) if tokenizer_path else build_tokenizer()
@@ -205,9 +219,12 @@ if __name__ == "__main__":
     parser.add_argument("--top-k", type=int, default=50)
     parser.add_argument("--tempo-bpm", type=float, default=None,
                         help="output tempo; defaults to input MIDI's tempo")
+    parser.add_argument("--dtype", default="float16",
+                        choices=["float16", "bfloat16", "float32"],
+                        help="inference precision (float16 is ~1.65x faster on CPU)")
     args = parser.parse_args()
 
-    g = V2Generator(args.checkpoint, args.tokenizer)
+    g = V2Generator(args.checkpoint, args.tokenizer, dtype=args.dtype)
     prompt = g.encode_midi_file(args.input_midi)
     tempo = args.tempo_bpm if args.tempo_bpm else g.detect_tempo(args.input_midi)
     new_ids = g.generate_to_midi(
