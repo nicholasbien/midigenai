@@ -181,16 +181,18 @@ def download_gigamidi(root: Path) -> Path:
 
 def download_aria(root: Path) -> Path:
     """
-    Aria-MIDI — ~1M solo-piano performance transcriptions. We take the
-    *deduped* variant (2 GB tar.gz); our own near-dup pass still runs after,
-    to catch overlap with the other corpora. Ungated.
+    Aria-MIDI — solo-piano performance transcriptions. We take the *pruned*
+    variant (820,944 files, 5.4 GB tar.gz): the authors recommend it for
+    generative-model pre-training (light filters, dedup cap of 10 per piece).
+    Our own clean + near-dup passes still run after, and catch overlap with
+    the other corpora. Ungated.
     """
     target = _ensure_dir(root / "aria")
     if (target / "extracted").exists():
         print("[skip] aria already extracted")
         return target
     archive = _hf_download_archive(
-        "loubb/aria-midi", "aria-midi-v1-deduped-ext.tar.gz", target)
+        "loubb/aria-midi", "aria-midi-v1-pruned-ext.tar.gz", target)
     _extract(archive, target / "extracted")
     return target
 

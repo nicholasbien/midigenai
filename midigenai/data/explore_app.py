@@ -228,6 +228,38 @@ class PipelineViewer:
         return out
 
 
+# ------------------------------ sizes -------------------------------------- #
+
+# Verified corpus sizes. file counts read from parquet footers / dataset cards
+# on 2026-08-30; token estimates use the v2 corpus average (~19.6k tokens/file,
+# from ~8B tokens over ~408k files) except where a sampled average exists.
+SIZE_REGISTRY = [
+    {"name": "lakh", "files": 178_561, "size_gb": 1.7,
+     "status": "in current corpus", "note": "LMD-full; heavy overlap with LAMD"},
+    {"name": "maestro", "files": 1_276, "size_gb": 0.06,
+     "status": "in current corpus", "note": "expressive piano, 200h"},
+    {"name": "pop909", "files": 909, "size_gb": 0.02,
+     "status": "in current corpus", "note": "pop melody/chord/accomp"},
+    {"name": "giantmidi", "files": 10_855, "size_gb": 0.2,
+     "status": "in current corpus", "note": "classical piano transcriptions"},
+    {"name": "lamd", "files": 404_998, "size_gb": 9.2,
+     "status": "in current corpus", "note": "~408k total post-dedup with the "
+     "above -> ~8B training tokens (v2-100m corpus)"},
+    {"name": "gigamidi (all-instr+drums)", "files": 305_795, "size_gb": None,
+     "status": "fetcher ready", "note": "multi-instrument songs w/ drums",
+     "sample_key": "gigamidi"},
+    {"name": "gigamidi (no-drums)", "files": 317_602, "size_gb": None,
+     "status": "fetcher ready", "note": "melodic-only songs"},
+    {"name": "gigamidi (drums-only)", "files": 813_907, "size_gb": None,
+     "status": "fetcher ready", "note": "drum loops; 57% of GigaMIDI - cap "
+     "its mixture weight so drums don't dominate", "sample_key": "gigamidi-drums"},
+    {"name": "aria (pruned)", "files": 820_944, "size_gb": 5.4,
+     "status": "fetcher ready", "note": "solo piano; authors recommend this "
+     "subset for generative pre-training"},
+]
+AVG_TOKENS_PER_FILE = 8_000_000_000 / 408_000  # v2 corpus measurement
+
+
 # ------------------------------- app -------------------------------------- #
 
 def build_app(repo_root: Path) -> Flask:
@@ -258,6 +290,37 @@ def build_app(repo_root: Path) -> Flask:
     @app.route("/api/datasets")
     def datasets():
         return jsonify({"datasets": sorted(samplers)})
+
+    @app.route("/api/sizes")
+    def sizes():
+        # measured average tokens/file from whatever has been sampled so far
+        measured: dict[str, tuple[int, int]] = {}
+        for meta in samples_root.glob("*/meta.jsonl"):
+            n = tok_sum = 0
+            for line in meta.open():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                t = (row.get("pipeline") or {}).get("n_tokens")
+                if t:
+                    n += 1
+                    tok_sum += t
+            if n:
+                measured[meta.parent.name] = (n, tok_sum // n)
+        rows = []
+        for r in SIZE_REGISTRY:
+            r = dict(r)
+            key = r.pop("sample_key", r["name"].split(" ")[0])
+            m = measured.get(key) or measured.get(r["name"])
+            if m:
+                r["sampled_files"], r["avg_tokens_sampled"] = m
+                r["est_tokens"] = r["files"] * m[1]
+            else:
+                r["est_tokens"] = int(r["files"] * AVG_TOKENS_PER_FILE)
+                r["est_note"] = "corpus-average estimate"
+            rows.append(r)
+        return jsonify({"rows": rows})
 
     @app.route("/api/sample", methods=["POST"])
     def sample():
