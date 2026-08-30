@@ -387,12 +387,25 @@ def build_app(repo_root: Path) -> Flask:
     if prompts_dir.exists():
         samplers["prompts (local)"] = sample_local(prompts_dir)
 
+    # Every built corpus under the data root gets its own training-window
+    # view; discovered per request so a corpus appears as soon as its first
+    # shards land (mid-build sampling just sees the shards written so far).
     import os
-    corpus_dir = Path(os.environ.get(
-        "MIDIGENAI_CORPUS", str(Path.home() / "midigenai_data" / "corpus_pilot")))
-    window_sampler = TrainingWindowSampler(corpus_dir)
-    samplers["training windows (corpus)"] = \
-        lambda d, n, r: window_sampler.sample(d, n, r)
+    data_root = Path(os.environ.get(
+        "MIDIGENAI_DATA", str(Path.home() / "midigenai_data")))
+    corpus_samplers: dict[str, TrainingWindowSampler] = {}
+
+    def discover_corpora() -> dict[str, TrainingWindowSampler]:
+        for d in sorted(data_root.glob("corpus_*")):
+            if (d / "shards").is_dir() and any((d / "shards").glob("train_*.npy")):
+                name = f"training windows ({d.name})"
+                if name not in corpus_samplers:
+                    corpus_samplers[name] = TrainingWindowSampler(d)
+        return corpus_samplers
+
+    def all_samplers():
+        return {**samplers,
+                **{name: ws.sample for name, ws in discover_corpora().items()}}
 
     app = Flask(__name__,
                 template_folder=str(Path(__file__).parent.parent / "templates"))
@@ -405,15 +418,20 @@ def build_app(repo_root: Path) -> Flask:
 
     @app.route("/api/datasets")
     def datasets():
-        return jsonify({"datasets": sorted(samplers)})
+        return jsonify({"datasets": sorted(all_samplers())})
 
     @app.route("/api/mixture")
     def mixture():
-        try:
-            rows = window_sampler.mixture()
-        except Exception as e:
-            return jsonify({"error": str(e)}), 503
-        return jsonify({"rows": rows, "corpus": str(corpus_dir)})
+        corpora = []
+        for name, ws in discover_corpora().items():
+            try:
+                corpora.append({"corpus": ws.corpus_dir.name,
+                                "rows": ws.mixture()})
+            except Exception as e:
+                corpora.append({"corpus": ws.corpus_dir.name, "error": str(e)})
+        if not corpora:
+            return jsonify({"error": "no built corpus found yet"}), 503
+        return jsonify({"corpora": corpora})
 
     @app.route("/api/sizes")
     def sizes():
@@ -451,12 +469,13 @@ def build_app(repo_root: Path) -> Flask:
         data = request.get_json(force=True)
         ds = data.get("dataset")
         n = min(int(data.get("n", 8)), 25)
-        if ds not in samplers:
+        active = all_samplers()
+        if ds not in active:
             return jsonify({"error": f"unknown dataset {ds!r}"}), 400
         ds_dir = samples_root / ds.replace(" ", "_").replace("(", "").replace(")", "")
         ds_dir.mkdir(parents=True, exist_ok=True)
         try:
-            items = samplers[ds](ds_dir, n, rng)
+            items = active[ds](ds_dir, n, rng)
         except Exception as e:
             return jsonify({"error": str(e)}), 502
         rows = []

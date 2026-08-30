@@ -158,14 +158,18 @@ async function loadMixture() {
     const res = await fetch('/api/mixture');
     const d = await res.json();
     if (!res.ok) { el.textContent = d.error; return; }
-    const tot = d.rows.reduce((a, r) => a + r.tokens, 0);
-    el.innerHTML = `<table><thead><tr><th>source</th><th style="text-align:right">tokens</th>
-      <th style="text-align:right">share of corpus</th><th style="text-align:right">sampling probability</th></tr></thead><tbody>` +
-      d.rows.map(r => `<tr><td>${r.tag}</td>
-        <td style="text-align:right">${(r.tokens/1e6).toFixed(0)}M</td>
-        <td style="text-align:right">${(100*r.tokens/tot).toFixed(1)}%</td>
-        <td style="text-align:right">${(100*r.prob).toFixed(1)}%</td></tr>`).join('') +
-      `</tbody></table><div class="note">${d.corpus} — sampling probability equals token share unless --mixture weights are set. Pick "training windows (corpus)" above to hear actual training windows (augmented, doc-start-anchored 20% of the time).</div>`;
+    el.innerHTML = d.corpora.map(c => {
+      if (c.error) return `<div class="note">${c.corpus}: ${c.error}</div>`;
+      const tot = c.rows.reduce((a, r) => a + r.tokens, 0);
+      return `<div style="margin-bottom:10px"><b style="font-size:12px">${c.corpus}</b> — ${(tot/1e9).toFixed(2)}B tokens
+        <table><thead><tr><th>source</th><th style="text-align:right">tokens</th>
+        <th style="text-align:right">share</th><th style="text-align:right">sampling prob</th></tr></thead><tbody>` +
+        c.rows.map(r => `<tr><td>${r.tag}</td>
+          <td style="text-align:right">${(r.tokens/1e6).toFixed(0)}M</td>
+          <td style="text-align:right">${(100*r.tokens/tot).toFixed(1)}%</td>
+          <td style="text-align:right">${(100*r.prob).toFixed(1)}%</td></tr>`).join('') +
+        `</tbody></table></div>`;
+    }).join('') + `<div class="note">sampling prob equals token share unless --mixture weights are set. Pick a "training windows (…)" dataset above to hear actual training windows.</div>`;
   } catch (e) { el.textContent = 'corpus not built yet'; }
 }
 
