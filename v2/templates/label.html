@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>midigenai — preference labeling</title>
+<script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js,npm/focus-visible@5,npm/html-midi-player@1.5.0"></script>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 20px; margin-bottom: 2px; }
+  .sub { color: #666; font-size: 13px; margin-bottom: 16px; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; background: #fafafa; }
+  .prompt { margin-bottom: 12px; }
+  .prompt h3, .opt h3 { margin: 0 0 6px 0; font-size: 13px; color: #555; font-weight: 600; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .opt { background: white; border: 2px solid #ddd; border-radius: 6px; padding: 12px; }
+  .opt.chosen { border-color: #4f46e5; }
+  midi-player { width: 100%; }
+  .buttons { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+  button { padding: 9px 14px; border: 1px solid #ccc; background: white; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #f0f0f0; }
+  kbd { background: #eee; border-radius: 3px; padding: 1px 5px; font-size: 11px; margin-left: 6px; }
+  .statusbar { display: flex; justify-content: space-between; font-size: 13px; color: #444; margin: 10px 0; }
+  .waiting { text-align: center; color: #888; padding: 40px 0; font-size: 14px; }
+  .flash { animation: flash 0.4s; }
+  @keyframes flash { 0% { background: #ecfdf5; } 100% { background: #fafafa; } }
+</style>
+</head>
+<body>
+  <h1>midigenai — preference labeling</h1>
+  <div class="sub">Listen to the prompt, then both continuations. Pick the better one.
+    <kbd>1</kbd> left &nbsp;<kbd>2</kbd> right &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip</div>
+  <div class="statusbar"><span id="count">0 labeled this session</span><span id="queue"></span></div>
+  <div id="stage" class="card"><div class="waiting">warming up the model…</div></div>
+
+<script>
+const SESSION_ID = crypto.randomUUID();
+let current = null;
+let sessionCount = 0;
+let totalCount = 0;
+
+async function fetchStats() {
+  try {
+    const s = await (await fetch('/api/stats')).json();
+    totalCount = s.total_labels;
+    updateCount();
+  } catch (e) {}
+}
+
+function updateCount() {
+  document.getElementById('count').textContent =
+    `${sessionCount} labeled this session · ${totalCount} total on disk`;
+}
+
+async function loadNext() {
+  current = null;
+  const stage = document.getElementById('stage');
+  stage.innerHTML = '<div class="waiting">generating next pair…</div>';
+  while (true) {
+    let res;
+    try { res = await fetch('/api/next'); }
+    catch (e) { await new Promise(r => setTimeout(r, 1500)); continue; }
+    if (res.status === 202) continue;   // still generating; server long-polls
+    const data = await res.json();
+    if (data.status === 'ok') {
+      current = data.pair;
+      document.getElementById('queue').textContent = `${data.queued} queued`;
+      render();
+      return;
+    }
+  }
+}
+
+function render() {
+  const p = current;
+  const stage = document.getElementById('stage');
+  const cross = p.left_model !== p.right_model;
+  stage.classList.add('flash');
+  setTimeout(() => stage.classList.remove('flash'), 400);
+  stage.innerHTML = `
+    <div class="prompt">
+      <h3>Prompt</h3>
+      <midi-player src="${p.prompt_url}" sound-font></midi-player>
+    </div>
+    <div class="row">
+      <div class="opt" id="opt-left">
+        <h3>Continuation 1</h3>
+        <midi-player src="${p.left_url}" sound-font></midi-player>
+      </div>
+      <div class="opt" id="opt-right">
+        <h3>Continuation 2</h3>
+        <midi-player src="${p.right_url}" sound-font></midi-player>
+      </div>
+    </div>
+    <div class="buttons">
+      <button onclick="vote('left')">1 is better<kbd>1</kbd></button>
+      <button onclick="vote('right')">2 is better<kbd>2</kbd></button>
+      <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
+      <button onclick="vote('bad')">Both bad<kbd>x</kbd></button>
+      <button onclick="vote('skip')">Skip<kbd>s</kbd></button>
+    </div>
+    ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
+  `;
+}
+
+async function vote(choice) {
+  if (!current) return;
+  const p = current;
+  if (choice === 'left' || choice === 'right') {
+    document.getElementById('opt-' + choice).classList.add('chosen');
+  }
+  const body = {
+    session_id: SESSION_ID,
+    pair_id: p.pair_id,
+    choice,
+    left_is: p.left_is, right_is: p.right_is,
+    left_model: p.left_model, right_model: p.right_model,
+  };
+  try {
+    await fetch('/api/vote', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body) });
+    if (choice !== 'skip') { sessionCount++; totalCount++; updateCount(); }
+  } catch (e) {
+    alert('failed to record vote: ' + e.message);
+    return;
+  }
+  loadNext();
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip' };
+  if (map[e.key]) { e.preventDefault(); vote(map[e.key]); }
+});
+
+fetchStats();
+loadNext();
+</script>
+</body>
+</html>
