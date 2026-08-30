@@ -61,7 +61,7 @@ class V2Generator:
         """
         `backend`: "mlx", "torch", or "auto" (default). On Apple silicon with
         mlx installed, auto picks MLX — it runs the GPU without PyTorch MPS's
-        per-op dispatch overhead: 577 t/s decode vs 267 on CPU fp16, and 50 ms
+        per-op dispatch overhead: 819 t/s decode vs 267 on CPU fp16, and 50 ms
         TTFT vs ~2 s at 2048-token prompts (v2-100m, M3 Max). Outputs are
         token-identical to the torch backend under greedy decoding. Everywhere
         else auto falls back to torch.
@@ -86,24 +86,26 @@ class V2Generator:
         if isinstance(dtype, str):
             dtype = getattr(torch, dtype)
         self.dtype = dtype
-        ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        cfg_dict = ckpt["model_config"]
-        cfg = ModelConfig(**cfg_dict)
-        # RoPE extrapolates, so we can serve at longer context than training without retraining.
-        cfg.max_seq_len = max(cfg.max_seq_len, inference_seq_len)
 
         if backend == "mlx":
             import mlx.core as mx
-            from .model_v2_mlx import load_from_torch_state_dict
+            from .model_v2_mlx import load_model
             mlx_dtype = {
                 torch.float16: mx.float16,
                 torch.bfloat16: mx.bfloat16,
                 torch.float32: mx.float32,
             }[self.dtype]
             self.device = None  # MLX manages placement (unified memory)
-            self.model = load_from_torch_state_dict(ckpt["model"], cfg, dtype=mlx_dtype)
+            # load_model keeps a converted .safetensors sidecar next to the
+            # checkpoint, so warm loads skip torch.load (~1.3 s -> ~15 ms).
+            self.model, cfg = load_model(checkpoint_path, dtype=mlx_dtype)
         else:
             self.device = device or _auto_device()
+            ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+            cfg = ModelConfig(**ckpt["model_config"])
+            # RoPE extrapolates, so we can serve at longer context than training
+            # without retraining. (MLX computes RoPE per-position, no table needed.)
+            cfg.max_seq_len = max(cfg.max_seq_len, inference_seq_len)
             self.model = MusicTransformer(cfg).to(self.device).eval()
             self.model.load_state_dict(ckpt["model"])
             self.model = self.model.to(self.dtype)
