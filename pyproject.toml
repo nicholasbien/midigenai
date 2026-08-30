@@ -31,6 +31,7 @@ dependencies = [
 eval = ["muspy"]
 grading = ["flask"]
 mlx = ["mlx>=0.30; sys_platform == 'darwin'"]
+serve = ["flask", "flask-cors", "modal"]
 
 [project.urls]
 Homepage = "https://github.com/nicholasbien/midigenai"
