@@ -41,16 +41,24 @@ class TokenAugmenter:
         self.max_velocity_jitter = max_velocity_jitter
 
         self.pitch_tables: dict[int, np.ndarray] = {}
+        # clip_tables[s]: note tokens that CANNOT shift by s (target out of
+        # vocab). Shifting a window that contains one would transpose only
+        # part of a chord — corruption, not augmentation — so the caller
+        # falls back toward smaller shifts until none clip.
+        self.clip_tables: dict[int, np.ndarray] = {}
         for s in range(-max_pitch_shift, max_pitch_shift + 1):
             table = np.arange(vocab_size, dtype=np.int64)
+            clips = np.zeros(vocab_size, dtype=bool)
             for name, tid in vocab.items():
                 for prefix in ("NoteOn_", "NoteOff_"):
                     if name.startswith(prefix):
                         shifted = f"{prefix}{int(name[len(prefix):]) + s}"
                         if shifted in vocab:
                             table[tid] = vocab[shifted]
-                        # out of range -> leave unchanged
+                        else:
+                            clips[tid] = s != 0
             self.pitch_tables[s] = table
+            self.clip_tables[s] = clips
 
         # Velocity bins ordered by value; jitter moves to an adjacent bin,
         # clamped at the ends.
@@ -85,9 +93,13 @@ class TokenAugmenter:
 
     def __call__(self, seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
         """Augment one int64 token sequence (a full training window)."""
-        shift = int(rng.integers(-self.max_pitch_shift, self.max_pitch_shift + 1))
+        shift = int(rng.integers(-self.max_pitch_shift, self.max_pitch_shift + 1))             if self.max_pitch_shift > 0 else 0
         jitter = int(rng.integers(-self.max_velocity_jitter,
-                                  self.max_velocity_jitter + 1))
+                                  self.max_velocity_jitter + 1))             if self.max_velocity_jitter > 0 else 0
+        # shrink the shift toward 0 until no note in the window would clip,
+        # so a chord is always transposed whole or not at all
+        while shift != 0 and self.clip_tables[shift][seq].any():
+            shift -= 1 if shift > 0 else -1
         out = seq
         if shift != 0:
             shifted = self.pitch_tables[shift][seq]

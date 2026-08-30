@@ -66,6 +66,8 @@ class TrainConfig:
     decay_steps: int = 0           # wsd only; 0 -> 10% of max_steps
     augment: bool = True           # on-the-fly pitch shift + velocity jitter
     doc_start_frac: float = 0.2    # fraction of windows anchored at a BOS
+    aug_pitch: int = 6             # max pitch shift (semitones); 0 disables
+    aug_velocity: int = 1          # max velocity jitter (bins); 0 disables
     mixture: str = ""              # per-source weights, e.g. "lakh:1,aria:2"
     resume: Path | None = None     # checkpoint to resume from
 
@@ -306,7 +308,8 @@ def train(cfg: TrainConfig) -> None:
         from midigenai.tokenizer import build_tokenizer, load_tokenizer
         tok_path = cfg.data_dir / "tokenizer.json"
         tokenizer = load_tokenizer(tok_path) if tok_path.exists() else build_tokenizer()
-        augmenter = TokenAugmenter(tokenizer)
+        augmenter = TokenAugmenter(tokenizer, max_pitch_shift=cfg.aug_pitch,
+                                   max_velocity_jitter=cfg.aug_velocity)
         print(f"[train] augmentation on: pitch ±{augmenter.max_pitch_shift}, "
               f"velocity ±{augmenter.max_velocity_jitter} bins")
 
@@ -409,6 +412,10 @@ def parse_args() -> TrainConfig:
     p.add_argument("--schedule", choices=["cosine", "wsd"], default="cosine")
     p.add_argument("--decay-steps", type=int, default=0,
                    help="wsd only: final decay length (0 = 10%% of max-steps)")
+    p.add_argument("--aug-pitch", type=int, default=6,
+                   help="max pitch-shift semitones (0 disables pitch aug)")
+    p.add_argument("--aug-velocity", type=int, default=1,
+                   help="max velocity jitter in bins (0 disables)")
     p.add_argument("--doc-start-frac", type=float, default=0.2,
                    help="fraction of training windows anchored at a document start")
     p.add_argument("--mixture", default="",
