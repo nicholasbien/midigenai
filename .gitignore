@@ -9,8 +9,6 @@ runs/
 *.pt
 *.npy
 
-# Lambda credentials (never commit)
-.lambda_env
 
 # v2 working data dirs (keep paths, ignore contents)
 data/raw/

@@ -96,7 +96,7 @@ midigenai/
 ├─ eval.py            # quantitative metrics (any two output dirs)
 ├─ grade_app.py       # A/B preference grading frontend (Flask)
 ├─ data/              # dataset download / clean / dedup / tokenize / shard
-├─ lambda_provision.py, setup_lambda.sh, run_local_pilot.sh
+├─ run_local_pilot.sh
 ```
 
 ## Training
@@ -108,8 +108,8 @@ python -m midigenai.data.build_dataset ...
 modal run midigenai/modal_train.py --size medium --max-steps 15000 --gpu H100
 ```
 
-The 25M pilot trains for ~$1.50 on Lambda; the 113M model trained on a Modal
-H100. See `modal_train.py` and `setup_lambda.sh` for the exact flows.
+The 113M model trained on a Modal
+H100; the 25M pilot cost ~$1.50. See `modal_train.py` for the flow.
 
 ## History
 
