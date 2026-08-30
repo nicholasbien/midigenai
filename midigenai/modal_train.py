@@ -63,6 +63,11 @@ def train(
     schedule: str = "wsd",
     decay_steps: int = 0,
     augment: bool = True,
+    aug_pitch: int = 6,
+    aug_velocity: int = 1,
+    doc_start_frac: float = 0.2,
+    mixture: str = "",
+    corpus: str = "corpus_pilot",
     run_name: str | None = None,
     resume: bool = False,
 ) -> dict:
@@ -92,11 +97,14 @@ def train(
     print(f"[modal-train] corpus contents:")
     os.system("ls -la /corpus/ /corpus/shards/ 2>/dev/null | head -20")
 
-    # corpus was uploaded as a subdir; point at the inner data root
-    data_dir = Path("/corpus/v2_corpus_full")
+    # corpus subdir on the volume (upload with:
+    #   modal volume put openmusenet2-v2-corpus <local> /<corpus-name>)
+    data_dir = Path(f"/corpus/{corpus}")
     if not (data_dir / "shards").exists():
-        # fallback: maybe it was uploaded at root
-        data_dir = Path("/corpus")
+        for fallback in ("/corpus/v2_corpus_full", "/corpus"):
+            if (Path(fallback) / "shards").exists():
+                data_dir = Path(fallback)
+                break
     cfg = TrainConfig(
         data_dir=data_dir,
         out_dir=out_dir,
@@ -113,6 +121,10 @@ def train(
         schedule=schedule,
         decay_steps=decay_steps,
         augment=augment,
+        aug_pitch=aug_pitch,
+        aug_velocity=aug_velocity,
+        doc_start_frac=doc_start_frac,
+        mixture=mixture,
         resume=resume_ckpt,
     )
 
@@ -138,11 +150,17 @@ def train(
 @app.local_entrypoint()
 def main(size: str = "medium", max_steps: int = 15000, batch_size: int = 16,
          block_size: int = 2048, schedule: str = "wsd", augment: bool = True,
+         aug_pitch: int = 6, aug_velocity: int = 1,
+         doc_start_frac: float = 0.2, mixture: str = "",
+         corpus: str = "corpus_pilot", lr: float = 3e-4,
          run_name: str = "", resume: bool = False):
     """Local entrypoint — invoke training and print result."""
     result = train.remote(size=size, max_steps=max_steps, batch_size=batch_size,
                           block_size=block_size, schedule=schedule,
-                          augment=augment, run_name=run_name or None,
+                          augment=augment, aug_pitch=aug_pitch,
+                          aug_velocity=aug_velocity,
+                          doc_start_frac=doc_start_frac, mixture=mixture,
+                          corpus=corpus, lr=lr, run_name=run_name or None,
                           resume=resume)
     print(f"\n[done] {result}")
     print(f"\nRetrieve checkpoint with:")
