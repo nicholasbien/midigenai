@@ -16,3 +16,4 @@ torch
 einops
 tqdm
 flask              # for the A/B grading frontend
+mlx; sys_platform == 'darwin'   # Apple-silicon GPU inference backend (used by default when present)
