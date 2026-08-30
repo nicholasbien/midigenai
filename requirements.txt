@@ -6,3 +6,6 @@ tqdm
 muspy              # musical metrics (eval)
 flask              # A/B grading frontend
 mlx; sys_platform == 'darwin'   # Apple-silicon GPU inference backend (used by default when present)
+flask-cors         # web_server
+modal              # web_server -> Modal inference
+gunicorn           # production WSGI server
