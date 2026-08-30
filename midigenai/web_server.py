@@ -58,14 +58,15 @@ def _unique_string() -> str:
     return f"{datetime.datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex}"
 
 
-def _generate(midi_bytes: bytes, temperature: float, top_k: int,
-              max_new_tokens: int) -> bytes:
-    """One continuation; returns MIDI bytes of the full prompt+continuation."""
+def _generate_n(midi_bytes: bytes, temperature: float, top_k: int,
+                max_new_tokens: int, n_samples: int) -> list[bytes]:
+    """n continuations in ONE Modal call, batched on the GPU — one round trip
+    and a shared prefill instead of n sequential generations."""
     result = midi_gen.generate_batch.remote(
         midi_bytes, max_new_tokens=max_new_tokens,
-        temperature=temperature, top_k=top_k,
+        temperature=temperature, top_k=top_k, n_samples=n_samples,
     )
-    return result["midi"]
+    return result["midis"]
 
 
 def _save_midi(midi_bytes: bytes, base_name: str, suffix: str) -> str:
@@ -93,10 +94,9 @@ def _read_upload():
 def _two_samples_response(midi_bytes: bytes, base: str,
                           temperature: float, top_k: int, max_new_tokens: int):
     unique_str = _unique_string()
+    midis = _generate_n(midi_bytes, temperature, top_k, max_new_tokens, n_samples=2)
     out_paths = [
-        _save_midi(_generate(midi_bytes, temperature, top_k, max_new_tokens),
-                   f"{base}_{unique_str}", str(i))
-        for i in range(2)
+        _save_midi(m, f"{base}_{unique_str}", str(i)) for i, m in enumerate(midis)
     ]
     return jsonify({
         "message": "MIDI file generated successfully",
@@ -172,10 +172,9 @@ def upload_midi_ab():
     with open(input_path, "wb") as f:
         f.write(midi_bytes)
 
+    midis = _generate_n(midi_bytes, temperature, top_k, max_new_tokens, n_samples=2)
     paths = [
-        _save_midi(_generate(midi_bytes, temperature, top_k, max_new_tokens),
-                   f"{base}_{unique_str}", f"ab{i}")
-        for i in range(2)
+        _save_midi(m, f"{base}_{unique_str}", f"ab{i}") for i, m in enumerate(midis)
     ]
     if random.random() < 0.5:
         paths.reverse()

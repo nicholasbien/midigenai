@@ -44,21 +44,88 @@ image = (
 
 @app.cls(
     image=image,
-    gpu="any",
-    scaledown_window=300,
+    gpu="L4",  # pinned: modern, low per-kernel latency; "any" can hand out T4s
+    scaledown_window=600,
     memory=32_768,
     cpu=4,
     timeout=180,
     volumes={"/models": volume},
+    enable_memory_snapshot=True,
 )
 class MidiGen:
-    @modal.enter()
-    def load(self):
+    @modal.enter(snap=True)
+    def load_cpu(self):
+        """Runs once, then is checkpointed into the memory snapshot: later cold
+        starts restore the loaded model instead of re-importing torch and
+        re-reading the checkpoint."""
         from midigenai.generate import Generator
+        import torch
         self.gen = Generator(
             checkpoint_path=CKPT_PATH,
             tokenizer_path=TOKENIZER_PATH,
+            device=torch.device("cpu"),  # snapshot is CPU-only; GPU attaches after restore
         )
+
+    @modal.enter(snap=False)
+    def to_gpu(self):
+        import torch
+        if torch.cuda.is_available():
+            self.gen.device = torch.device("cuda")
+            self.gen.model = self.gen.model.to(self.gen.device)
+
+    def _batched_generate(
+        self,
+        prompt_ids: list[int],
+        n_samples: int,
+        max_new_tokens: int,
+        temperature: float,
+        top_k: int,
+    ) -> list[list[int]]:
+        """Decode n_samples continuations in one batch on the GPU — a second
+        sample rides along nearly free vs. two sequential generations."""
+        import torch
+        gen = self.gen
+        if gen.bos_id is not None and (not prompt_ids or prompt_ids[0] != gen.bos_id):
+            prompt_ids = [gen.bos_id, *prompt_ids]
+        model = gen.model
+        ids = torch.tensor([prompt_ids] * n_samples, dtype=torch.long, device=gen.device)
+        outs: list[list[int]] = [[] for _ in range(n_samples)]
+        done = [False] * n_samples
+        with torch.no_grad():
+            logits, caches = model(ids)
+            for _ in range(max_new_tokens):
+                logits = logits[:, -1, :].float() / max(temperature, 1e-6)
+                if top_k is not None and top_k < logits.size(-1):
+                    v, _ = torch.topk(logits, top_k)
+                    logits[logits < v[:, [-1]]] = -float("inf")
+                probs = torch.softmax(logits, dim=-1)
+                next_ids = torch.multinomial(probs, num_samples=1)  # (B, 1)
+                for b, tid in enumerate(next_ids[:, 0].tolist()):
+                    if not done[b]:
+                        if gen.eos_id is not None and tid == gen.eos_id:
+                            done[b] = True
+                        else:
+                            outs[b].append(tid)
+                if all(done):
+                    break
+                logits, caches = model(next_ids, kv_caches=caches)
+        return outs
+
+    def _to_midi_bytes(self, full_ids: list[int], tempo_bpm: float) -> bytes:
+        score = self.gen.tokenizer.decode(full_ids)
+        if abs(tempo_bpm - 120.0) > 1e-6:
+            from symusic import Tempo
+            score.tempos = [Tempo(time=0, qpm=tempo_bpm)]
+        # Write to bytes via a tempfile (symusic Score.dump_midi needs a path)
+        from tempfile import NamedTemporaryFile
+        from pathlib import Path
+        with NamedTemporaryFile(suffix=".mid", delete=False) as f:
+            tmp = f.name
+        try:
+            score.dump_midi(tmp)
+            return Path(tmp).read_bytes()
+        finally:
+            Path(tmp).unlink(missing_ok=True)
 
     @modal.method()
     def generate_batch(
@@ -68,39 +135,23 @@ class MidiGen:
         temperature: float = 1.2,
         top_k: int = 50,
         tempo_bpm: float | None = None,
+        n_samples: int = 1,
     ) -> dict:
         prompt = self.gen.encode_midi_bytes(midi_bytes)
         if tempo_bpm is None:
             tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
 
-        new_ids = list(self.gen.generate_ids(
-            prompt,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_k=top_k,
-        ))
-        full_ids = list(prompt) + new_ids
-        score = self.gen.tokenizer.decode(full_ids)
-        if abs(tempo_bpm - 120.0) > 1e-6:
-            from symusic import Tempo
-            score.tempos = [Tempo(time=0, qpm=tempo_bpm)]
-
-        # Write to bytes via a tempfile (symusic Score.dump_midi needs a path)
-        from tempfile import NamedTemporaryFile
-        from pathlib import Path
-        with NamedTemporaryFile(suffix=".mid", delete=False) as f:
-            tmp = f.name
-        try:
-            score.dump_midi(tmp)
-            midi_out = Path(tmp).read_bytes()
-        finally:
-            Path(tmp).unlink(missing_ok=True)
+        sample_ids = self._batched_generate(
+            prompt, n_samples, max_new_tokens, temperature, top_k)
+        midis = [self._to_midi_bytes(list(prompt) + ids, tempo_bpm)
+                 for ids in sample_ids]
 
         return {
             "prompt_tokens": len(prompt),
-            "generated_tokens": len(new_ids),
+            "generated_tokens": [len(ids) for ids in sample_ids],
             "tempo_bpm": tempo_bpm,
-            "midi": midi_out,
+            "midi": midis[0],   # backward-compatible single-sample field
+            "midis": midis,
         }
 
     @modal.method(is_generator=True)
