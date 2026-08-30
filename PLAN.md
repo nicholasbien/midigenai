@@ -81,6 +81,32 @@ we scale to 202M.
 - [ ] Fix the public site loop separately: Railway volume (or durable store) +
       full metadata logging + v2 serving (site currently serves v1)
 
+#### Labeling protocol
+
+Seed prompts live in `evals/prompts/` (84 files: real user uploads + curated
+Lakh validation picks). Sessions:
+
+1. **Calibration set** (first ~2 sessions, ~150–200 pairs): same-model pairs
+   from the live checkpoint (`python -m v2.label_app --prompts evals/prompts`).
+   10% of serves are blind repeats (`--dup-rate`) to measure self-consistency —
+   the ceiling any reward fit can reach. Historical labels were only ~0.65
+   self-consistent; listen to both sides fully before voting to push this up.
+2. **Ongoing** (~50 pairs/week): keeps the reward fit fresh; switch to
+   cross-model mode (`--hub-version-b` / `--checkpoint-b`) whenever a new
+   checkpoint needs a verdict.
+3. **Post-RL gate**: after any GRPO/DPO checkpoint, a blind cross-model session
+   of new-vs-base is the only accepted evidence of improvement.
+
+#### Reward calibration gates (checked by `v2.reward_align`)
+
+- Fit/eval split is by *prompt* (leave-one-prompt-out), never by pair.
+- Ship a reward to GRPO only if, on ≥150 v2-era pairs: held-out accuracy ≥0.65,
+  within ~0.05 of measured self-consistency, and the calibration table tracks
+  the diagonal (no wild overconfidence at the extremes).
+- Re-fit and re-check every ~100 new labels; after each RL run, re-validate
+  on-policy — if the reward prefers the RL checkpoint but the human doesn't,
+  the reward is being hacked: refit including the new labels before continuing.
+
 ### 6. Reward alignment → RL
 
 - [x] `v2/reward_align.py`: compute the metric vector for each continuation,
@@ -104,6 +130,13 @@ we scale to 202M.
 accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
+
+- 2026-08-30: Labeling protocol + calibration gates added. label_app gained
+  blind repeat serving (--dup-rate); reward_align now does leave-one-prompt-out
+  CV, self-consistency measurement, and a calibration table. On historical v1
+  data: reward 0.66 held-out vs 0.65 labeler ceiling — the old labels are the
+  bottleneck, confirming fresh careful labels are the lever. evals/prompts/
+  seeded with 84 held-out prompt MIDIs.
 
 - 2026-08-30: Workstream 1 implemented (augmentation wired with drum-aware
   pitch shift, WSD schedule, resume with optimizer state, metrics.csv, block

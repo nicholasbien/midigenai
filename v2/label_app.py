@@ -159,12 +159,41 @@ def build_app(args) -> Flask:
     app = Flask(__name__,
                 template_folder=str(Path(__file__).parent / "templates"))
 
+    # Pairs already voted on this session, eligible for blind re-serving.
+    # Repeats measure the labeler's self-consistency — the accuracy ceiling
+    # for any reward fit on these labels. The UI is never told it's a repeat.
+    voted_pairs: dict[str, dict] = {}
+    repeat_rng = random.Random()
+
+    def make_repeat() -> dict | None:
+        candidates = [p for p in voted_pairs.values() if not p.get("_repeated")]
+        if len(candidates) < args.min_before_repeat:
+            return None
+        pair = repeat_rng.choice(candidates)
+        pair["_repeated"] = True
+        flipped = repeat_rng.random() < 0.5
+        out = dict(pair)
+        out.pop("_repeated", None)
+        if flipped:
+            out.update({
+                "left_url": pair["right_url"], "right_url": pair["left_url"],
+                "left_is": pair["right_is"], "right_is": pair["left_is"],
+                "left_model": pair["right_model"],
+                "right_model": pair["left_model"],
+            })
+        return out
+
     @app.route("/")
     def index():
         return send_from_directory(app.template_folder, "label.html")
 
     @app.route("/api/next")
     def next_pair():
+        if repeat_rng.random() < args.dup_rate:
+            repeat = make_repeat()
+            if repeat is not None:
+                return jsonify({"status": "ok", "pair": repeat,
+                                "queued": factory.queue.qsize()})
         try:
             pair = factory.queue.get(timeout=args.next_timeout)
         except queue.Empty:
@@ -193,6 +222,18 @@ def build_app(args) -> Flask:
         }
         with labels_path.open("a") as f:
             f.write(json.dumps(record) + "\n")
+        if choice in ("left", "right", "tie") and record["pair_id"]:
+            voted_pairs.setdefault(record["pair_id"], {
+                "pair_id": record["pair_id"],
+                "prompt_url": f"/midi/{record['pair_id']}_prompt.mid",
+                "left_url": f"/midi/{record['pair_id']}_a.mid",
+                "right_url": f"/midi/{record['pair_id']}_b.mid",
+                "left_is": "a", "right_is": "b",
+                "left_model": data.get(
+                    "left_model" if data.get("left_is") == "a" else "right_model", ""),
+                "right_model": data.get(
+                    "left_model" if data.get("left_is") == "b" else "right_model", ""),
+            })
         return jsonify({"ok": True})
 
     @app.route("/api/stats")
@@ -235,6 +276,10 @@ def main():
     # plumbing
     p.add_argument("--queue-size", type=int, default=4)
     p.add_argument("--next-timeout", type=float, default=25.0)
+    p.add_argument("--dup-rate", type=float, default=0.1,
+                   help="probability of blindly re-serving an already-voted "
+                        "pair (sides re-randomized) to measure self-consistency")
+    p.add_argument("--min-before-repeat", type=int, default=5)
     p.add_argument("--port", type=int, default=7788)
     args = p.parse_args()
 
