@@ -34,21 +34,52 @@ from midigenai.tokenizer import build_tokenizer, encode_midi, save_tokenizer
 
 SHARD_TOKENS = 50_000_000  # 100 MB per shard at uint16
 VAL_FRACTION = 0.005       # 0.5% held-out
+TRACK_VIEWS = 2            # extra single-track docs per multi-track file
+MIN_VIEW_NOTES = 64        # a solo view must have this many notes to count
 
 # Per-worker tokenizer singleton. Each worker process builds one on init —
 # config is deterministic so vocab IDs are identical across workers + main.
 _TOKENIZER = None
+_TRACK_VIEWS = TRACK_VIEWS
 
 
-def _worker_init():
-    global _TOKENIZER
+def _worker_init(track_views: int = TRACK_VIEWS):
+    global _TOKENIZER, _TRACK_VIEWS
     _TOKENIZER = build_tokenizer()
+    _TRACK_VIEWS = track_views
 
 
-def _worker_encode(path: str) -> tuple[str, list[int] | None]:
+def _worker_encode(path: str) -> tuple[str, list[list[int]] | None]:
+    """
+    Tokenize one file into 1+ documents: the full multi-track mix, plus up to
+    _TRACK_VIEWS single-track views for multi-track files. Solo views teach
+    the model to continue isolated lines (how users actually jam: one
+    instrument at a time) on top of full-arrangement structure; deterministic
+    per-path RNG keeps rebuilds reproducible. Mislabeled drum tracks are
+    promoted before tokenizing so drum content gets DrumOn/DrumOff tokens.
+    """
     try:
-        ids = _TOKENIZER(Path(path)).ids
-        return path, ids
+        from symusic import Score
+
+        from midigenai.tokenizer import normalize_drums
+
+        score = Score(path)
+        normalize_drums(score, Path(path).name)
+        docs = [_TOKENIZER(score).ids]
+        if _TRACK_VIEWS > 0:
+            candidates = [i for i, t in enumerate(score.tracks)
+                          if len(t.notes) >= MIN_VIEW_NOTES]
+            if len(candidates) >= 2:
+                rng = random.Random(path)
+                rng.shuffle(candidates)
+                for i in candidates[:_TRACK_VIEWS]:
+                    solo = Score(path)  # fresh copy; cheap relative to tokenize
+                    normalize_drums(solo, Path(path).name)
+                    solo.tracks = [solo.tracks[i]]
+                    ids = _TOKENIZER(solo).ids
+                    if len(ids) >= 8:
+                        docs.append(ids)
+        return path, docs
     except Exception:
         return path, None
 
@@ -101,12 +132,16 @@ def build(
     val_fraction: float = VAL_FRACTION,
     limit: int | None = None,
     workers: int | None = None,
+    track_views: int = TRACK_VIEWS,
 ) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     tokenizer = build_tokenizer()
     save_tokenizer(tokenizer, out_dir / "tokenizer.json")
 
     bos_id = tokenizer["BOS_None"] if "BOS_None" in tokenizer.vocab else tokenizer.vocab.get("BOS", 1)
+    # EOS at every doc end: without it the model never sees a piece end and
+    # generation can only stop at the token cap ("gets too long" failure mode)
+    eos_id = tokenizer["EOS_None"] if "EOS_None" in tokenizer.vocab else tokenizer.vocab.get("EOS", 2)
 
     shards_dir = out_dir / "shards"
     train_writer = ShardWriter.create(shards_dir, "train", shard_tokens)
@@ -127,22 +162,31 @@ def build(
     n_workers = workers or max(1, (os.cpu_count() or 2) - 1)
     print(f"[tokenize] {len(paths)} files, {n_workers} workers")
 
-    with Pool(n_workers, initializer=_worker_init) as pool:
-        for path, ids in tqdm(
+    n_view_docs = 0
+    n_view_tokens = 0
+    with Pool(n_workers, initializer=_worker_init,
+              initargs=(track_views,)) as pool:
+        for path, docs in tqdm(
             pool.imap_unordered(_worker_encode, paths, chunksize=16),
             total=len(paths), desc="tokenizing",
         ):
-            if ids is None or len(ids) < 8:
+            if docs is None or len(docs[0]) < 8:
                 n_failed += 1
                 continue
-            arr = np.asarray([bos_id, *ids], dtype=np.uint16)
+            # solo views share the parent's path-hash split, so a song can
+            # never straddle train and val through its views
             split = split_by_path(path, val_fraction)
-            if split == "val":
-                val_writer.append(arr)
-                n_val_tokens += len(arr)
-            else:
-                train_writer.append(arr)
-                n_train_tokens += len(arr)
+            writer = val_writer if split == "val" else train_writer
+            for d, ids in enumerate(docs):
+                arr = np.asarray([bos_id, *ids, eos_id], dtype=np.uint16)
+                writer.append(arr)
+                if split == "val":
+                    n_val_tokens += len(arr)
+                else:
+                    n_train_tokens += len(arr)
+                if d > 0:
+                    n_view_docs += 1
+                    n_view_tokens += len(arr)
             n_files += 1
 
     n_train_shards = train_writer.close()
@@ -159,6 +203,9 @@ def build(
         "n_train_shards": n_train_shards,
         "n_val_shards": n_val_shards,
         "shard_tokens": shard_tokens,
+        "track_views_per_file": track_views,
+        "n_view_docs": n_view_docs,
+        "n_view_tokens": n_view_tokens,
     }
     with (out_dir / "manifest.json").open("w") as f:
         json.dump(summary, f, indent=2)
@@ -179,6 +226,8 @@ if __name__ == "__main__":
                         help="optional cap on number of files (for pilot runs)")
     parser.add_argument("--workers", type=int, default=None,
                         help="parallel tokenizer workers (default: cpu_count-1)")
+    parser.add_argument("--track-views", type=int, default=TRACK_VIEWS,
+                        help="extra single-track docs per multi-track file (0 disables)")
     args = parser.parse_args()
     build(
         manifest_path=args.manifest,
@@ -187,4 +236,5 @@ if __name__ == "__main__":
         val_fraction=args.val_fraction,
         limit=args.limit,
         workers=args.workers,
+        track_views=args.track_views,
     )

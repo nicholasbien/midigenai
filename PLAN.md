@@ -131,6 +131,21 @@ accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
 
+- 2026-08-30 (evening): Post-merge (#11 + #13 rename). New on data-improvements
+  branch: track-view sampling in build_dataset (full mix + up to 2 solo-track
+  docs per multi-track file — matches how users jam single lines); EOS token
+  appended to every training doc (docs previously had NO end marker: the model
+  had never seen a piece end, a direct cause of 'generations run until the
+  token cap'); normalize_drums() promotes mislabeled drum tracks (Ableton
+  exports, v1-era files with drums on piano channels) before tokenizing, wired
+  into build/label/explore paths; explorer shows per-sample pipeline +
+  augmentation views. Further data ideas queued in workstream 2/3: trim
+  leading/trailing silence at build time; per-source mixture weights; GigaMIDI
+  expressiveness CSV + genre tags as quality/conditioning signal; genre or
+  instrumentation control tokens; cap token share of very long repetitive
+  files; tempo-stretch augmentation; user uploads + live-jam captures as a
+  high-weight domain-adaptation set.
+
 - 2026-08-30 (later still): Model scope decision: GENERAL — drums, mono, poly,
   chords all in scope. clean.py drum-only filter removed (drum files stay in
   training); culled drum prompts restored to evals/prompts. Workstream 3:

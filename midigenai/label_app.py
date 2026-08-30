@@ -89,7 +89,13 @@ class PairFactory:
     def _generate_one(self) -> dict:
         args = self.args
         prompt_file = self.rng.choice(self.prompt_files)
-        prompt_ids = self.gen_a.encode_midi_file(prompt_file)
+        from symusic import Score
+
+        from midigenai.tokenizer import normalize_drums
+        prompt_score = Score(str(prompt_file))
+        # fix drum tracks mislabeled as pitched (Ableton exports, v1-era files)
+        normalize_drums(prompt_score, prompt_file.name)
+        prompt_ids = self.gen_a.tokenizer(prompt_score).ids
         if len(prompt_ids) > args.prompt_tokens:
             start = self.rng.randrange(0, len(prompt_ids) - args.prompt_tokens)
             prompt_ids = prompt_ids[start : start + args.prompt_tokens]
