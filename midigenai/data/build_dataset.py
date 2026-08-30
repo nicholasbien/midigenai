@@ -63,9 +63,16 @@ def _worker_encode(path: str) -> tuple[str, list[list[int]] | None]:
 
         from midigenai.tokenizer import normalize_drums
 
+        def trim_leading(sc):
+            """Shift so the first onset is at tick 0. Pure translation: every
+            inter-onset interval is unchanged, so beat/groove structure is
+            untouched — it only removes wasted leading Rest tokens."""
+            starts = [n.start for t in sc.tracks for n in t.notes]
+            return sc.shift_time(-min(starts)) if starts and min(starts) > 0 else sc
+
         score = Score(path)
         normalize_drums(score, Path(path).name)
-        docs = [_TOKENIZER(score).ids]
+        docs = [_TOKENIZER(trim_leading(score)).ids]
         if _TRACK_VIEWS > 0:
             candidates = [i for i, t in enumerate(score.tracks)
                           if len(t.notes) >= MIN_VIEW_NOTES]
@@ -76,7 +83,8 @@ def _worker_encode(path: str) -> tuple[str, list[list[int]] | None]:
                     solo = Score(path)  # fresh copy; cheap relative to tokenize
                     normalize_drums(solo, Path(path).name)
                     solo.tracks = [solo.tracks[i]]
-                    ids = _TOKENIZER(solo).ids
+                    # solo tracks often enter mid-song: trim their lead-in too
+                    ids = _TOKENIZER(trim_leading(solo)).ids
                     if len(ids) >= 8:
                         docs.append(ids)
         return path, docs
