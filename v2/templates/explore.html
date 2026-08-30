@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>midigenai — dataset explorer</title>
+<script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js,npm/focus-visible@5,npm/html-midi-player@1.5.0"></script>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 1100px; margin: 24px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 20px; margin-bottom: 2px; }
+  .sub { color: #666; font-size: 13px; margin-bottom: 16px; }
+  .controls { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; }
+  select, input, button { padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; background: white; }
+  button { cursor: pointer; } button:hover { background: #f0f0f0; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  .err { color: #b91c1c; font-size: 13px; margin: 10px 0; white-space: pre-wrap; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { border-bottom: 1px solid #eee; text-align: left; padding: 8px 10px; vertical-align: top; }
+  th { color: #555; font-weight: 600; background: #fafafa; position: sticky; top: 0; }
+  midi-player { width: 260px; }
+  .meta { color: #666; max-width: 340px; word-break: break-word; }
+  .meta b { color: #333; font-weight: 600; }
+  .stats span { display: inline-block; margin-right: 10px; color: #444; }
+  .note { color: #888; font-size: 12px; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <h1>midigenai — dataset explorer</h1>
+  <div class="sub">Sample candidate training corpora: listen, inspect metadata and note statistics.</div>
+  <div class="controls">
+    <select id="dataset"></select>
+    <label>n <input id="n" type="number" value="8" min="1" max="25" style="width:60px"></label>
+    <button id="go" onclick="sample()">Sample</button>
+    <span id="status" class="sub" style="margin:0"></span>
+  </div>
+  <div id="err" class="err"></div>
+  <div id="results"></div>
+
+<script>
+async function init() {
+  const res = await fetch('/api/datasets');
+  const d = await res.json();
+  const sel = document.getElementById('dataset');
+  d.datasets.forEach(name => {
+    const o = document.createElement('option');
+    o.value = o.textContent = name;
+    sel.appendChild(o);
+  });
+}
+
+async function sample() {
+  const ds = document.getElementById('dataset').value;
+  const n = document.getElementById('n').value;
+  const go = document.getElementById('go');
+  const status = document.getElementById('status');
+  document.getElementById('err').textContent = '';
+  go.disabled = true;
+  status.textContent = `sampling ${ds}… (remote sources can take ~30–90s)`;
+  try {
+    const res = await fetch('/api/sample', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset: ds, n: +n }) });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || res.statusText);
+    render(data);
+    status.textContent = `${data.rows.length} samples from ${ds}`;
+  } catch (e) {
+    document.getElementById('err').textContent = e.message;
+    status.textContent = '';
+  } finally {
+    go.disabled = false;
+  }
+}
+
+function render(data) {
+  const rows = data.rows.map(r => {
+    const meta = Object.entries(r.meta || {})
+      .map(([k, v]) => `<b>${k}</b>: ${v}`).join(' · ');
+    const stats = r.stats ? Object.entries(r.stats)
+      .map(([k, v]) => `<span><b>${k}</b> ${v}</span>`).join('') : '';
+    const player = r.url ? `<midi-player src="${r.url}" sound-font></midi-player>` : '<i>no MIDI bytes</i>';
+    return `<tr>
+      <td>${player}<div class="note">${r.file || ''}</div></td>
+      <td class="stats">${stats}</td>
+      <td class="meta">${meta}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('results').innerHTML = `
+    <table>
+      <thead><tr><th>listen</th><th>note stats</th><th>source metadata</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+
+init();
+</script>
+</body>
+</html>

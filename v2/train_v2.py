@@ -62,6 +62,10 @@ class TrainConfig:
     dtype: str = "bfloat16"        # "bfloat16" | "float16" | "float32"
     compile: bool = False
     seed: int = 0
+    schedule: str = "cosine"       # "cosine" | "wsd" (warmup-stable-decay)
+    decay_steps: int = 0           # wsd only; 0 -> 10% of max_steps
+    augment: bool = True           # on-the-fly pitch shift + velocity jitter
+    resume: Path | None = None     # checkpoint to resume from
 
 
 # ----------------------------- data --------------------------------------- #
@@ -89,7 +93,8 @@ class ShardedTokenStream:
             )
         self.weights /= self.weights.sum()
 
-    def sample_batch(self, batch_size: int, rng: np.random.Generator):
+    def sample_batch(self, batch_size: int, rng: np.random.Generator,
+                     augmenter=None):
         idxs = rng.choice(len(self.shards), size=batch_size, p=self.weights)
         x = np.empty((batch_size, self.block_size), dtype=np.int64)
         y = np.empty((batch_size, self.block_size), dtype=np.int64)
@@ -97,6 +102,9 @@ class ShardedTokenStream:
             shard = self.shards[si]
             start = int(rng.integers(0, len(shard) - self.block_size - 1))
             chunk = shard[start : start + self.block_size + 1].astype(np.int64)
+            if augmenter is not None:
+                # augment the full window so input and target stay consistent
+                chunk = augmenter(chunk, rng)
             x[i] = chunk[:-1]
             y[i] = chunk[1:]
         return torch.from_numpy(x), torch.from_numpy(y)
@@ -123,9 +131,40 @@ def cosine_lr(step: int, cfg: TrainConfig) -> float:
     return cfg.min_lr + coeff * (cfg.lr - cfg.min_lr)
 
 
+def wsd_lr(step: int, cfg: TrainConfig) -> float:
+    """
+    Warmup-stable-decay: constant LR after warmup, linear decay to min_lr over
+    the final `decay_steps`. Unlike cosine, extending a run just means resuming
+    with a larger --max-steps before the decay phase starts.
+    """
+    if step < cfg.warmup_steps:
+        return cfg.lr * (step + 1) / cfg.warmup_steps
+    decay_steps = cfg.decay_steps or max(1, cfg.max_steps // 10)
+    decay_start = cfg.max_steps - decay_steps
+    if step < decay_start:
+        return cfg.lr
+    progress = min(1.0, (step - decay_start) / max(1, decay_steps))
+    return cfg.lr + progress * (cfg.min_lr - cfg.lr)
+
+
+def get_lr(step: int, cfg: TrainConfig) -> float:
+    if cfg.schedule == "wsd":
+        return wsd_lr(step, cfg)
+    return cosine_lr(step, cfg)
+
+
 def set_lr(opt: torch.optim.Optimizer, lr: float) -> None:
     for g in opt.param_groups:
         g["lr"] = lr
+
+
+def amp_context(device: torch.device, dtype):
+    # autocast is CUDA-only here (amp_dtype is fp32 off-CUDA anyway, and MPS
+    # rejects the device_type outright)
+    if device.type == "cuda":
+        return torch.amp.autocast(device_type="cuda", dtype=dtype)
+    import contextlib
+    return contextlib.nullcontext()
 
 
 @torch.no_grad()
@@ -137,7 +176,7 @@ def evaluate(model: MusicTransformer, stream: ShardedTokenStream,
     for _ in range(iters):
         x, y = stream.sample_batch(cfg.batch_size, rng)
         x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-        with torch.amp.autocast(device_type=device.type, dtype=dtype):
+        with amp_context(device, dtype):
             logits, _ = model(x)
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), y.reshape(-1))
         losses.append(loss.detach().item())
@@ -205,21 +244,55 @@ def train(cfg: TrainConfig) -> None:
     opt = make_optimizer(model, cfg)
     scaler = torch.amp.GradScaler(enabled=(amp_dtype == torch.float16))
 
+    # ---- resume
+    start_step = 0
+    if cfg.resume is not None:
+        ckpt = torch.load(cfg.resume, map_location="cpu", weights_only=False)
+        raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
+        raw_model.load_state_dict(ckpt["model"])
+        if "optimizer" in ckpt:
+            opt.load_state_dict(ckpt["optimizer"])
+        else:
+            print("[train] WARNING: no optimizer state in checkpoint; "
+                  "resuming with fresh AdamW moments")
+        start_step = ckpt.get("step", 0)
+        print(f"[train] resumed from {cfg.resume} at step {start_step}")
+
+    # ---- augmentation
+    augmenter = None
+    if cfg.augment:
+        from v2.data.augment import TokenAugmenter
+        from v2.tokenizer_v2 import build_tokenizer, load_tokenizer
+        tok_path = cfg.data_dir / "tokenizer.json"
+        tokenizer = load_tokenizer(tok_path) if tok_path.exists() else build_tokenizer()
+        augmenter = TokenAugmenter(tokenizer)
+        print(f"[train] augmentation on: pitch ±{augmenter.max_pitch_shift}, "
+              f"velocity ±{augmenter.max_velocity_jitter} bins")
+
+    # ---- metrics log
+    metrics_path = cfg.out_dir / "metrics.csv"
+    if not metrics_path.exists():
+        metrics_path.write_text("step,lr,train_loss,val_loss,tok_per_s,elapsed_s\n")
+
+    def log_metrics(step, lr, train_loss="", val_loss="", tps="", elapsed=""):
+        with metrics_path.open("a") as f:
+            f.write(f"{step},{lr:.6e},{train_loss},{val_loss},{tps},{elapsed}\n")
+
     # ---- loop
-    rng = np.random.default_rng(cfg.seed)
+    rng = np.random.default_rng(cfg.seed + start_step)
     t0 = time.time()
     running_loss = 0.0
     running_count = 0
 
-    for step in range(cfg.max_steps):
-        lr = cosine_lr(step, cfg)
+    for step in range(start_step, cfg.max_steps):
+        lr = get_lr(step, cfg)
         set_lr(opt, lr)
 
         opt.zero_grad(set_to_none=True)
         for _ in range(cfg.grad_accum):
-            x, y = train_stream.sample_batch(cfg.batch_size, rng)
+            x, y = train_stream.sample_batch(cfg.batch_size, rng, augmenter)
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-            with torch.amp.autocast(device_type=device.type, dtype=amp_dtype):
+            with amp_context(device, amp_dtype):
                 logits, _ = model(x)
                 loss = F.cross_entropy(
                     logits.reshape(-1, logits.size(-1)), y.reshape(-1)
@@ -236,36 +309,40 @@ def train(cfg: TrainConfig) -> None:
 
         if step % cfg.log_interval == 0:
             elapsed = time.time() - t0
-            tokens_seen = (step + 1) * cfg.batch_size * cfg.grad_accum * cfg.block_size
+            tokens_seen = ((step - start_step) + 1) * cfg.batch_size * cfg.grad_accum * cfg.block_size
             tps = tokens_seen / max(elapsed, 1e-3)
+            train_loss = running_loss / max(running_count, 1)
             print(f"step {step:6d}  lr {lr:.2e}  "
-                  f"loss {running_loss/max(running_count,1):.4f}  "
+                  f"loss {train_loss:.4f}  "
                   f"tok/s {tps:,.0f}  elapsed {elapsed:.0f}s")
+            log_metrics(step, lr, train_loss=f"{train_loss:.4f}",
+                        tps=f"{tps:.0f}", elapsed=f"{elapsed:.0f}")
             running_loss = 0.0
             running_count = 0
 
         if val_stream is not None and step > 0 and step % cfg.eval_interval == 0:
             vloss = evaluate(model, val_stream, cfg.eval_iters, cfg, device, amp_dtype)
             print(f"step {step:6d}  val_loss {vloss:.4f}  val_ppl {math.exp(vloss):.2f}")
+            log_metrics(step, lr, val_loss=f"{vloss:.4f}")
 
         if step > 0 and step % cfg.save_interval == 0:
-            ckpt_path = cfg.out_dir / f"ckpt_{step:06d}.pt"
-            torch.save(
-                {"model": (model._orig_mod if hasattr(model, "_orig_mod") else model).state_dict(),
-                 "model_config": asdict(model_cfg),
-                 "train_config": {k: str(v) if isinstance(v, Path) else v for k, v in asdict(cfg).items()},
-                 "step": step},
-                ckpt_path,
-            )
-            print(f"[ckpt] saved {ckpt_path}")
+            save_checkpoint(cfg.out_dir / f"ckpt_{step:06d}.pt",
+                            model, opt, model_cfg, cfg, step)
 
     # final save
-    ckpt_path = cfg.out_dir / "ckpt_final.pt"
+    save_checkpoint(cfg.out_dir / "ckpt_final.pt",
+                    model, opt, model_cfg, cfg, cfg.max_steps)
+
+
+def save_checkpoint(ckpt_path: Path, model, opt, model_cfg, cfg: TrainConfig,
+                    step: int) -> None:
+    raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
     torch.save(
-        {"model": (model._orig_mod if hasattr(model, "_orig_mod") else model).state_dict(),
+        {"model": raw_model.state_dict(),
+         "optimizer": opt.state_dict(),
          "model_config": asdict(model_cfg),
          "train_config": {k: str(v) if isinstance(v, Path) else v for k, v in asdict(cfg).items()},
-         "step": cfg.max_steps},
+         "step": step},
         ckpt_path,
     )
     print(f"[ckpt] saved {ckpt_path}")
@@ -288,6 +365,13 @@ def parse_args() -> TrainConfig:
     p.add_argument("--compile", action="store_true")
     p.add_argument("--dtype", default="bfloat16")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--schedule", choices=["cosine", "wsd"], default="cosine")
+    p.add_argument("--decay-steps", type=int, default=0,
+                   help="wsd only: final decay length (0 = 10%% of max-steps)")
+    p.add_argument("--augment", action=argparse.BooleanOptionalAction, default=True,
+                   help="on-the-fly pitch shift ±6 / velocity jitter ±1 bin")
+    p.add_argument("--resume", type=Path, default=None,
+                   help="checkpoint to resume from (restores optimizer + step)")
     args = p.parse_args()
     return TrainConfig(**vars(args))
 
