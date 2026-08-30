@@ -154,6 +154,115 @@ def sample_local(dir_path: Path):
     return sampler
 
 
+# ----------------------- training-window sampler --------------------------- #
+
+class TrainingWindowSampler:
+    """
+    Samples windows exactly the way training does — same ShardedTokenStream
+    (length-weighted shards, doc-start anchoring) and the same augmenter —
+    then decodes each window to MIDI. This is literally what the model sees,
+    including windows that start mid-piece and cross BOS/EOS boundaries.
+    Lazy: initializes on first use so the app runs before the corpus exists.
+    """
+
+    def __init__(self, corpus_dir: Path, block_size: int = 2048,
+                 doc_start_frac: float = 0.2):
+        self.corpus_dir = corpus_dir
+        self.block_size = block_size
+        self.doc_start_frac = doc_start_frac
+        self._ready = False
+
+    def _init(self):
+        import numpy as np
+        from midigenai.data.augment import TokenAugmenter
+        from midigenai.tokenizer import build_tokenizer, load_tokenizer
+        from midigenai.train import ShardedTokenStream
+
+        shard_paths = sorted((self.corpus_dir / "shards").glob("train_*.npy"))
+        if not shard_paths:
+            raise RuntimeError(
+                f"no train shards in {self.corpus_dir}/shards yet - the "
+                "corpus build may still be running")
+        tok_path = self.corpus_dir / "tokenizer.json"
+        self.tokenizer = load_tokenizer(tok_path) if tok_path.exists() else build_tokenizer()
+        self.inv = {v: k for k, v in self.tokenizer.vocab.items()}
+        self.bos = self.tokenizer.vocab.get("BOS_None", 1)
+        self.eos = self.tokenizer.vocab.get("EOS_None", 2)
+        self.stream = ShardedTokenStream(
+            shard_paths, self.block_size, bos_id=self.bos,
+            doc_start_frac=self.doc_start_frac)
+        self.shard_paths = shard_paths
+        self.augmenter = TokenAugmenter(self.tokenizer)
+        self.np = np
+        self._ready = True
+
+    def mixture(self) -> list[dict]:
+        if not self._ready:
+            self._init()
+        by_tag: dict[str, dict] = {}
+        for path, w, shard in zip(self.shard_paths, self.stream.weights,
+                                  self.stream.shards):
+            parts = path.stem.split("_")
+            tag = parts[1] if len(parts) == 3 else "(untagged)"
+            d = by_tag.setdefault(tag, {"tag": tag, "tokens": 0, "prob": 0.0,
+                                        "shards": 0})
+            d["tokens"] += int(len(shard))
+            d["prob"] += float(w)
+            d["shards"] += 1
+        return sorted(by_tag.values(), key=lambda d: -d["prob"])
+
+    def sample(self, out_dir: Path, n: int, rng) -> list[dict]:
+        if not self._ready:
+            self._init()
+        np = self.np
+        nrng = np.random.default_rng(rng.randrange(2**32))
+        out = []
+        for _ in range(n):
+            si = int(nrng.choice(len(self.stream.shards), p=self.stream.weights))
+            shard = self.stream.shards[si]
+            starts = self.stream.doc_starts[si]
+            anchored = bool(len(starts)) and nrng.random() < self.doc_start_frac
+            if anchored:
+                start = int(starts[nrng.integers(0, len(starts))])
+            else:
+                start = int(nrng.integers(0, len(shard) - self.block_size - 1))
+            chunk = shard[start : start + self.block_size + 1].astype(np.int64)
+
+            # draw augmentation exactly like TokenAugmenter.__call__, but
+            # keep the drawn parameters so the row can display them
+            aug = self.augmenter
+            shift = int(nrng.integers(-aug.max_pitch_shift, aug.max_pitch_shift + 1))
+            jitter = int(nrng.integers(-aug.max_velocity_jitter,
+                                       aug.max_velocity_jitter + 1))
+            while shift != 0 and aug.clip_tables[shift][chunk].any():
+                shift -= 1 if shift > 0 else -1
+            win = chunk
+            if shift != 0:
+                win = np.where(aug._drum_positions(chunk), chunk,
+                               aug.pitch_tables[shift][chunk])
+            if jitter != 0:
+                win = aug.velocity_tables[jitter][win]
+
+            source = self.shard_paths[si].stem
+            name = f"window_{start}_{nrng.integers(1e6)}.mid"
+            meta = {
+                "source_shard": source,
+                "window": "doc-start anchored" if anchored else "uniform",
+                "augmentation": f"pitch {shift:+d}, velocity {jitter:+d} bin",
+                "contains_BOS": int((win == self.bos).sum()),
+                "contains_EOS": int((win == self.eos).sum()),
+            }
+            try:
+                # strip specials before decode; playback is what remains
+                clean = [int(t) for t in win if t not in (self.bos, self.eos, 0)]
+                self.tokenizer.decode(clean).dump_midi(out_dir / name)
+                out.append({"file": name, "meta": meta})
+            except Exception as e:
+                meta["decode_error"] = type(e).__name__
+                out.append({"file": None, "meta": meta})
+        return out
+
+
 # ------------------------- pipeline views ---------------------------------- #
 
 class PipelineViewer:
@@ -278,6 +387,13 @@ def build_app(repo_root: Path) -> Flask:
     if prompts_dir.exists():
         samplers["prompts (local)"] = sample_local(prompts_dir)
 
+    import os
+    corpus_dir = Path(os.environ.get(
+        "MIDIGENAI_CORPUS", str(Path.home() / "midigenai_data" / "corpus_pilot")))
+    window_sampler = TrainingWindowSampler(corpus_dir)
+    samplers["training windows (corpus)"] = \
+        lambda d, n, r: window_sampler.sample(d, n, r)
+
     app = Flask(__name__,
                 template_folder=str(Path(__file__).parent.parent / "templates"))
     rng = random.Random()
@@ -290,6 +406,14 @@ def build_app(repo_root: Path) -> Flask:
     @app.route("/api/datasets")
     def datasets():
         return jsonify({"datasets": sorted(samplers)})
+
+    @app.route("/api/mixture")
+    def mixture():
+        try:
+            rows = window_sampler.mixture()
+        except Exception as e:
+            return jsonify({"error": str(e)}), 503
+        return jsonify({"rows": rows, "corpus": str(corpus_dir)})
 
     @app.route("/api/sizes")
     def sizes():
@@ -342,8 +466,11 @@ def build_app(repo_root: Path) -> Flask:
                 if it["file"]:
                     row["stats"] = note_stats(ds_dir / it["file"])
                     row["url"] = f"/midi/{ds_dir.name}/{it['file']}"
-                    row["pipeline"] = viewer.views(
-                        ds_dir / it["file"], ds_dir, ds_dir.name)
+                    if not ds.startswith("training windows"):
+                        # pipeline views re-tokenize a source file; training
+                        # windows already ARE the pipeline output
+                        row["pipeline"] = viewer.views(
+                            ds_dir / it["file"], ds_dir, ds_dir.name)
                 f.write(json.dumps(row) + "\n")
                 rows.append(row)
         return jsonify({"dataset": ds, "rows": rows})

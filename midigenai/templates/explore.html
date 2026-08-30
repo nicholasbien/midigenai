@@ -37,6 +37,10 @@
     <span id="status" class="sub" style="margin:0"></span>
   </div>
   <div id="err" class="err"></div>
+  <details id="mixture-box" style="margin-bottom:10px">
+    <summary style="cursor:pointer; font-size:13px; color:#444; font-weight:600">Training mixture (built corpus)</summary>
+    <div id="mixture" style="margin-top:8px" class="sub">loading…</div>
+  </details>
   <details id="sizes-box" open style="margin-bottom:16px">
     <summary style="cursor:pointer; font-size:13px; color:#444; font-weight:600">Corpus sizes</summary>
     <div id="sizes" style="margin-top:8px"></div>
@@ -148,8 +152,26 @@ async function loadSizes() {
   } catch (e) {}
 }
 
+async function loadMixture() {
+  const el = document.getElementById('mixture');
+  try {
+    const res = await fetch('/api/mixture');
+    const d = await res.json();
+    if (!res.ok) { el.textContent = d.error; return; }
+    const tot = d.rows.reduce((a, r) => a + r.tokens, 0);
+    el.innerHTML = `<table><thead><tr><th>source</th><th style="text-align:right">tokens</th>
+      <th style="text-align:right">share of corpus</th><th style="text-align:right">sampling probability</th></tr></thead><tbody>` +
+      d.rows.map(r => `<tr><td>${r.tag}</td>
+        <td style="text-align:right">${(r.tokens/1e6).toFixed(0)}M</td>
+        <td style="text-align:right">${(100*r.tokens/tot).toFixed(1)}%</td>
+        <td style="text-align:right">${(100*r.prob).toFixed(1)}%</td></tr>`).join('') +
+      `</tbody></table><div class="note">${d.corpus} — sampling probability equals token share unless --mixture weights are set. Pick "training windows (corpus)" above to hear actual training windows (augmented, doc-start-anchored 20% of the time).</div>`;
+  } catch (e) { el.textContent = 'corpus not built yet'; }
+}
+
 init();
 loadSizes();
+loadMixture();
 </script>
 </body>
 </html>
