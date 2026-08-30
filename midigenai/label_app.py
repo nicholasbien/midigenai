@@ -49,13 +49,13 @@ def load_generator(args, side: str):
     hubv = getattr(args, f"hub_version{'_b' if side == 'b' else ''}", None)
     if side == "b" and ckpt is None and hubv is None:
         return None, None  # no distinct B model -> self-comparison
-    from midigenai.generate import V2Generator
+    from midigenai.generate import Generator
     if ckpt:
         tok = getattr(args, f"tokenizer{'_b' if side == 'b' else ''}", None)
-        return V2Generator(ckpt, tok), Path(ckpt).stem
-    from midigenai.hub import DEFAULT_VERSION, load_v2_from_hub
+        return Generator(ckpt, tok), Path(ckpt).stem
+    from midigenai.hub import DEFAULT_VERSION, load_from_hub
     version = hubv or DEFAULT_VERSION
-    return load_v2_from_hub(version=version), version
+    return load_from_hub(version=version), version
 
 
 class PairFactory:
