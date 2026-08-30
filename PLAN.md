@@ -33,13 +33,13 @@ we scale to 202M.
 
 ### 1. Training pipeline fixes (prereq for the long run)
 
-- [ ] Wire pitch-shift / velocity-jitter augmentation into the training data path
+- [x] Wire pitch-shift / velocity-jitter augmentation into the training data path
       (on-the-fly in `ShardedTokenStream`, cheap token-level remap)
-- [ ] Train at block 2048 for medium+ (config default, not just a flag)
-- [ ] Checkpoint resume (`--resume`) — long Modal runs must survive preemption
-- [ ] WSD (warmup–stable–decay) LR schedule option so run length can be extended
+- [x] Train at block 2048 for medium+ (config default, not just a flag)
+- [x] Checkpoint resume (`--resume`) — long Modal runs must survive preemption
+- [x] WSD (warmup–stable–decay) LR schedule option so run length can be extended
       without re-committing to a cosine horizon
-- [ ] Structured metrics logging (CSV/JSONL per step; wandb optional)
+- [x] Structured metrics logging (CSV/JSONL per step; wandb optional)
 
 ### 2. Data quality (current corpus)
 
@@ -69,21 +69,21 @@ we scale to 202M.
 
 ### 5. Human preference data at volume (local labeling app)
 
-- [ ] `v2/label_app.py`: local Flask app that *generates pairs live* from the
+- [x] `v2/label_app.py`: local Flask app that *generates pairs live* from the
       current model (hub checkpoint or local), pre-generates a queue in the
       background so labeling never waits, plays via html-midi-player, keyboard
       shortcuts (A / B / tie / both-bad / replay / skip)
-- [ ] Log everything needed for training: prompt file + token ids, both
+- [x] Log everything needed for training: prompt file + token ids, both
       continuations' token ids, model version, sampling params, seed, timestamps
       — JSONL + saved MIDIs, append-only
-- [ ] Supports cross-model pairs (checkpoint A vs checkpoint B) for eval, and
+- [x] Supports cross-model pairs (checkpoint A vs checkpoint B) for eval, and
       same-model pairs for preference/reward data
 - [ ] Fix the public site loop separately: Railway volume (or durable store) +
       full metadata logging + v2 serving (site currently serves v1)
 
 ### 6. Reward alignment → RL
 
-- [ ] `v2/reward_align.py`: compute the metric vector for each continuation,
+- [x] `v2/reward_align.py`: compute the metric vector for each continuation,
       fit Bradley–Terry over metric differences on human pairs, report held-out
       agreement per metric and for the fitted reward
 - [ ] Gate: only use a programmatic reward for GRPO if it predicts human
@@ -105,6 +105,14 @@ accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
 
+- 2026-08-30: Workstream 1 implemented (augmentation wired with drum-aware
+  pitch shift, WSD schedule, resume with optimizer state, metrics.csv, block
+  2048 default on Modal, periodic Modal volume flush). Labeling app
+  (`v2/label_app.py`) and reward alignment (`v2/reward_align.py`) implemented
+  and smoke-tested end-to-end. First alignment run on the 62 historical v1
+  pairs: no single metric beats chance convincingly, but the fitted
+  Bradley–Terry combination reaches 0.66 leave-one-out accuracy — right at
+  the usability threshold; needs fresh v2-era labels to trust.
 - 2026-08-30: Plan created. Historical preference data consolidated into
   `evals/preferences/` (62 records, 38 pairs, v1-era). Confirmed Railway service
   has no volume and no new preference rows since deploy.

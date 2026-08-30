@@ -14,7 +14,87 @@ from __future__ import annotations
 import random
 from typing import Sequence
 
+import numpy as np
 from miditok import MIDILike
+
+_NOT_A_PROGRAM = np.iinfo(np.int64).min
+
+
+class TokenAugmenter:
+    """
+    Vectorized on-the-fly augmentation over token-id arrays, for use in the
+    training data path. Precomputes one vocab-sized remap table per pitch shift
+    and per velocity jitter, so augmenting a sequence is fancy indexing.
+
+    Drum handling: NoteOn/NoteOff tokens are shared across instruments, so we
+    reconstruct the active program at each position (forward-fill from Program_*
+    tokens) and leave positions under Program_-1 (drums) unshifted. A window
+    that starts mid-drum-track before any Program token is assumed non-drum —
+    same assumption the decoder makes.
+    """
+
+    def __init__(self, tokenizer: MIDILike, max_pitch_shift: int = 6,
+                 max_velocity_jitter: int = 1):
+        vocab = tokenizer.vocab
+        vocab_size = len(vocab)
+        self.max_pitch_shift = max_pitch_shift
+        self.max_velocity_jitter = max_velocity_jitter
+
+        self.pitch_tables: dict[int, np.ndarray] = {}
+        for s in range(-max_pitch_shift, max_pitch_shift + 1):
+            table = np.arange(vocab_size, dtype=np.int64)
+            for name, tid in vocab.items():
+                for prefix in ("NoteOn_", "NoteOff_"):
+                    if name.startswith(prefix):
+                        shifted = f"{prefix}{int(name[len(prefix):]) + s}"
+                        if shifted in vocab:
+                            table[tid] = vocab[shifted]
+                        # out of range -> leave unchanged
+            self.pitch_tables[s] = table
+
+        # Velocity bins ordered by value; jitter moves to an adjacent bin,
+        # clamped at the ends.
+        vel_bins = sorted(
+            (int(name.split("_")[1]), tid)
+            for name, tid in vocab.items() if name.startswith("Velocity_")
+        )
+        self.velocity_tables: dict[int, np.ndarray] = {}
+        for d in range(-max_velocity_jitter, max_velocity_jitter + 1):
+            table = np.arange(vocab_size, dtype=np.int64)
+            for i, (_, tid) in enumerate(vel_bins):
+                j = min(max(i + d, 0), len(vel_bins) - 1)
+                table[tid] = vel_bins[j][1]
+            self.velocity_tables[d] = table
+
+        # Program value per token id (sentinel where the token isn't Program_*).
+        self.program_value = np.full(vocab_size, _NOT_A_PROGRAM, dtype=np.int64)
+        for name, tid in vocab.items():
+            if name.startswith("Program_"):
+                try:
+                    self.program_value[tid] = int(name.split("_")[1])
+                except ValueError:
+                    pass
+
+    def _drum_positions(self, seq: np.ndarray) -> np.ndarray:
+        prog = self.program_value[seq]
+        is_prog = prog != _NOT_A_PROGRAM
+        last_idx = np.where(is_prog, np.arange(len(seq)), -1)
+        last_idx = np.maximum.accumulate(last_idx)
+        filled = np.where(last_idx >= 0, prog[np.clip(last_idx, 0, None)], 0)
+        return filled == -1
+
+    def __call__(self, seq: np.ndarray, rng: np.random.Generator) -> np.ndarray:
+        """Augment one int64 token sequence (a full training window)."""
+        shift = int(rng.integers(-self.max_pitch_shift, self.max_pitch_shift + 1))
+        jitter = int(rng.integers(-self.max_velocity_jitter,
+                                  self.max_velocity_jitter + 1))
+        out = seq
+        if shift != 0:
+            shifted = self.pitch_tables[shift][seq]
+            out = np.where(self._drum_positions(seq), seq, shifted)
+        if jitter != 0:
+            out = self.velocity_tables[jitter][out]
+        return out
 
 
 def pitch_shift(
