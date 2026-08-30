@@ -141,6 +141,7 @@ def build(
     limit: int | None = None,
     workers: int | None = None,
     track_views: int = TRACK_VIEWS,
+    tag: str = "",
 ) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
     tokenizer = build_tokenizer()
@@ -152,8 +153,12 @@ def build(
     eos_id = tokenizer["EOS_None"] if "EOS_None" in tokenizer.vocab else tokenizer.vocab.get("EOS", 2)
 
     shards_dir = out_dir / "shards"
-    train_writer = ShardWriter.create(shards_dir, "train", shard_tokens)
-    val_writer = ShardWriter.create(shards_dir, "val", shard_tokens)
+    # a tag names the source in the shard files (train_<tag>_00000.npy) so
+    # training can apply per-source mixture weights
+    train_prefix = f"train_{tag}" if tag else "train"
+    val_prefix = f"val_{tag}" if tag else "val"
+    train_writer = ShardWriter.create(shards_dir, train_prefix, shard_tokens)
+    val_writer = ShardWriter.create(shards_dir, val_prefix, shard_tokens)
 
     n_files = 0
     n_failed = 0
@@ -236,6 +241,8 @@ if __name__ == "__main__":
                         help="parallel tokenizer workers (default: cpu_count-1)")
     parser.add_argument("--track-views", type=int, default=TRACK_VIEWS,
                         help="extra single-track docs per multi-track file (0 disables)")
+    parser.add_argument("--tag", default="",
+                        help="source tag baked into shard names for mixture weighting")
     args = parser.parse_args()
     build(
         manifest_path=args.manifest,
@@ -245,4 +252,5 @@ if __name__ == "__main__":
         limit=args.limit,
         workers=args.workers,
         track_views=args.track_views,
+        tag=args.tag,
     )
