@@ -151,7 +151,9 @@ class PairFactory:
 
 
 def build_app(args) -> Flask:
-    out_dir = Path(args.out)
+    # absolute: Flask's send_from_directory resolves relative paths against
+    # the app root (v2/), not the CWD
+    out_dir = Path(args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     labels_path = out_dir / "labels.jsonl"
 
