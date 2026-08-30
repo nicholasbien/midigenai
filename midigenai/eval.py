@@ -15,7 +15,7 @@ fair regardless of tokenization. Metrics chosen to surface common failure modes:
                         Lower = more grid-aligned.
 
 Usage:
-    python -m v2.eval_v2 dir_a dir_b --label-a v1 --label-b v2 --out evals/pilot.json
+    python -m midigenai.eval dir_a dir_b --label-a v1 --label-b v2 --out evals/pilot.json
 """
 
 from __future__ import annotations

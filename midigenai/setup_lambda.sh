@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Bootstrap a fresh Lambda Labs H100 instance for openmusenet2 v2 training.
+# Bootstrap a fresh Lambda Labs H100 instance for midigenai training.
 #
 # Usage (after SSHing in):
-#   curl -L https://raw.githubusercontent.com/nicholasbien/openmusenet/v2-scaffold/v2/setup_lambda.sh | bash
+#   curl -L https://raw.githubusercontent.com/nicholasbien/midigenai/main/midigenai/setup_lambda.sh | bash
 # Or:
-#   git clone -b v2-scaffold git@github.com:nicholasbien/openmusenet.git
-#   cd openmusenet && bash v2/setup_lambda.sh
+#   git clone git@github.com:nicholasbien/midigenai.git
+#   cd midigenai && bash midigenai/setup_lambda.sh
 #
 # Defaults:
 #   - clones repo to ~/openmusenet
@@ -53,21 +53,21 @@ pip install -r requirements.txt
 
 echo "==> download datasets: $DATASETS"
 mkdir -p "$DATA_ROOT/raw"
-python -m v2.data.download --root "$DATA_ROOT/raw" --datasets $DATASETS
+python -m midigenai.data.download --root "$DATA_ROOT/raw" --datasets $DATASETS
 
 echo "==> clean (quality filters + exact dedup)"
-python -m v2.data.clean \
+python -m midigenai.data.clean \
   --input "$DATA_ROOT/raw" \
   --manifest "$DATA_ROOT/manifest.jsonl"
 
 echo "==> near-duplicate dedup (MinHash over pitch-interval n-grams)"
-python -m v2.data.dedup \
+python -m midigenai.data.dedup \
   --manifest "$DATA_ROOT/manifest.jsonl" \
   --out "$DATA_ROOT/manifest_deduped.jsonl" \
   --clusters "$DATA_ROOT/dup_clusters.json"
 
 echo "==> tokenize + shard"
-python -m v2.data.build_dataset \
+python -m midigenai.data.build_dataset \
   --manifest "$DATA_ROOT/manifest_deduped.jsonl" \
   --out "$DATA_ROOT/v2_corpus"
 
@@ -88,7 +88,7 @@ TMUX_SESSION="${TMUX_SESSION:-train}"
 tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 tmux new-session -d -s "$TMUX_SESSION" -- bash -c "
   cd $REPO_DIR && source .venv/bin/activate && \
-  python -m v2.train_v2 \
+  python -m midigenai.train \
     --data '$DATA_ROOT/v2_corpus' \
     --out '$RUN_DIR' \
     --size '$SIZE' \

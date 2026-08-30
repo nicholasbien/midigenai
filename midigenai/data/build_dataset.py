@@ -29,7 +29,7 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-from v2.tokenizer_v2 import build_tokenizer, encode_midi, save_tokenizer
+from midigenai.tokenizer import build_tokenizer, encode_midi, save_tokenizer
 
 
 SHARD_TOKENS = 50_000_000  # 100 MB per shard at uint16

@@ -11,7 +11,7 @@ Samplers pull small random samples without fetching whole archives:
 - prompts    local evals/prompts dir (instant sanity check)
 
 Run:
-    python -m v2.data.explore_app
+    python -m midigenai.data.explore_app
     # open http://localhost:7790
 
 Samples are cached under evals/dataset_samples/<dataset>/ with a meta.jsonl.

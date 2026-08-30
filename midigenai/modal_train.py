@@ -1,5 +1,5 @@
 """
-Modal training: train a v2 model on Modal-hosted H100 / A100.
+Modal training: train a midigenai model on Modal-hosted H100 / A100.
 
 Cost reference (Modal pricing as of 2026-05):
     H100  ~$3.99/hr  — fastest, best for any model >50M
@@ -14,7 +14,7 @@ Upload corpus once (from wherever the shards live, e.g. Lambda):
     modal volume put openmusenet2-v2-corpus /home/ubuntu/data/v2_corpus_full /
 
 Launch training:
-    modal run v2/modal_train.py --size medium --max-steps 15000 --gpu H100
+    modal run midigenai/modal_train.py --size medium --max-steps 15000 --gpu H100
 
 Pull a checkpoint back:
     modal volume get openmusenet2-v2-runs <run-name>/ckpt_final.pt ./
@@ -37,7 +37,7 @@ runs_volume = Volume.from_name(RUNS_VOLUME_NAME, create_if_missing=True)
 image = (
     Image.debian_slim(python_version="3.11")
     .pip_install("torch", "miditok", "symusic", "numpy", "tqdm")
-    .add_local_python_source("v2")
+    .add_local_python_source("midigenai")
 )
 
 
@@ -70,7 +70,7 @@ def train(
     from datetime import datetime
     from pathlib import Path
 
-    from v2.train_v2 import train as train_fn, TrainConfig
+    from midigenai.train import train as train_fn, TrainConfig
 
     if not run_name:
         run_name = f"{size}_{datetime.now():%Y%m%d_%H%M%S}"

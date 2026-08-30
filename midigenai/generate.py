@@ -1,5 +1,5 @@
 """
-v2 inference: load a trained checkpoint, encode MIDI input, stream a continuation.
+midigenai inference: load a trained checkpoint, encode MIDI input, stream a continuation.
 
 Two modes:
 - generate_ids(): yields token IDs as they're produced (for low-level use)
@@ -17,8 +17,8 @@ from typing import Iterator
 
 import torch
 
-from .model_v2 import ModelConfig, MusicTransformer
-from .tokenizer_v2 import build_tokenizer, load_tokenizer
+from .model import ModelConfig, MusicTransformer
+from .tokenizer import build_tokenizer, load_tokenizer
 
 
 def _auto_device() -> torch.device:
@@ -48,7 +48,7 @@ class Note:
     program: int = 0
 
 
-class V2Generator:
+class Generator:
     def __init__(
         self,
         checkpoint_path: str | Path,
@@ -89,7 +89,7 @@ class V2Generator:
 
         if backend == "mlx":
             import mlx.core as mx
-            from .model_v2_mlx import load_model
+            from .model_mlx import load_model
             mlx_dtype = {
                 torch.float16: mx.float16,
                 torch.bfloat16: mx.bfloat16,
@@ -154,7 +154,7 @@ class V2Generator:
             f.write(data)
             tmp = f.name
         try:
-            return V2Generator.detect_tempo(tmp)
+            return Generator.detect_tempo(tmp)
         finally:
             Path(tmp).unlink(missing_ok=True)
 
@@ -268,7 +268,7 @@ if __name__ == "__main__":
                         help="auto uses MLX when installed (Apple silicon), else torch")
     args = parser.parse_args()
 
-    g = V2Generator(args.checkpoint, args.tokenizer, dtype=args.dtype,
+    g = Generator(args.checkpoint, args.tokenizer, dtype=args.dtype,
                     backend=args.backend)
     prompt = g.encode_midi_file(args.input_midi)
     tempo = args.tempo_bpm if args.tempo_bpm else g.detect_tempo(args.input_midi)

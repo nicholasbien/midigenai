@@ -1,5 +1,5 @@
 """
-v2 tokenizer: thin wrapper around MidiTok's MIDILike (event-based) scheme.
+midigenai tokenizer: thin wrapper around MidiTok's MIDILike (event-based) scheme.
 
 Choices:
 - MIDILike over REMI: preserves microtiming for live jamming where user input

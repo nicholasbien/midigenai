@@ -8,10 +8,10 @@ waits on the model. Sides are randomized per pair. Votes append to an
 append-only JSONL; MIDI + per-pair metadata land next to it.
 
 Run (model pulled from the HF hub by default):
-    python -m v2.label_app --prompts evals/prompts
+    python -m midigenai.label_app --prompts evals/prompts
 
 Compare two checkpoints instead of self-vs-self:
-    python -m v2.label_app --prompts evals/prompts \\
+    python -m midigenai.label_app --prompts evals/prompts \\
         --hub-version v2-100m --hub-version-b v2-prod
 
 Keyboard: 1 = left, 2 = right, t = tie, x = both bad, s = skip.
@@ -49,11 +49,11 @@ def load_generator(args, side: str):
     hubv = getattr(args, f"hub_version{'_b' if side == 'b' else ''}", None)
     if side == "b" and ckpt is None and hubv is None:
         return None, None  # no distinct B model -> self-comparison
-    from v2.generate_v2 import V2Generator
+    from midigenai.generate import V2Generator
     if ckpt:
         tok = getattr(args, f"tokenizer{'_b' if side == 'b' else ''}", None)
         return V2Generator(ckpt, tok), Path(ckpt).stem
-    from v2.hub import DEFAULT_VERSION, load_v2_from_hub
+    from midigenai.hub import DEFAULT_VERSION, load_v2_from_hub
     version = hubv or DEFAULT_VERSION
     return load_v2_from_hub(version=version), version
 

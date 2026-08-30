@@ -12,10 +12,10 @@ consecutive sorted note pitches), so detection is invariant to transposition
 
 Pipeline position: run on a clean.py manifest, before build_dataset.py:
 
-    python -m v2.data.clean --input data/raw --manifest data/manifest.jsonl
-    python -m v2.data.dedup --manifest data/manifest.jsonl \\
+    python -m midigenai.data.clean --input data/raw --manifest data/manifest.jsonl
+    python -m midigenai.data.dedup --manifest data/manifest.jsonl \\
         --out data/manifest_deduped.jsonl --clusters data/dup_clusters.json
-    python -m v2.data.build_dataset --manifest data/manifest_deduped.jsonl ...
+    python -m midigenai.data.build_dataset --manifest data/manifest_deduped.jsonl ...
 
 Within a duplicate cluster the file with the most notes is kept (most complete
 transcription wins).
