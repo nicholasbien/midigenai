@@ -131,6 +131,15 @@ accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
 
+- 2026-08-30 (night, cont.): Dedup tightened after human audit found false
+  positives at 0.5 verified-Jaccard: now 0.65 + low-shingle exemption
+  (<64 distinct interval 6-grams never clustered). Strict rerun on the pilot
+  manifest rescued 2,415 of 29,437 previously-dropped files (~8% FP rate at
+  the old threshold); 27,022 true near-dups still removed. corpus_full
+  builds with strict settings tonight; corpus_pilot on Modal retains the
+  loose dedup (fine for config comparisons, not for the big run). Audit view
+  now serves strict clusters for a second listening pass.
+
 - 2026-08-30 (later): NLL scoring RETIRED as a quality signal — both tails
   human-audited: high-NLL files sound fine (unfamiliarity, not corruption)
   and low-NLL files are just more repetitive (predictability, not quality).
