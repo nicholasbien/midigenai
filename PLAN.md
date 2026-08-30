@@ -131,6 +131,19 @@ accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
 
+- 2026-08-30 (night): Focus shifted to nailing quality of corpus_pilot before
+  scaling data. Large downloads PAUSED mid-flight (gigamidi complete; lamd
+  3.1/9.2GB, aria 0.6/5.4GB partial — resume for the big Modal run with:
+  `DATA_ROOT=~/midigenai_data OUT=~/midigenai_data/corpus_full
+  SOURCES="lakh maestro pop909 giantmidi lamd gigamidi aria"
+  bash midigenai/data/build_pilot_corpus.sh` — downloads resume, clean
+  manifests reuse). New quality tooling: explorer "dup clusters (audit)"
+  plays real dedup clusters side by side (18,638 clusters found in the pilot
+  corpus — audit for false positives); midigenai/score_corpus.py scores files
+  by NLL under a checkpoint and "quality extremes (scored)" plays both tails
+  (500-file scoring run against v2-100m in progress). corpus_pilot uploading
+  to Modal volume for the pilot sweep.
+
 - 2026-08-30 (evening): Post-merge (#11 + #13 rename). New on data-improvements
   branch: track-view sampling in build_dataset (full mix + up to 2 solo-track
   docs per multi-track file — matches how users jam single lines); EOS token

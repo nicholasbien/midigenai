@@ -141,6 +141,54 @@ def _sample_gigamidi_parquet(parquet: str, out_dir: Path, n: int,
     return out
 
 
+def sample_dup_clusters(clusters_path: Path):
+    """Audit near-dup dedup precision: listen to members of real clusters
+    side by side. If two rows in a cluster are different songs, the threshold
+    is too loose (false positive = good data silently deleted)."""
+    def sampler(out_dir: Path, n: int, rng: random.Random) -> list[dict]:
+        clusters = [c for c in json.loads(clusters_path.read_text()) if len(c) > 1]
+        picked = rng.sample(clusters, min(max(n // 2, 1), len(clusters)))
+        rows = []
+        for cluster in picked:
+            cid = rng.randrange(10_000)
+            for mi, path in enumerate(cluster[:3]):
+                src = Path(path)
+                if not src.exists():
+                    continue
+                name = f"cluster{cid}_{mi}_{src.name}"
+                (out_dir / name).write_bytes(src.read_bytes())
+                rows.append({"file": name, "meta": {
+                    "cluster": f"#{cid}", "member": f"{mi + 1} of {len(cluster)}",
+                    "note": "keeper = most notes; others were dropped",
+                    "source": src.name}})
+        return rows
+    return sampler
+
+
+def sample_quality_extremes(scores_path: Path):
+    """Listen to the corpus's best and worst files by model NLL (from
+    midigenai.score_corpus). High NLL = the model finds it surprising —
+    junk, corruption, or genuinely novel music; your ears decide which."""
+    def sampler(out_dir: Path, n: int, rng: random.Random) -> list[dict]:
+        rows = [json.loads(line) for line in scores_path.open() if line.strip()]
+        rows.sort(key=lambda r: r["nll"])
+        k = max(n // 2, 1)
+        picks = [("best", r, i + 1) for i, r in enumerate(rows[:k])] +                 [("WORST", r, len(rows) - i) for i, r in enumerate(reversed(rows[-k:]))]
+        out = []
+        for label, r, rank in picks:
+            src = Path(r["path"])
+            if not src.exists():
+                continue
+            name = f"{label.lower()}_{rank}_{src.name}"
+            (out_dir / name).write_bytes(src.read_bytes())
+            out.append({"file": name, "meta": {
+                "quality": label, "rank": f"{rank}/{len(rows)}",
+                "nll_per_token": round(r["nll"], 3),
+                "n_tokens_scored": r.get("n_tokens", "")}})
+        return out
+    return sampler
+
+
 def sample_local(dir_path: Path):
     def sampler(out_dir: Path, n: int, rng: random.Random) -> list[dict]:
         files = sorted(dir_path.glob("*.mid"))
@@ -404,8 +452,15 @@ def build_app(repo_root: Path) -> Flask:
         return corpus_samplers
 
     def all_samplers():
-        return {**samplers,
-                **{name: ws.sample for name, ws in discover_corpora().items()}}
+        active = {**samplers,
+                  **{name: ws.sample for name, ws in discover_corpora().items()}}
+        clusters = data_root / "dup_clusters.json"
+        if clusters.exists():
+            active["dup clusters (audit)"] = sample_dup_clusters(clusters)
+        scores = data_root / "scores_pilot.jsonl"
+        if scores.exists():
+            active["quality extremes (scored)"] = sample_quality_extremes(scores)
+        return active
 
     app = Flask(__name__,
                 template_folder=str(Path(__file__).parent.parent / "templates"))
