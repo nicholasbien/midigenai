@@ -131,6 +131,17 @@ accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
 
+- 2026-08-30 (late): DECISION — no NLL junk filter. Human audit of the
+  worst-scored tail (500-file scoring under v2-100m, median 0.68, p99 2.13)
+  found the high-NLL files sound completely fine: the scorer flags
+  unfamiliar-to-v2-100m music, not corruption. Heuristic filters + dedup are
+  evidently already catching real junk. NLL scoring is retained only for
+  (a) a low-end repetition check (loop spam -> per-file token cap, not a
+  filter) and (b) future re-scoring with a pilot-corpus-trained checkpoint,
+  which removes the old model's style bias. corpus_full is no longer gated
+  on threshold selection; the dup-cluster audit remains the one open
+  quality gate.
+
 - 2026-08-30 (night): Focus shifted to nailing quality of corpus_pilot before
   scaling data. Large downloads PAUSED mid-flight (gigamidi complete; lamd
   3.1/9.2GB, aria 0.6/5.4GB partial — resume for the big Modal run with:
