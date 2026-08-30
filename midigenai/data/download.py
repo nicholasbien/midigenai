@@ -133,29 +133,36 @@ def download_lamd_via_hf(root: Path) -> Path:
         raise RuntimeError("pip install huggingface_hub") from e
 
     archive_name = "Los-Angeles-MIDI-Dataset-Ver-4-0-CC-BY-NC-SA.zip"
-    archive_path = target / archive_name
-    if not archive_path.exists():
-        print(f"[download] {archive_name} (~9 GB) ...")
-        hf_hub_download(
-            repo_id="projectlosangeles/Los-Angeles-MIDI-Dataset",
-            repo_type="dataset",
-            filename=archive_name,
-            local_dir=str(target),
-        )
+    archive_path = _hf_download_archive(
+        "projectlosangeles/Los-Angeles-MIDI-Dataset", archive_name, target)
     _extract(archive_path, target)
     return target
 
 
-def _hf_download_archive(repo_id: str, filename: str, target: Path) -> Path:
+def _hf_download_archive(repo_id: str, filename: str, target: Path,
+                         attempts: int = 5) -> Path:
+    """Download with retries — multi-GB pulls hit transient resets, and
+    hf_hub_download resumes partial files on retry."""
     try:
         from huggingface_hub import hf_hub_download
     except ImportError as e:
         raise RuntimeError("pip install huggingface_hub") from e
+    import time
     archive = target / filename
-    if not archive.exists():
-        print(f"[download] {repo_id}/{filename} ...")
-        hf_hub_download(repo_id=repo_id, repo_type="dataset",
-                        filename=filename, local_dir=str(target))
+    if archive.exists():
+        return archive
+    for attempt in range(attempts):
+        try:
+            print(f"[download] {repo_id}/{filename} (attempt {attempt + 1}) ...")
+            hf_hub_download(repo_id=repo_id, repo_type="dataset",
+                            filename=filename, local_dir=str(target))
+            return archive
+        except Exception as e:
+            if attempt == attempts - 1:
+                raise
+            wait = 30 * (attempt + 1)
+            print(f"[download] failed ({type(e).__name__}); retrying in {wait}s")
+            time.sleep(wait)
     return archive
 
 
