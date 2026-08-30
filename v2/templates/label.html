@@ -19,6 +19,9 @@
   button { padding: 9px 14px; border: 1px solid #ccc; background: white; border-radius: 6px; cursor: pointer; font-size: 13px; }
   button:hover { background: #f0f0f0; }
   kbd { background: #eee; border-radius: 3px; padding: 1px 5px; font-size: 11px; margin-left: 6px; }
+  .chips { margin-top: 8px; display: flex; gap: 6px; }
+  .chip { padding: 4px 10px; font-size: 12px; border-radius: 12px; color: #666; }
+  .chip.on { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
   .statusbar { display: flex; justify-content: space-between; font-size: 13px; color: #444; margin: 10px 0; }
   .waiting { text-align: center; color: #888; padding: 40px 0; font-size: 14px; }
   .flash { animation: flash 0.4s; }
@@ -28,7 +31,8 @@
 <body>
   <h1>midigenai — preference labeling</h1>
   <div class="sub">Listen to the prompt, then both continuations. Pick the better one.
-    <kbd>1</kbd> left &nbsp;<kbd>2</kbd> right &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip</div>
+    <kbd>1</kbd> left &nbsp;<kbd>2</kbd> right &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip
+    &nbsp;·&nbsp; flags (before voting): <kbd>q</kbd>/<kbd>w</kbd> degrades &nbsp;<kbd>e</kbd>/<kbd>r</kbd> too long</div>
   <div class="statusbar"><span id="count">0 labeled this session</span><span id="queue"></span></div>
   <div id="stage" class="card"><div class="waiting">warming up the model…</div></div>
 
@@ -70,10 +74,33 @@ async function loadNext() {
   }
 }
 
+let flags = { left: new Set(), right: new Set() };
+
+function flagChip(side, kind, label, key) {
+  const on = flags[side].has(kind);
+  return `<button class="chip${on ? ' on' : ''}" onclick="toggleFlag('${side}','${kind}')">${label}<kbd>${key}</kbd></button>`;
+}
+
+function toggleFlag(side, kind) {
+  if (flags[side].has(kind)) flags[side].delete(kind);
+  else flags[side].add(kind);
+  renderFlags();
+}
+
+function renderFlags() {
+  document.getElementById('flags-left').innerHTML =
+    flagChip('left', 'degrades', 'degrades', 'q') +
+    flagChip('left', 'too_long', 'too long', 'e');
+  document.getElementById('flags-right').innerHTML =
+    flagChip('right', 'degrades', 'degrades', 'w') +
+    flagChip('right', 'too_long', 'too long', 'r');
+}
+
 function render() {
   const p = current;
   const stage = document.getElementById('stage');
   const cross = p.left_model !== p.right_model;
+  flags = { left: new Set(), right: new Set() };
   stage.classList.add('flash');
   setTimeout(() => stage.classList.remove('flash'), 400);
   stage.innerHTML = `
@@ -85,10 +112,12 @@ function render() {
       <div class="opt" id="opt-left">
         <h3>Continuation 1</h3>
         <midi-player src="${p.left_url}" sound-font></midi-player>
+        <div class="chips" id="flags-left"></div>
       </div>
       <div class="opt" id="opt-right">
         <h3>Continuation 2</h3>
         <midi-player src="${p.right_url}" sound-font></midi-player>
+        <div class="chips" id="flags-right"></div>
       </div>
     </div>
     <div class="buttons">
@@ -100,6 +129,7 @@ function render() {
     </div>
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
   `;
+  renderFlags();
 }
 
 async function vote(choice) {
@@ -114,6 +144,7 @@ async function vote(choice) {
     choice,
     left_is: p.left_is, right_is: p.right_is,
     left_model: p.left_model, right_model: p.right_model,
+    flags: { left: [...flags.left], right: [...flags.right] },
   };
   try {
     await fetch('/api/vote', { method: 'POST',
@@ -130,7 +161,10 @@ async function vote(choice) {
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip' };
-  if (map[e.key]) { e.preventDefault(); vote(map[e.key]); }
+  if (map[e.key]) { e.preventDefault(); vote(map[e.key]); return; }
+  const flagMap = { q: ['left', 'degrades'], w: ['right', 'degrades'],
+                    e: ['left', 'too_long'], r: ['right', 'too_long'] };
+  if (flagMap[e.key]) { e.preventDefault(); toggleFlag(...flagMap[e.key]); }
 });
 
 fetchStats();

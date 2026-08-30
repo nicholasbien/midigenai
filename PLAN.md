@@ -43,9 +43,9 @@ we scale to 202M.
 
 ### 2. Data quality (current corpus)
 
-- [ ] Near-duplicate dedup: MinHash/LSH over pitch-interval n-grams, applied
+- [x] Near-duplicate dedup: MinHash/LSH over pitch-interval n-grams, applied
       before the train/val split (fixes leakage *and* wasted compute)
-- [ ] Stronger heuristic filters in `clean.py`: drum-only files, extreme note
+- [x] Stronger heuristic filters in `clean.py`: drum-only files, extreme note
       density (broken quantization), long internal silences, single-pitch spam
 - [ ] Perplexity filter: score corpus with the 25M pilot, inspect and drop tails
 - [ ] Source-weighted sampling: upsample curated sets (MAESTRO, POP909,
@@ -130,6 +130,20 @@ Lakh validation picks). Sessions:
 accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
+
+- 2026-08-30 (later): Workstream 2 core landed: v2/data/dedup.py (MinHash/LSH
+  over pitch-interval 6-grams, transposition/velocity/quantization-invariant;
+  19/20 synthetic near-dups caught on a 420-file test, ~0 false positives) is
+  wired into setup_lambda.sh between clean and build_dataset; clean.py gained
+  drum-only / single-pitch / density / long-silence filters with per-reason
+  drop accounting. Labeling UX from user feedback: continuations cut 512->256
+  tokens, per-side "degrades"/"too long" flags (q/w/e/r) recorded in labels,
+  drum-only seeds culled from evals/prompts (78 remain). reward_align gained
+  drift features (2nd-half minus 1st-half repetition/density/entropy from the
+  continuation tokens) so degradation is directly optimizable once v2 labels
+  exist. NOTE: repo working tree is shared with a parallel session
+  (live-session branch); this branch now works out of a git worktree at
+  ~/midigenai-improve.
 
 - 2026-08-30: Labeling protocol + calibration gates added. label_app gained
   blind repeat serving (--dup-rate); reward_align now does leave-one-prompt-out

@@ -55,14 +55,20 @@ echo "==> download datasets: $DATASETS"
 mkdir -p "$DATA_ROOT/raw"
 python -m v2.data.download --root "$DATA_ROOT/raw" --datasets $DATASETS
 
-echo "==> clean + dedup"
+echo "==> clean (quality filters + exact dedup)"
 python -m v2.data.clean \
   --input "$DATA_ROOT/raw" \
   --manifest "$DATA_ROOT/manifest.jsonl"
 
+echo "==> near-duplicate dedup (MinHash over pitch-interval n-grams)"
+python -m v2.data.dedup \
+  --manifest "$DATA_ROOT/manifest.jsonl" \
+  --out "$DATA_ROOT/manifest_deduped.jsonl" \
+  --clusters "$DATA_ROOT/dup_clusters.json"
+
 echo "==> tokenize + shard"
 python -m v2.data.build_dataset \
-  --manifest "$DATA_ROOT/manifest.jsonl" \
+  --manifest "$DATA_ROOT/manifest_deduped.jsonl" \
   --out "$DATA_ROOT/v2_corpus"
 
 echo "==> launch training in tmux (size=$SIZE max_steps=$MAX_STEPS)"

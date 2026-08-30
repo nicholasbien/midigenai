@@ -222,6 +222,14 @@ def build_app(args) -> Flask:
             "left_model": data.get("left_model", ""),
             "right_model": data.get("right_model", ""),
         }
+        # optional per-side quality flags ("degrades", "too_long", "too_short"),
+        # resolved to canonical a/b like the preference itself
+        flags = data.get("flags") or {}
+        record["flags"] = {
+            data.get(f"{side}_is", side): sorted(set(v))
+            for side, v in flags.items()
+            if side in ("left", "right") and isinstance(v, list) and v
+        }
         with labels_path.open("a") as f:
             f.write(json.dumps(record) + "\n")
         if choice in ("left", "right", "tie") and record["pair_id"]:
@@ -272,7 +280,8 @@ def main():
     p.add_argument("--hub-version-b", default=None)
     # sampling
     p.add_argument("--prompt-tokens", type=int, default=256)
-    p.add_argument("--max-new-tokens", type=int, default=512)
+    # ~64 notes / ~30-45s of music: enough to judge, short enough to label fast
+    p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--temperature", type=float, default=1.2)
     p.add_argument("--top-k", type=int, default=50)
     # plumbing
