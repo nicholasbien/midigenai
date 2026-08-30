@@ -73,8 +73,10 @@ class RMSNorm(nn.Module):
         self.eps = eps
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        rms = x.pow(2).mean(-1, keepdim=True).add(self.eps).rsqrt()
-        return (x * rms) * self.weight
+        # Mean-of-squares can overflow fp16's max (~65504); compute in fp32.
+        xf = x.float()
+        rms = xf.pow(2).mean(-1, keepdim=True).add(self.eps).rsqrt()
+        return (xf * rms).to(x.dtype) * self.weight
 
 
 def precompute_rope(head_dim: int, max_seq_len: int, base: float, device, dtype):
@@ -240,7 +242,8 @@ class MusicTransformer(nn.Module):
         cur = ids
         for _ in range(max_new_tokens):
             logits, kv_caches = self.forward(cur, kv_caches)
-            logits = logits[:, -1, :] / max(temperature, 1e-6)
+            # fp32 for top-k/softmax so half-precision inference samples cleanly
+            logits = logits[:, -1, :].float() / max(temperature, 1e-6)
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float("inf")
