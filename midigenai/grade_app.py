@@ -6,7 +6,7 @@ stem), randomizes left/right position to avoid bias, and records preferences
 to a CSV for use as RLHF training data.
 
 Run:
-    python -m v2.grade_app \\
+    python -m midigenai.grade_app \\
         --dir-a evals/v1_samples --label-a v1 \\
         --dir-b evals/v2_samples --label-b v2 \\
         --prompt-dir preselected_midi \\

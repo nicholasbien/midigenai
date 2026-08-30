@@ -7,7 +7,7 @@ stratified-samples across source datasets, and copies selected MIDIs into a
 candidate folder for hand-curation.
 
 Workflow:
-    1. python -m v2.data.sample_eval_set --manifest data/manifest_full.jsonl \\
+    1. python -m midigenai.data.sample_eval_set --manifest data/manifest_full.jsonl \\
            --out evals/eval_set_candidates --per-source 20
     2. Listen to each candidate, delete the bad ones (broken/awkward starts).
     3. mv what survives → evals/eval_set/  and commit.
@@ -26,7 +26,7 @@ import random
 import shutil
 from pathlib import Path
 
-from v2.data.browse_corpus import detect_source
+from midigenai.data.browse_corpus import detect_source
 
 
 # Must match build_dataset.py's split. Keep these constants in sync.

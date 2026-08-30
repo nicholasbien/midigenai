@@ -3,11 +3,11 @@ Tiny wrapper around the Lambda Cloud API.
 
 Usage:
     export LAMBDA_API_KEY=lambdaapi-...
-    python -m v2.lambda_provision list-types
-    python -m v2.lambda_provision launch --instance-type gpu_1x_h100_pcie --ssh-key mykey
-    python -m v2.lambda_provision wait <instance-id>
-    python -m v2.lambda_provision list
-    python -m v2.lambda_provision terminate <instance-id>
+    python -m midigenai.lambda_provision list-types
+    python -m midigenai.lambda_provision launch --instance-type gpu_1x_h100_pcie --ssh-key mykey
+    python -m midigenai.lambda_provision wait <instance-id>
+    python -m midigenai.lambda_provision list
+    python -m midigenai.lambda_provision terminate <instance-id>
 """
 
 from __future__ import annotations

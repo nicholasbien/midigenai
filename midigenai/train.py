@@ -15,11 +15,11 @@ Each step:
 
 Run examples:
     # pilot
-    python -m v2.train_v2 --data /data/v2_corpus --size pilot \\
+    python -m midigenai.train --data /data/v2_corpus --size pilot \\
         --batch-size 16 --grad-accum 4 --max-steps 5000
 
     # production
-    python -m v2.train_v2 --data /data/v2_corpus --size production \\
+    python -m midigenai.train --data /data/v2_corpus --size production \\
         --batch-size 8 --grad-accum 16 --max-steps 200000
 """
 
@@ -36,7 +36,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from v2.model_v2 import ModelConfig, MusicTransformer
+from midigenai.model import ModelConfig, MusicTransformer
 
 
 @dataclass
@@ -261,8 +261,8 @@ def train(cfg: TrainConfig) -> None:
     # ---- augmentation
     augmenter = None
     if cfg.augment:
-        from v2.data.augment import TokenAugmenter
-        from v2.tokenizer_v2 import build_tokenizer, load_tokenizer
+        from midigenai.data.augment import TokenAugmenter
+        from midigenai.tokenizer import build_tokenizer, load_tokenizer
         tok_path = cfg.data_dir / "tokenizer.json"
         tokenizer = load_tokenizer(tok_path) if tok_path.exists() else build_tokenizer()
         augmenter = TokenAugmenter(tokenizer)

@@ -12,9 +12,9 @@ Requires Ableton Live running with the AbletonMCP control surface enabled
 (https://github.com/nicholasbien/ableton-mcp-pro).
 
 Usage:
-    python -m v2.live_session                  # model from HF hub
-    python -m v2.live_session --answer-bars 4  # fixed answer length
-    python -m v2.live_session --instrument "query:Synths#Drift"
+    python -m midigenai.live_session                  # model from HF hub
+    python -m midigenai.live_session --answer-bars 4  # fixed answer length
+    python -m midigenai.live_session --instrument "query:Synths#Drift"
 
 Flow:
   1. Session-record a phrase on any track (tip: set launch quantization —
@@ -281,11 +281,11 @@ def main():
             "AbletonMCP control surface enabled?" % args.port)
 
     if args.checkpoint:
-        from .generate_v2 import V2Generator
-        g = V2Generator(args.checkpoint, args.tokenizer)
+        from .generate import Generator
+        g = Generator(args.checkpoint, args.tokenizer)
     else:
-        from .hub import load_v2_from_hub
-        g = load_v2_from_hub()
+        from .hub import load_from_hub
+        g = load_from_hub()
     info = ableton.send("get_session_info")
     session = LiveSession(g, ableton, answer_bars=args.answer_bars,
                           max_bars=args.max_bars, instrument_uri=args.instrument)

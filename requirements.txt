@@ -1,19 +1,8 @@
-# v1 (legacy)
-transformers
-tokenizers
-note-seq
-pretty_midi
-mido
-datasets
-accelerate
-trl
-
-# v2 stack
 miditok            # event-based MIDI tokenizer
-muspy              # musical metrics
 symusic            # fast MIDI parser used by miditok
 torch
 einops
 tqdm
-flask              # for the A/B grading frontend
+muspy              # musical metrics (eval)
+flask              # A/B grading frontend
 mlx; sys_platform == 'darwin'   # Apple-silicon GPU inference backend (used by default when present)

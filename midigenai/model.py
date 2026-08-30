@@ -1,5 +1,5 @@
 """
-v2 model: small GPT-style decoder-only transformer for music tokens.
+midigenai model: small GPT-style decoder-only transformer for music tokens.
 
 Design:
 - RoPE positional encoding (extrapolates beyond training length)

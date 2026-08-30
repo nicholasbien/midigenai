@@ -3,7 +3,7 @@
 #
 # Goal: validate the full pipeline (data → clean → tokenize → train → checkpoint)
 # end-to-end before paying for Lambda. Produces a working 25M checkpoint we
-# can exercise via generate_v2.py for sanity-listening.
+# can exercise via generate.py for sanity-listening.
 #
 # Defaults tuned for Apple Silicon with ~16-32GB unified memory.
 # Override with env vars: MAX_STEPS=5000 BATCH_SIZE=4 bash run_local_pilot.sh
@@ -25,22 +25,22 @@ PY=".venv/bin/python"
 
 echo "==> download datasets: $DATASETS (skips already-downloaded)"
 mkdir -p "$DATA_ROOT/raw"
-$PY -m v2.data.download --root "$DATA_ROOT/raw" --datasets $DATASETS
+$PY -m midigenai.data.download --root "$DATA_ROOT/raw" --datasets $DATASETS
 
 echo "==> clean + dedup"
-$PY -m v2.data.clean \
+$PY -m midigenai.data.clean \
   --input "$DATA_ROOT/raw" \
   --manifest "$DATA_ROOT/manifest.jsonl"
 
 echo "==> tokenize + shard"
-$PY -m v2.data.build_dataset \
+$PY -m midigenai.data.build_dataset \
   --manifest "$DATA_ROOT/manifest.jsonl" \
   --out "$DATA_ROOT/v2_corpus"
 
 echo "==> train pilot ($MAX_STEPS steps, batch=$BATCH_SIZE, accum=$GRAD_ACCUM, block=$BLOCK_SIZE)"
 mkdir -p "$RUNS_DIR"
 RUN_NAME="pilot_local_$(date +%Y%m%d_%H%M%S)"
-$PY -m v2.train_v2 \
+$PY -m midigenai.train \
   --data "$DATA_ROOT/v2_corpus" \
   --out "$RUNS_DIR/$RUN_NAME" \
   --size pilot \

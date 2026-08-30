@@ -1,7 +1,7 @@
 """
 MLX backend for v2 inference on Apple silicon.
 
-Same architecture as model_v2.MusicTransformer, implemented with mlx.nn so the
+Same architecture as model.MusicTransformer, implemented with mlx.nn so the
 GPU pays off for batch-1 decode. PyTorch MPS dispatches one Metal kernel per op
 and the launch overhead swamps a 100M model (47 t/s vs 146 on CPU); MLX's lazy
 evaluation fuses the step into few kernels.
@@ -30,7 +30,7 @@ from typing import Iterator
 import mlx.core as mx
 import mlx.nn as nn
 
-from .model_v2 import ModelConfig
+from .model import ModelConfig
 
 
 class KVCache:
@@ -79,7 +79,7 @@ class Attention(nn.Module):
         v = self.v_proj(x).reshape(B, S, self.n_heads, self.head_dim).transpose(0, 2, 1, 3)
 
         offset = cache.offset
-        # traditional=True is interleaved-pair rotation, matching model_v2.apply_rope
+        # traditional=True is interleaved-pair rotation, matching model.apply_rope
         q = mx.fast.rope(q, self.head_dim, traditional=True,
                          base=self.rope_base, scale=1.0, offset=offset)
         k = mx.fast.rope(k, self.head_dim, traditional=True,
@@ -138,7 +138,7 @@ class MusicTransformerMLX(nn.Module):
         return [KVCache() for _ in self.blocks]
 
     def _sample(self, logits: mx.array, temperature: float, top_k: int | None) -> mx.array:
-        """Same sampling semantics as model_v2: fp32 logits, temperature, top-k."""
+        """Same sampling semantics as model.py: fp32 logits, temperature, top-k."""
         logits = logits[:, -1, :].astype(mx.float32) / max(temperature, 1e-6)
         if top_k is not None and top_k < logits.shape[-1]:
             kth = mx.sort(logits, axis=-1)[:, -top_k]

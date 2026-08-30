@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "midigenai"
 version = "0.1.0"
-description = "Real-time AI MIDI continuation. Custom 25M transformer + event-based tokenization."
+description = "Real-time AI MIDI continuation. Custom transformer + event-based tokenization."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Nicholas Bien" }]
@@ -28,16 +28,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-v1 = [
-    "transformers",
-    "tokenizers",
-    "note-seq",
-    "pretty_midi",
-    "mido",
-    "datasets",
-    "accelerate",
-    "trl",
-]
 eval = ["muspy"]
 grading = ["flask"]
 mlx = ["mlx>=0.30; sys_platform == 'darwin'"]
@@ -47,7 +37,4 @@ Homepage = "https://github.com/nicholasbien/midigenai"
 Model = "https://huggingface.co/nicholasbien/midigenai"
 
 [tool.setuptools]
-# The on-disk package is `v2/` but we expose it as `midigenai` so callers
-# can do `from midigenai import V2Generator, load_v2_from_hub`.
-package-dir = { "midigenai" = "v2" }
-packages = ["midigenai"]
+packages = ["midigenai", "midigenai.data"]

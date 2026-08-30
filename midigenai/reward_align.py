@@ -1,5 +1,5 @@
 """
-Check whether a programmatic reward built from eval_v2 metrics agrees with
+Check whether a programmatic reward built from eval.py metrics agrees with
 human preferences — the gate before using it as RL (GRPO) signal.
 
 Fits a Bradley–Terry model over metric *differences*: P(A beats B) =
@@ -8,11 +8,11 @@ leave-one-out accuracy of the fitted reward, and writes a reward spec JSON
 (feature names + normalization + weights) that a GRPO loop can load.
 
 Inputs (either or both):
-    --labels evals/labeling/labels.jsonl    from v2.label_app (pairs/ alongside)
+    --labels evals/labeling/labels.jsonl    from midigenai.label_app (pairs/ alongside)
     --historical evals/preferences/preferences.csv   consolidated v1-era data
 
 Run:
-    python -m v2.reward_align --labels evals/labeling/labels.jsonl \\
+    python -m midigenai.reward_align --labels evals/labeling/labels.jsonl \\
         --historical evals/preferences/preferences.csv \\
         --out evals/reward_spec.json
 """
@@ -26,7 +26,7 @@ from pathlib import Path
 
 import numpy as np
 
-from v2.eval_v2 import compute_metrics
+from midigenai.eval import compute_metrics
 
 FEATURES = [
     "pitch_class_entropy", "scale_consistency", "polyphony_rate",
@@ -41,7 +41,7 @@ DRIFT_FEATURES = ["repetition_drift", "density_drift", "pce_drift"]
 
 
 def drift_vector(cont_ids: list[int], tokenizer) -> np.ndarray | None:
-    from v2.eval_v2 import (note_density_hz, pitch_class_entropy,
+    from midigenai.eval import (note_density_hz, pitch_class_entropy,
                             repetition_rate)
     if len(cont_ids) < 32:
         return None
@@ -143,7 +143,7 @@ def build_diffs(pairs) -> tuple[np.ndarray, list[str], list[str]]:
     use_drift = all(meta is not None for *_, meta, _win in pairs)
     tokenizer = None
     if use_drift:
-        from v2.tokenizer_v2 import build_tokenizer
+        from midigenai.tokenizer import build_tokenizer
         tokenizer = build_tokenizer()
 
     cache: dict[Path, np.ndarray | None] = {}
@@ -223,7 +223,7 @@ def calibration_table(probs: np.ndarray, n_bins: int = 4) -> list[tuple[float, f
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--labels", type=Path, default=None,
-                   help="labels.jsonl from v2.label_app")
+                   help="labels.jsonl from midigenai.label_app")
     p.add_argument("--historical", type=Path, default=None,
                    help="consolidated preferences.csv")
     p.add_argument("--l2", type=float, default=1.0)

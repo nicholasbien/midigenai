@@ -1,7 +1,7 @@
 """
 HuggingFace download helper.
 
-Loads a `V2Generator` straight from a HuggingFace model repo, so callers
+Loads a `Generator` straight from a HuggingFace model repo, so callers
 don't have to manage checkpoint paths. Default repo:
 [`nicholasbien/midigenai`](https://huggingface.co/nicholasbien/midigenai).
 
@@ -20,13 +20,13 @@ Adding a new version = upload to a new subfolder; nothing in this file needs
 to change. Users select via:
 
 ```python
-from midigenai import load_v2_from_hub, list_hub_versions
+from midigenai import load_from_hub, list_hub_versions
 
 # default — picks up MIDIGENAI_VERSION env var if set, else DEFAULT_VERSION
-gen = load_v2_from_hub()
+gen = load_from_hub()
 
 # explicit version
-gen = load_v2_from_hub(version="v2")
+gen = load_from_hub(version="v2")
 
 # discover what's available on the hub
 print(list_hub_versions())   # ["v2-pilot", "v2", ...]
@@ -52,23 +52,23 @@ CKPT_FILENAME = "ckpt_final.pt"
 TOKENIZER_FILENAME = "tokenizer.json"
 
 
-def load_v2_from_hub(
+def load_from_hub(
     version: Optional[str] = None,
     repo_id: Optional[str] = None,
     revision: Optional[str] = None,
     **generator_kwargs,
 ):
-    """Download checkpoint + tokenizer from HF and return a ready V2Generator.
+    """Download checkpoint + tokenizer from HF and return a ready Generator.
 
     `version` defaults to `MIDIGENAI_VERSION` env var, then `DEFAULT_VERSION`.
     `repo_id` defaults to `MIDIGENAI_REPO_ID` env var, then `DEFAULT_REPO`.
     """
-    from .generate_v2 import V2Generator
-    ckpt, tok = download_v2_files(version=version, repo_id=repo_id, revision=revision)
-    return V2Generator(checkpoint_path=ckpt, tokenizer_path=tok, **generator_kwargs)
+    from .generate import Generator
+    ckpt, tok = download_files(version=version, repo_id=repo_id, revision=revision)
+    return Generator(checkpoint_path=ckpt, tokenizer_path=tok, **generator_kwargs)
 
 
-def download_v2_files(
+def download_files(
     version: Optional[str] = None,
     repo_id: Optional[str] = None,
     revision: Optional[str] = None,
