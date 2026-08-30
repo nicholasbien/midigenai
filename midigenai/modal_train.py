@@ -42,7 +42,9 @@ runs_volume = Volume.from_name(RUNS_VOLUME_NAME, create_if_missing=True)
 
 image = (
     Image.debian_slim(python_version="3.11")
-    .pip_install("torch", "miditok", "symusic", "numpy", "tqdm")
+    # torch pinned: the unpinned May-2026 build ships an inductor bug that
+    # breaks torch.compile ("Too few arguments for CSE")
+    .pip_install("torch==2.8.0", "miditok", "symusic", "numpy", "tqdm")
     .add_local_python_source("midigenai")
 )
 
