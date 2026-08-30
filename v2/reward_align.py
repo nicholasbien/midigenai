@@ -33,6 +33,30 @@ FEATURES = [
     "note_density_hz", "pitch_range", "repetition_rate", "ioi_entropy",
 ]
 
+# Degradation drift: second half of the continuation minus first half, computed
+# from the generated token ids (label_app pairs only — needs the pair's meta
+# JSON). Captures "starts good, wanders off": rising repetition, collapsing or
+# exploding density, drifting tonality.
+DRIFT_FEATURES = ["repetition_drift", "density_drift", "pce_drift"]
+
+
+def drift_vector(cont_ids: list[int], tokenizer) -> np.ndarray | None:
+    from v2.eval_v2 import (note_density_hz, pitch_class_entropy,
+                            repetition_rate)
+    if len(cont_ids) < 32:
+        return None
+    half = len(cont_ids) // 2
+    try:
+        s1 = tokenizer.decode(cont_ids[:half])
+        s2 = tokenizer.decode(cont_ids[half:])
+        return np.array([
+            repetition_rate(s2) - repetition_rate(s1),
+            note_density_hz(s2) - note_density_hz(s1),
+            pitch_class_entropy(s2) - pitch_class_entropy(s1),
+        ])
+    except Exception:
+        return None
+
 
 def load_label_app_pairs(labels_path: Path):
     """(winner, loser, group) tuples + per-pair vote lists from label_app.
@@ -66,7 +90,9 @@ def load_label_app_pairs(labels_path: Path):
         group = pid
         if meta_path.exists():
             group = json.loads(meta_path.read_text()).get("prompt_file", pid)
-        out.append((w, l, group))
+        else:
+            meta_path = None
+        out.append((w, l, group, meta_path, win))
     return out, votes
 
 
@@ -82,7 +108,7 @@ def load_historical_pairs(csv_path: Path):
     for row in rows:
         w, l = base / row["file_preferred"], base / row["file_rejected"]
         if w.exists() and l.exists():
-            out.append((w, l, f"hist:{row['pair_id']}"))
+            out.append((w, l, f"hist:{row['pair_id']}", None, None))
     return out, votes
 
 
@@ -108,8 +134,18 @@ def feature_vector(midi_path: Path) -> np.ndarray | None:
     return np.array([float(m[k]) for k in FEATURES])
 
 
-def build_diffs(pairs) -> tuple[np.ndarray, list[str]]:
-    """Rows of f(winner) - f(loser) + group ids, caching per-file metrics."""
+def build_diffs(pairs) -> tuple[np.ndarray, list[str], list[str]]:
+    """
+    Rows of f(winner) - f(loser) + group ids. Drift features are appended only
+    when every pair carries a meta JSON (pure label_app data) — mixing them
+    with zero-filled historical rows would bias the fit.
+    """
+    use_drift = all(meta is not None for *_, meta, _win in pairs)
+    tokenizer = None
+    if use_drift:
+        from v2.tokenizer_v2 import build_tokenizer
+        tokenizer = build_tokenizer()
+
     cache: dict[Path, np.ndarray | None] = {}
 
     def feats(p: Path):
@@ -118,12 +154,23 @@ def build_diffs(pairs) -> tuple[np.ndarray, list[str]]:
         return cache[p]
 
     diffs, groups = [], []
-    for w, l, g in pairs:
+    for w, l, g, meta_path, win in pairs:
         fw, fl = feats(w), feats(l)
-        if fw is not None and fl is not None:
-            diffs.append(fw - fl)
-            groups.append(g)
-    return np.array(diffs), groups
+        if fw is None or fl is None:
+            continue
+        row = fw - fl
+        if use_drift:
+            meta = json.loads(meta_path.read_text())
+            lose = "b" if win == "a" else "a"
+            dw = drift_vector(meta[f"cont_{win}_ids"], tokenizer)
+            dl = drift_vector(meta[f"cont_{lose}_ids"], tokenizer)
+            if dw is None or dl is None:
+                continue
+            row = np.concatenate([row, dw - dl])
+        diffs.append(row)
+        groups.append(g)
+    names = FEATURES + (DRIFT_FEATURES if use_drift else [])
+    return np.array(diffs), groups, names
 
 
 def fit_bt(diffs: np.ndarray, l2: float = 1.0, iters: int = 2000,
@@ -203,9 +250,9 @@ def main():
               f"{n_repeat_votes} repeat votes — this is the accuracy ceiling "
               f"for any reward fit on these labels")
 
-    diffs, groups = build_diffs(pairs)
+    diffs, groups, feat_names = build_diffs(pairs)
     print(f"[align] {len(diffs)} usable pairs (both sides parse, non-empty), "
-          f"{len(set(groups))} prompt groups")
+          f"{len(set(groups))} prompt groups, features: {len(feat_names)}")
     if len(diffs) < 10:
         print("[align] WARNING: very few pairs — treat every number below "
               "as anecdote, not signal")
@@ -217,7 +264,7 @@ def main():
 
     print(f"\nper-metric agreement with human votes "
           f"(0.5 = chance; N excludes zero-diff pairs):")
-    for i, name in enumerate(FEATURES):
+    for i, name in enumerate(feat_names):
         nz = diffs[:, i] != 0
         n = int(nz.sum())
         agree = float((diffs[nz, i] > 0).mean()) if n else float("nan")
@@ -227,7 +274,7 @@ def main():
     train_acc = float(((norm_diffs @ w) > 0).mean())
     logo, heldout_probs = logo_accuracy(norm_diffs, groups, l2=args.l2)
     print(f"\nfitted Bradley–Terry reward:")
-    for name, wi in sorted(zip(FEATURES, w), key=lambda t: -abs(t[1])):
+    for name, wi in sorted(zip(feat_names, w), key=lambda t: -abs(t[1])):
         print(f"  {name:22s}  {wi:+.3f}")
     print(f"\ntrain accuracy {train_acc:.2f}   "
           f"held-out (leave-one-prompt-out) accuracy {logo:.2f}")
@@ -247,7 +294,7 @@ def main():
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps({
-        "features": FEATURES,
+        "features": feat_names,
         "diff_std": std.tolist(),
         "weights": w.tolist(),
         "n_pairs": len(diffs),
