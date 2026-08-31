@@ -281,8 +281,10 @@ def train(cfg: TrainConfig) -> None:
     # ---- loop
     rng = np.random.default_rng(cfg.seed + start_step)
     t0 = time.time()
-    running_loss = 0.0
+    # accumulate the loss on-device; a per-micro-batch .item() syncs the GPU
+    running_loss = torch.zeros((), device=device)
     running_count = 0
+    pin = device.type == "cuda"
 
     for step in range(start_step, cfg.max_steps):
         lr = get_lr(step, cfg)
@@ -291,6 +293,9 @@ def train(cfg: TrainConfig) -> None:
         opt.zero_grad(set_to_none=True)
         for _ in range(cfg.grad_accum):
             x, y = train_stream.sample_batch(cfg.batch_size, rng, augmenter)
+            if pin:
+                # non_blocking H2D copies only overlap from pinned memory
+                x, y = x.pin_memory(), y.pin_memory()
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
             with amp_context(device, amp_dtype):
                 logits, _ = model(x)
@@ -298,7 +303,7 @@ def train(cfg: TrainConfig) -> None:
                     logits.reshape(-1, logits.size(-1)), y.reshape(-1)
                 ) / cfg.grad_accum
             scaler.scale(loss).backward()
-            running_loss += loss.detach().item() * cfg.grad_accum
+            running_loss += loss.detach() * cfg.grad_accum
             running_count += 1
 
         if cfg.grad_clip > 0:
@@ -311,13 +316,13 @@ def train(cfg: TrainConfig) -> None:
             elapsed = time.time() - t0
             tokens_seen = ((step - start_step) + 1) * cfg.batch_size * cfg.grad_accum * cfg.block_size
             tps = tokens_seen / max(elapsed, 1e-3)
-            train_loss = running_loss / max(running_count, 1)
+            train_loss = (running_loss / max(running_count, 1)).item()
             print(f"step {step:6d}  lr {lr:.2e}  "
                   f"loss {train_loss:.4f}  "
                   f"tok/s {tps:,.0f}  elapsed {elapsed:.0f}s")
             log_metrics(step, lr, train_loss=f"{train_loss:.4f}",
                         tps=f"{tps:.0f}", elapsed=f"{elapsed:.0f}")
-            running_loss = 0.0
+            running_loss = torch.zeros((), device=device)
             running_count = 0
 
         if val_stream is not None and step > 0 and step % cfg.eval_interval == 0:
@@ -337,14 +342,18 @@ def train(cfg: TrainConfig) -> None:
 def save_checkpoint(ckpt_path: Path, model, opt, model_cfg, cfg: TrainConfig,
                     step: int) -> None:
     raw_model = model._orig_mod if hasattr(model, "_orig_mod") else model
+    # write-then-rename so a concurrent volume flush never snapshots (and
+    # --resume never picks up) a half-written checkpoint
+    tmp_path = ckpt_path.with_suffix(".tmp")
     torch.save(
         {"model": raw_model.state_dict(),
          "optimizer": opt.state_dict(),
          "model_config": asdict(model_cfg),
          "train_config": {k: str(v) if isinstance(v, Path) else v for k, v in asdict(cfg).items()},
          "step": step},
-        ckpt_path,
+        tmp_path,
     )
+    tmp_path.rename(ckpt_path)
     print(f"[ckpt] saved {ckpt_path}")
 
 
