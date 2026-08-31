@@ -1,0 +1,11 @@
+env/
+lmd_full_txt/
+ableton_live_txt/
+tests/
+evals/
+docs/
+data/
+runs/
+*.egg-info/
+__pycache__/
+.git/

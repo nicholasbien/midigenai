@@ -22,6 +22,8 @@ Pull a checkpoint back:
 
 from __future__ import annotations
 
+import os as _os
+
 import modal
 from modal import Image, Volume
 
@@ -29,21 +31,27 @@ from modal import Image, Volume
 CORPUS_VOLUME_NAME = "openmusenet2-v2-corpus"
 RUNS_VOLUME_NAME = "openmusenet2-v2-runs"
 
-app = modal.App("openmusenet2-train")
+# GPU is baked into the function decorator at import time; override per launch:
+#   MIDIGENAI_TRAIN_GPU=A10G modal run midigenai/modal_train.py --size pilot ...
+TRAIN_GPU = _os.environ.get("MIDIGENAI_TRAIN_GPU", "H100")
+
+app = modal.App("midigenai-train")
 
 corpus_volume = Volume.from_name(CORPUS_VOLUME_NAME, create_if_missing=True)
 runs_volume = Volume.from_name(RUNS_VOLUME_NAME, create_if_missing=True)
 
 image = (
     Image.debian_slim(python_version="3.11")
-    .pip_install("torch", "miditok", "symusic", "numpy", "tqdm")
+    # torch pinned: the unpinned May-2026 build ships an inductor bug that
+    # breaks torch.compile ("Too few arguments for CSE")
+    .pip_install("torch==2.8.0", "miditok", "symusic", "numpy", "tqdm")
     .add_local_python_source("midigenai")
 )
 
 
 @app.function(
     image=image,
-    gpu="H100",
+    gpu=TRAIN_GPU,
     timeout=24 * 3600,
     volumes={
         "/corpus": corpus_volume,
@@ -68,6 +76,8 @@ def train(
     doc_start_frac: float = 0.2,
     mixture: str = "",
     corpus: str = "corpus_pilot",
+    compile: bool = False,
+    stage_local: bool = False,
     run_name: str | None = None,
     resume: bool = False,
 ) -> dict:
@@ -105,6 +115,19 @@ def train(
             if (Path(fallback) / "shards").exists():
                 data_dir = Path(fallback)
                 break
+
+    if stage_local:
+        # Random mmap reads over the volume FUSE mount thrash once the corpus
+        # outgrows the page cache; a sequential copy to container-local disk up
+        # front makes every training read local.
+        import shutil
+        import time as _time
+        staged = Path("/tmp/corpus")
+        t0 = _time.time()
+        shutil.copytree(data_dir, staged)
+        print(f"[modal-train] staged corpus to {staged} in {_time.time()-t0:.0f}s")
+        data_dir = staged
+
     cfg = TrainConfig(
         data_dir=data_dir,
         out_dir=out_dir,
@@ -118,6 +141,7 @@ def train(
         save_interval=save_interval,
         lr=lr,
         dtype="bfloat16",
+        compile=compile,
         schedule=schedule,
         decay_steps=decay_steps,
         augment=augment,
@@ -149,18 +173,22 @@ def train(
 
 @app.local_entrypoint()
 def main(size: str = "medium", max_steps: int = 15000, batch_size: int = 16,
-         block_size: int = 2048, schedule: str = "wsd", augment: bool = True,
+         grad_accum: int = 4, block_size: int = 2048, lr: float = 3e-4,
+         eval_interval: int = 500, save_interval: int = 1000,
+         schedule: str = "wsd", augment: bool = True,
          aug_pitch: int = 6, aug_velocity: int = 1,
          doc_start_frac: float = 0.2, mixture: str = "",
-         corpus: str = "corpus_pilot", lr: float = 3e-4,
-         run_name: str = "", resume: bool = False):
+         corpus: str = "corpus_pilot", compile: bool = False,
+         stage_local: bool = False, run_name: str = "", resume: bool = False):
     """Local entrypoint — invoke training and print result."""
     result = train.remote(size=size, max_steps=max_steps, batch_size=batch_size,
-                          block_size=block_size, schedule=schedule,
-                          augment=augment, aug_pitch=aug_pitch,
+                          grad_accum=grad_accum, block_size=block_size, lr=lr,
+                          eval_interval=eval_interval, save_interval=save_interval,
+                          schedule=schedule, augment=augment, aug_pitch=aug_pitch,
                           aug_velocity=aug_velocity,
                           doc_start_frac=doc_start_frac, mixture=mixture,
-                          corpus=corpus, lr=lr, run_name=run_name or None,
+                          corpus=corpus, compile=compile,
+                          stage_local=stage_local, run_name=run_name or None,
                           resume=resume)
     print(f"\n[done] {result}")
     print(f"\nRetrieve checkpoint with:")
