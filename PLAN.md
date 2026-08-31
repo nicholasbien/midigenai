@@ -120,7 +120,7 @@ Lakh validation picks). Sessions:
 
 ### 7. The long run, then scale
 
-- [ ] Pilot-scale sweeps (LR, augmentation on/off, block 2048) — pick settings
+- [x] Pilot-scale sweeps (LR, augmentation on/off, block 2048) — settings picked
 - [ ] Full run at medium (113M): target ~8–10B tokens with WSD + resume
 - [ ] Only after a good 100M model: production config (202M)
 
@@ -130,6 +130,21 @@ Lakh validation picks). Sessions:
 accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
+
+- 2026-08-31 (early): PILOT SWEEP COMPLETE — 9 arms at 25M on Modal H100
+  (~$0.30/run, ~4 min each at 1.3M tok/s with torch.compile). Val losses:
+  best combined recipe (block 2048 + lr 6e-4) 0.822; lr 6e-4 alone 0.887 vs
+  baseline 0.906; lr 1e-3 no better; augmentation and doc-start anchoring
+  cost ~nothing on val. New eval harness (midigenai/eval_checkpoint.py)
+  scored generation BEHAVIOR for every arm: EOS termination now works
+  (17-37% self-termination in 1024 tokens vs structurally 0% for v2-100m,
+  best at block 2048), repetition drift slightly negative everywhere (no
+  degradation-over-length signature), no pathologies in any arm.
+  medium_smoke validated 113M at the big-run config: stable, 336k tok/s,
+  val 0.760 after just 260M tokens; resume-with-optimizer-state verified at
+  this scale. Big-run recipe locked: 113M, block 2048, batch 64, compile,
+  lr 4e-4, WSD, aug on, doc-start 0.2, no mixture weights v1, stage-local,
+  ~24B tokens ≈ $65-80 / 17-20h. Awaiting corpus_full build + upload.
 
 - 2026-08-30 (night, cont.): Dedup tightened after human audit found false
   positives at 0.5 verified-Jaccard: now 0.65 + low-shingle exemption
