@@ -27,6 +27,14 @@ for s in $SOURCES; do
     --manifest "$DATA_ROOT/manifest_$s.jsonl"
 done
 
+# guard: a source contributing zero files means its layout changed - fail loud
+for s in $SOURCES; do
+  if [ ! -s "$DATA_ROOT/manifest_$s.jsonl" ]; then
+    echo "FATAL: manifest_$s.jsonl is empty - $s produced no cleanable files" >&2
+    exit 1
+  fi
+done
+
 echo "==> [3/5] cross-source near-dup dedup"
 cat $(for s in $SOURCES; do echo "$DATA_ROOT/manifest_$s.jsonl"; done) \
   > "$DATA_ROOT/manifest_all.jsonl"
