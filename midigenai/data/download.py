@@ -177,12 +177,23 @@ def download_gigamidi(root: Path) -> Path:
     instantly, no human review.
     """
     target = _ensure_dir(root / "gigamidi")
-    if (target / "extracted").exists():
+    marker = target / "extracted_midis"
+    if marker.exists():
         print("[skip] gigamidi already extracted")
         return target
     archive = _hf_download_archive(
         "Metacreation/GigaMIDI", "Final_GigaMIDI_V2.0_Final.zip", target)
     _extract(archive, target / "extracted")
+    # The outer zip holds NESTED zips (training/validation/test), not MIDIs —
+    # extract each into extracted_midis/ or the cleaner finds zero files.
+    inner = list((target / "extracted").rglob("*.zip"))
+    if not inner:
+        raise RuntimeError("gigamidi: no inner zips found after extraction")
+    for z in inner:
+        if "__MACOSX" in str(z):
+            continue
+        print(f"[extract] {z.name}")
+        _extract(z, marker)
     return target
 
 
