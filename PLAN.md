@@ -121,7 +121,7 @@ Lakh validation picks). Sessions:
 ### 7. The long run, then scale
 
 - [x] Pilot-scale sweeps (LR, augmentation on/off, block 2048) — settings picked
-- [ ] Full run at medium (113M): target ~8–10B tokens with WSD + resume
+- [x] Full run at medium (113M): LAUNCHED as medium_full_v1 (24B-token target)
 - [ ] Only after a good 100M model: production config (202M)
 
 ## Sequencing
@@ -130,6 +130,19 @@ Lakh validation picks). Sessions:
 accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
+
+- 2026-08-31 ~02:45: PRODUCTION RUN LAUNCHED — medium_full_v1: 113.8M params,
+  corpus_full (13.2B tokens, 274 shards: lakh/lamd/aria/gigamidi/curated,
+  strict cross-source dedup), 180k steps x 131k tok/step ≈ 24B tokens
+  (~1.8 epochs), block 2048, batch 64, compile, lr 4e-4, WSD, aug on,
+  doc-start 0.2, stage-local. First steps healthy: loss 6.63 -> 1.87 by step
+  440, throughput 321k tok/s and climbing; ETA ~20h ≈ $80. GigaMIDI was
+  recovered pre-launch (nested-zip packaging bug -> 273,766 files / 1.07B
+  tokens after cross-corpus dedup; fetcher fixed, build guard added).
+  Launch authorized by Nicholas via todolist relay ("Agent can launch once
+  build is ready"), consistent with in-session instruction. Next: monitor
+  val curve, eval_checkpoint scorecards on intermediate checkpoints, blind
+  A/B vs v2-100m at cooldown.
 
 - 2026-08-31 (early): PILOT SWEEP COMPLETE — 9 arms at 25M on Modal H100
   (~$0.30/run, ~4 min each at 1.3M tok/s with torch.compile). Val losses:
