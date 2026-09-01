@@ -59,6 +59,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--you-instrument", default="query:Synths#Electric")
     ap.add_argument("--model-instrument", default="query:Synths#Electric")
+    ap.add_argument("--you-input", default="auto",
+                    help="input for the play-in track: 'auto' picks your hardware "
+                         "keyboard if present, else Computer Keyboard — NEVER "
+                         "'All Ins', which loops the model's own output back in")
     ap.add_argument("--out-bus", default="Bus 1", help="IAC bus you play into")
     ap.add_argument("--in-bus", default="Bus 2", help="IAC bus answers arrive on")
     ap.add_argument("--port", type=int, default=9877)
@@ -105,7 +109,27 @@ def main():
                               f"IAC ({needles[-1]}) manually")
 
         route(you, "output", "IAC", args.out_bus)
-        route(sound, "input", "IAC", args.out_bus)
+        # pin the play-in track's INPUT: with "All Ins" (Live's default) the
+        # model's Bus 2 output re-enters this armed track and feeds back
+        r = live.send("get_track_routing", {"track_index": you})
+        avail = [t["display_name"] for t in r.get("available_input_routing_types", [])]
+        if args.you_input != "auto":
+            chosen = pick_routing(r.get("available_input_routing_types", []),
+                                  args.you_input)
+        else:
+            hw = [n for n in avail if n not in ("All Ins", "Computer Keyboard",
+                                                "No Input")
+                  and "IAC" not in n and n not in ("you (sound)", "model", "you")]
+            chosen = hw[0] if hw else (
+                "Computer Keyboard" if "Computer Keyboard" in avail else None)
+        if chosen:
+            live.send("set_track_input_routing",
+                      {"track_index": you, "routing_type_name": chosen})
+            print(f"'you' MIDI From -> {chosen}")
+        else:
+            manual.append("'you': set MIDI From to your keyboard (NOT All Ins)")
+        # sound track listens to the out track directly (template style)
+        route(sound, "input", "you")
         route(model, "input", "IAC", args.in_bus)
         live.send("set_track_monitoring", {"track_index": you, "state": 1})    # Auto
         live.send("set_track_monitoring", {"track_index": sound, "state": 0})  # In

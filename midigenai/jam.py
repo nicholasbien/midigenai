@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import collections
 import heapq
 import tempfile
 import threading
@@ -79,6 +80,7 @@ class Player:
         self.lock = threading.Condition()
         self.seq = 0
         self.dropped = 0
+        self.sent = collections.deque(maxlen=1024)  # (t, pitch) of recent sends
         threading.Thread(target=self._run, daemon=True).start()
 
     def schedule(self, when: float, msg):
@@ -101,7 +103,20 @@ class Player:
             if msg.type == "note_on" and time.monotonic() - when > self.MAX_LATE:
                 self.dropped += 1
                 continue
+            if msg.type == "note_on":
+                self.sent.append((time.monotonic(), msg.note))
             self.outport.send(msg)
+
+    def sent_recently(self, pitch: int, window: float = 0.35) -> bool:
+        """True if we just sent this pitch — used to reject echoes of our own
+        output looping back through a misrouted Ableton track."""
+        now = time.monotonic()
+        for t, p in reversed(self.sent):
+            if now - t > window:
+                return False
+            if p == pitch:
+                return True
+        return False
 
 
 def main():
@@ -308,10 +323,16 @@ def main():
     try:
         while True:
             for msg in inport.iter_pending():
-                if msg.type in ("note_on", "note_off"):
-                    if buf.t0 is None and msg.type == "note_on" and msg.velocity > 0:
-                        print("hearing you...", flush=True)
-                    buf.feed(msg, time.monotonic())
+                if msg.type not in ("note_on", "note_off"):
+                    continue
+                # echo guard: our own answer looping back through a misrouted
+                # track (e.g. an armed track with input "All Ins") would
+                # otherwise be captured as user playing — a feedback loop
+                if player.sent_recently(msg.note):
+                    continue
+                if buf.t0 is None and msg.type == "note_on" and msg.velocity > 0:
+                    print("hearing you...", flush=True)
+                buf.feed(msg, time.monotonic())
             now = time.monotonic()
             n_notes = len(buf.notes)
             # adaptive window: a phrase that stops on a whole-bar boundary of
