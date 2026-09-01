@@ -131,6 +131,18 @@ accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
 
+- 2026-09-01: CORRECTION — the "clean SIGINT detach" fix was wrong and killed
+  the run a second time (kill at step 33,160, ~90s after the SIGINT; the
+  "safe to close" verification read the final pre-kill metrics row). In this
+  Modal client version, ANY exit of the `modal run --detach` client — clean
+  or not — cancels the ephemeral app ~1-2 min later. Correct durable pattern
+  now in use: `modal deploy` the app + Function.from_name().spawn() from a
+  short-lived client (call fc-01M1DF2P5ZZT7M3TKSHYCBGWQ0, resumed from
+  ckpt_033000, ~160 steps lost). Rule going forward: production runs launch
+  ONLY via deploy+spawn; health claims ONLY on demonstrated step advancement
+  across two timestamped reads, never a single metrics snapshot. Credit:
+  todolist worker's pmset/app-log forensics for both root-cause corrections.
+
 - 2026-08-31 (evening): ROOT CAUSE of the overnight run kill (credit:
   todolist worker's pmset forensics): laptop clamshell sleep at 01:45 EDT
   killed the still-attached `modal run --detach` client's TCP abruptly;
