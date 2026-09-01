@@ -411,6 +411,10 @@ def main():
         streaming)."""
         import math
         try:
+            # fired session clips only sound while Live's transport runs;
+            # free-time jamming (transport stopped) streams over MIDI instead
+            if not _ableton("get_arrangement_info").get("is_playing", False):
+                return False
             if clip_state["track"] is None:
                 clip_state["track"] = _find_model_track()
             if clip_state["track"] is None:
