@@ -155,6 +155,17 @@ accumulate while everything else runs), then 4 → 7 → 6.
   top-50 ≥ 0.999) so top-k 50 is a no-op and temperature is the only lever;
   a single-seed t=0.9/1.0/1.2 comparison had the multi-track seed lose its
   lead/bass at 1.2, so 1.0 stays the default.
+- 2026-09-01 15:5x UTC: TRAINING COMPLETE — medium_full_v1: 180,000 steps,
+  23.6B tokens (~1.8 epochs of the 13.2B-token corpus_full), final val loss
+  0.7495 (still descending at cooldown end — extended-run headroom exists via
+  WSD resume from ckpt_final). ~12.5h H100 ≈ $55-60 total across all legs
+  (two client-kill incidents cost ~4 min of compute combined; deploy+spawn
+  pattern eliminated the failure class). Training-evolution listening page
+  (13 checkpoint columns, 10 fixed val prompts, piano-roll + notation views,
+  fully self-contained HTML) attached to the midigenai-v3 todolist task.
+  NEXT: behavior scorecard of ckpt_final vs pilots + v2-100m; blind A/B vs
+  v2-100m in the labeling app (the ship/no-ship gate); publish to HF hub as
+  v3 on a pass; mac-worker mp3 samples page pending its next session.
 
 - 2026-09-01: CORRECTION — the "clean SIGINT detach" fix was wrong and killed
   the run a second time (kill at step 33,160, ~90s after the SIGINT; the
