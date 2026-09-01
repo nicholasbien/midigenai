@@ -35,10 +35,14 @@ NGRAM = 6
 NUM_HASHES = 128
 LSH_BANDS = 32               # 32 bands x 4 rows: candidate recall down to J~0.4
 ROWS_PER_BAND = NUM_HASHES // LSH_BANDS
-# 0.5 verified-Jaccard: catches transposed/re-quantized/re-velocitied copies
-# and edits up to ~5% of notes; two different songs sharing half their
-# interval 6-grams are, for training purposes, the same material anyway.
-JACCARD_THRESHOLD = 0.5
+# 0.65 verified-Jaccard: human audit of real clusters at 0.5 found false
+# positives (different songs sharing cliche progressions) alongside true
+# dups. 0.65 still catches transposed/re-quantized copies and light edits.
+JACCARD_THRESHOLD = 0.65
+# Files with too few distinct interval n-grams (short or highly repetitive)
+# have unstable fingerprints - two different loop-based songs collide on the
+# same cliche. They are exempt from clustering (always kept).
+MIN_SHINGLES = 64
 MERSENNE_PRIME = (1 << 61) - 1
 
 
@@ -131,7 +135,7 @@ def dedup(manifest_path: Path, out_path: Path, clusters_path: Path | None) -> di
     has_sig = np.zeros(len(entries), dtype=bool)
     for i, e in enumerate(tqdm(entries, desc="minhash")):
         sh = interval_shingles(e["path"])
-        if sh is not None and len(sh):
+        if sh is not None and len(sh) >= MIN_SHINGLES:
             sigs[i] = hasher.signature(sh)
             has_sig[i] = True
 

@@ -69,3 +69,33 @@ def roundtrip(midi_path: PathLike, out_path: PathLike) -> tuple[int, list[int]]:
     ids = encode_midi(tok, midi_path)
     decode_to_midi(tok, ids, out_path)
     return len(ids), ids
+
+
+DRUM_NAME_HINTS = ("drum", "drm", "perc", "kit", "808", "909", "kick", "snare",
+                   "hat", "cymbal", "tom", "clap", "batter", "schlag", "beat")
+
+
+def normalize_drums(score, filename_hint: str = "") -> int:
+    """
+    Promote mislabeled drum tracks to is_drum so they tokenize as
+    DrumOn/DrumOff events instead of pitched piano notes.
+
+    Many real files (Ableton exports, v1-era generations) carry drum content
+    on a normal channel with program 0 — the model would learn drum rhythms
+    as piano. Conservative heuristic: promote on a drum keyword in the track
+    name, or in the filename when the file has a single melodic reading of it
+    (drums split across many named tracks are matched per-track anyway).
+    Returns the number of tracks promoted. Mutates `score` in place.
+    """
+    fname = filename_hint.lower()
+    fname_says_drums = any(k in fname for k in DRUM_NAME_HINTS)
+    changed = 0
+    for t in score.tracks:
+        if t.is_drum:
+            continue
+        name = (t.name or "").lower()
+        if any(k in name for k in DRUM_NAME_HINTS) or \
+                (fname_says_drums and len(score.tracks) == 1):
+            t.is_drum = True
+            changed += 1
+    return changed

@@ -11,7 +11,7 @@ Samplers pull small random samples without fetching whole archives:
 - prompts    local evals/prompts dir (instant sanity check)
 
 Run:
-    python -m midigenai.data.explore_app
+    python -m v2.data.explore_app
     # open http://localhost:7790
 
 Samples are cached under evals/dataset_samples/<dataset>/ with a meta.jsonl.
@@ -141,6 +141,54 @@ def _sample_gigamidi_parquet(parquet: str, out_dir: Path, n: int,
     return out
 
 
+def sample_dup_clusters(clusters_path: Path):
+    """Audit near-dup dedup precision: listen to members of real clusters
+    side by side. If two rows in a cluster are different songs, the threshold
+    is too loose (false positive = good data silently deleted)."""
+    def sampler(out_dir: Path, n: int, rng: random.Random) -> list[dict]:
+        clusters = [c for c in json.loads(clusters_path.read_text()) if len(c) > 1]
+        picked = rng.sample(clusters, min(max(n // 2, 1), len(clusters)))
+        rows = []
+        for cluster in picked:
+            cid = rng.randrange(10_000)
+            for mi, path in enumerate(cluster[:3]):
+                src = Path(path)
+                if not src.exists():
+                    continue
+                name = f"cluster{cid}_{mi}_{src.name}"
+                (out_dir / name).write_bytes(src.read_bytes())
+                rows.append({"file": name, "meta": {
+                    "cluster": f"#{cid}", "member": f"{mi + 1} of {len(cluster)}",
+                    "note": "keeper = most notes; others were dropped",
+                    "source": src.name}})
+        return rows
+    return sampler
+
+
+def sample_quality_extremes(scores_path: Path):
+    """Listen to the corpus's best and worst files by model NLL (from
+    midigenai.score_corpus). High NLL = the model finds it surprising —
+    junk, corruption, or genuinely novel music; your ears decide which."""
+    def sampler(out_dir: Path, n: int, rng: random.Random) -> list[dict]:
+        rows = [json.loads(line) for line in scores_path.open() if line.strip()]
+        rows.sort(key=lambda r: r["nll"])
+        k = max(n // 2, 1)
+        picks = [("best", r, i + 1) for i, r in enumerate(rows[:k])] +                 [("WORST", r, len(rows) - i) for i, r in enumerate(reversed(rows[-k:]))]
+        out = []
+        for label, r, rank in picks:
+            src = Path(r["path"])
+            if not src.exists():
+                continue
+            name = f"{label.lower()}_{rank}_{src.name}"
+            (out_dir / name).write_bytes(src.read_bytes())
+            out.append({"file": name, "meta": {
+                "quality": label, "rank": f"{rank}/{len(rows)}",
+                "nll_per_token": round(r["nll"], 3),
+                "n_tokens_scored": r.get("n_tokens", "")}})
+        return out
+    return sampler
+
+
 def sample_local(dir_path: Path):
     def sampler(out_dir: Path, n: int, rng: random.Random) -> list[dict]:
         files = sorted(dir_path.glob("*.mid"))
@@ -152,6 +200,221 @@ def sample_local(dir_path: Path):
             out.append({"file": f.name, "meta": {"source": str(f)}})
         return out
     return sampler
+
+
+# ----------------------- training-window sampler --------------------------- #
+
+class TrainingWindowSampler:
+    """
+    Samples windows exactly the way training does — same ShardedTokenStream
+    (length-weighted shards, doc-start anchoring) and the same augmenter —
+    then decodes each window to MIDI. This is literally what the model sees,
+    including windows that start mid-piece and cross BOS/EOS boundaries.
+    Lazy: initializes on first use so the app runs before the corpus exists.
+    """
+
+    def __init__(self, corpus_dir: Path, block_size: int = 2048,
+                 doc_start_frac: float = 0.2):
+        self.corpus_dir = corpus_dir
+        self.block_size = block_size
+        self.doc_start_frac = doc_start_frac
+        self._ready = False
+
+    def _init(self):
+        import numpy as np
+        from midigenai.data.augment import TokenAugmenter
+        from midigenai.tokenizer import build_tokenizer, load_tokenizer
+        from midigenai.train import ShardedTokenStream
+
+        shard_paths = sorted((self.corpus_dir / "shards").glob("train_*.npy"))
+        if not shard_paths:
+            raise RuntimeError(
+                f"no train shards in {self.corpus_dir}/shards yet - the "
+                "corpus build may still be running")
+        tok_path = self.corpus_dir / "tokenizer.json"
+        self.tokenizer = load_tokenizer(tok_path) if tok_path.exists() else build_tokenizer()
+        self.inv = {v: k for k, v in self.tokenizer.vocab.items()}
+        self.bos = self.tokenizer.vocab.get("BOS_None", 1)
+        self.eos = self.tokenizer.vocab.get("EOS_None", 2)
+        self.stream = ShardedTokenStream(
+            shard_paths, self.block_size, bos_id=self.bos,
+            doc_start_frac=self.doc_start_frac)
+        self.shard_paths = shard_paths
+        self.augmenter = TokenAugmenter(self.tokenizer)
+        self.np = np
+        self._ready = True
+
+    def mixture(self) -> list[dict]:
+        if not self._ready:
+            self._init()
+        by_tag: dict[str, dict] = {}
+        for path, w, shard in zip(self.shard_paths, self.stream.weights,
+                                  self.stream.shards):
+            parts = path.stem.split("_")
+            tag = parts[1] if len(parts) == 3 else "(untagged)"
+            d = by_tag.setdefault(tag, {"tag": tag, "tokens": 0, "prob": 0.0,
+                                        "shards": 0})
+            d["tokens"] += int(len(shard))
+            d["prob"] += float(w)
+            d["shards"] += 1
+        return sorted(by_tag.values(), key=lambda d: -d["prob"])
+
+    def sample(self, out_dir: Path, n: int, rng) -> list[dict]:
+        if not self._ready:
+            self._init()
+        np = self.np
+        nrng = np.random.default_rng(rng.randrange(2**32))
+        out = []
+        for _ in range(n):
+            si = int(nrng.choice(len(self.stream.shards), p=self.stream.weights))
+            shard = self.stream.shards[si]
+            starts = self.stream.doc_starts[si]
+            anchored = bool(len(starts)) and nrng.random() < self.doc_start_frac
+            if anchored:
+                start = int(starts[nrng.integers(0, len(starts))])
+            else:
+                start = int(nrng.integers(0, len(shard) - self.block_size - 1))
+            chunk = shard[start : start + self.block_size + 1].astype(np.int64)
+
+            # draw augmentation exactly like TokenAugmenter.__call__, but
+            # keep the drawn parameters so the row can display them
+            aug = self.augmenter
+            shift = int(nrng.integers(-aug.max_pitch_shift, aug.max_pitch_shift + 1))
+            jitter = int(nrng.integers(-aug.max_velocity_jitter,
+                                       aug.max_velocity_jitter + 1))
+            while shift != 0 and aug.clip_tables[shift][chunk].any():
+                shift -= 1 if shift > 0 else -1
+            win = chunk
+            if shift != 0:
+                win = np.where(aug._drum_positions(chunk), chunk,
+                               aug.pitch_tables[shift][chunk])
+            if jitter != 0:
+                win = aug.velocity_tables[jitter][win]
+
+            source = self.shard_paths[si].stem
+            name = f"window_{start}_{nrng.integers(1e6)}.mid"
+            meta = {
+                "source_shard": source,
+                "window": "doc-start anchored" if anchored else "uniform",
+                "augmentation": f"pitch {shift:+d}, velocity {jitter:+d} bin",
+                "contains_BOS": int((win == self.bos).sum()),
+                "contains_EOS": int((win == self.eos).sum()),
+            }
+            try:
+                # strip specials before decode; playback is what remains
+                clean = [int(t) for t in win if t not in (self.bos, self.eos, 0)]
+                self.tokenizer.decode(clean).dump_midi(out_dir / name)
+                out.append({"file": name, "meta": meta})
+            except Exception as e:
+                meta["decode_error"] = type(e).__name__
+                out.append({"file": None, "meta": meta})
+        return out
+
+
+# ------------------------- pipeline views ---------------------------------- #
+
+class PipelineViewer:
+    """
+    For a sampled MIDI, show what the training pipeline would do with it:
+    clean.py's keep/drop verdict, token stats, a decoded round-trip (the exact
+    representation the model trains on: time grid, velocity bins, tempo
+    stripped), and one concrete augmentation draw (drum-aware pitch shift +
+    velocity jitter) — both as playable MIDIs.
+    """
+
+    def __init__(self):
+        import numpy as np
+        from midigenai.data.augment import TokenAugmenter
+        from midigenai.tokenizer import build_tokenizer
+        self.np = np
+        self.tokenizer = build_tokenizer()
+        self.augmenter = TokenAugmenter(self.tokenizer)
+        self.rng = np.random.default_rng()
+        self.inv_vocab = {v: k for k, v in self.tokenizer.vocab.items()}
+
+    def views(self, midi_path: Path, out_dir: Path, ds_name: str) -> dict:
+        from midigenai.data.clean import inspect
+        out: dict = {}
+        stats, verdict = inspect(midi_path)
+        out["clean_verdict"] = "kept" if stats else f"DROPPED: {verdict}"
+
+        try:
+            from symusic import Score
+
+            from midigenai.tokenizer import normalize_drums
+            score = Score(str(midi_path))
+            promoted = normalize_drums(score, midi_path.name)
+            if promoted:
+                out["drum_fix"] = f"{promoted} track(s) promoted to drums"
+            ids = self.tokenizer(score).ids
+        except Exception as e:
+            out["tokenize_error"] = type(e).__name__
+            return out
+
+        n_notes = sum(1 for i in ids
+                      if self.inv_vocab.get(i, "").startswith("NoteOn_"))
+        out["n_tokens"] = len(ids)
+        out["tokens_per_note"] = round(len(ids) / max(n_notes, 1), 2)
+        out["token_preview"] = " ".join(
+            self.inv_vocab.get(i, f"?{i}") for i in ids[:24])
+
+        stem = midi_path.stem
+        try:
+            self.tokenizer.decode(list(ids)).dump_midi(
+                out_dir / f"{stem}__proc.mid")
+            out["processed_url"] = f"/midi/{ds_name}/{stem}__proc.mid"
+        except Exception as e:
+            out["decode_error"] = type(e).__name__
+
+        try:
+            seq = self.np.asarray(ids, dtype=self.np.int64)
+            shift = int(self.rng.integers(-6, 7)) or 3
+            jitter = int(self.rng.integers(-1, 2))
+            aug = seq
+            if shift:
+                shifted = self.augmenter.pitch_tables[shift][seq]
+                aug = self.np.where(
+                    self.augmenter._drum_positions(seq), seq, shifted)
+            aug = self.augmenter.velocity_tables[jitter][aug]
+            self.tokenizer.decode([int(t) for t in aug]).dump_midi(
+                out_dir / f"{stem}__aug.mid")
+            out["augmented_url"] = f"/midi/{ds_name}/{stem}__aug.mid"
+            out["augmentation"] = f"pitch {shift:+d} semitones, velocity {jitter:+d} bin"
+        except Exception as e:
+            out["augment_error"] = type(e).__name__
+        return out
+
+
+# ------------------------------ sizes -------------------------------------- #
+
+# Verified corpus sizes. file counts read from parquet footers / dataset cards
+# on 2026-08-30; token estimates use the v2 corpus average (~19.6k tokens/file,
+# from ~8B tokens over ~408k files) except where a sampled average exists.
+SIZE_REGISTRY = [
+    {"name": "lakh", "files": 178_561, "size_gb": 1.7,
+     "status": "in current corpus", "note": "LMD-full; heavy overlap with LAMD"},
+    {"name": "maestro", "files": 1_276, "size_gb": 0.06,
+     "status": "in current corpus", "note": "expressive piano, 200h"},
+    {"name": "pop909", "files": 909, "size_gb": 0.02,
+     "status": "in current corpus", "note": "pop melody/chord/accomp"},
+    {"name": "giantmidi", "files": 10_855, "size_gb": 0.2,
+     "status": "in current corpus", "note": "classical piano transcriptions"},
+    {"name": "lamd", "files": 404_998, "size_gb": 9.2,
+     "status": "in current corpus", "note": "~408k total post-dedup with the "
+     "above -> ~8B training tokens (v2-100m corpus)"},
+    {"name": "gigamidi (all-instr+drums)", "files": 305_795, "size_gb": None,
+     "status": "fetcher ready", "note": "multi-instrument songs w/ drums",
+     "sample_key": "gigamidi"},
+    {"name": "gigamidi (no-drums)", "files": 317_602, "size_gb": None,
+     "status": "fetcher ready", "note": "melodic-only songs"},
+    {"name": "gigamidi (drums-only)", "files": 813_907, "size_gb": None,
+     "status": "fetcher ready", "note": "drum loops; 57% of GigaMIDI - cap "
+     "its mixture weight so drums don't dominate", "sample_key": "gigamidi-drums"},
+    {"name": "aria (pruned)", "files": 820_944, "size_gb": 5.4,
+     "status": "fetcher ready", "note": "solo piano; authors recommend this "
+     "subset for generative pre-training"},
+]
+AVG_TOKENS_PER_FILE = 8_000_000_000 / 408_000  # v2 corpus measurement
 
 
 # ------------------------------- app -------------------------------------- #
@@ -172,9 +435,37 @@ def build_app(repo_root: Path) -> Flask:
     if prompts_dir.exists():
         samplers["prompts (local)"] = sample_local(prompts_dir)
 
+    # Every built corpus under the data root gets its own training-window
+    # view; discovered per request so a corpus appears as soon as its first
+    # shards land (mid-build sampling just sees the shards written so far).
+    import os
+    data_root = Path(os.environ.get(
+        "MIDIGENAI_DATA", str(Path.home() / "midigenai_data")))
+    corpus_samplers: dict[str, TrainingWindowSampler] = {}
+
+    def discover_corpora() -> dict[str, TrainingWindowSampler]:
+        for d in sorted(data_root.glob("corpus_*")):
+            if (d / "shards").is_dir() and any((d / "shards").glob("train_*.npy")):
+                name = f"training windows ({d.name})"
+                if name not in corpus_samplers:
+                    corpus_samplers[name] = TrainingWindowSampler(d)
+        return corpus_samplers
+
+    def all_samplers():
+        active = {**samplers,
+                  **{name: ws.sample for name, ws in discover_corpora().items()}}
+        clusters = data_root / "dup_clusters.json"
+        if clusters.exists():
+            active["dup clusters (audit)"] = sample_dup_clusters(clusters)
+        scores = data_root / "scores_pilot.jsonl"
+        if scores.exists():
+            active["quality extremes (scored)"] = sample_quality_extremes(scores)
+        return active
+
     app = Flask(__name__,
                 template_folder=str(Path(__file__).parent.parent / "templates"))
     rng = random.Random()
+    viewer = PipelineViewer()
 
     @app.route("/")
     def index():
@@ -182,19 +473,84 @@ def build_app(repo_root: Path) -> Flask:
 
     @app.route("/api/datasets")
     def datasets():
-        return jsonify({"datasets": sorted(samplers)})
+        return jsonify({"datasets": sorted(all_samplers())})
+
+    @app.route("/api/mixture")
+    def mixture():
+        corpora = []
+        for name, ws in discover_corpora().items():
+            try:
+                corpora.append({"corpus": ws.corpus_dir.name,
+                                "rows": ws.mixture()})
+            except Exception as e:
+                corpora.append({"corpus": ws.corpus_dir.name, "error": str(e)})
+        if not corpora:
+            return jsonify({"error": "no built corpus found yet"}), 503
+        return jsonify({"corpora": corpora})
+
+    @app.route("/evolution")
+    def evolution_page():
+        return send_from_directory(app.template_folder, "evolution.html")
+
+    @app.route("/api/evolution")
+    def evolution_api():
+        evo = samples_root / "evolution"
+        pj = evo / "prompts.json"
+        if not pj.exists():
+            return jsonify({"error": "no evolution data yet"}), 404
+        prompts = [{k: p[k] for k in ("name", "source", "file")}
+                   for p in json.loads(pj.read_text())]
+        cells, steps = {}, []
+        for mf in sorted(evo.glob("manifest_*.json")):
+            step = str(int(mf.stem.split("_")[1]))
+            steps.append(step)
+            cells[step] = {r["prompt"]: r for r in json.loads(mf.read_text())}
+        return jsonify({"run": "medium_full_v1", "prompts": prompts,
+                        "steps": steps, "cells": cells})
+
+    @app.route("/api/sizes")
+    def sizes():
+        # measured average tokens/file from whatever has been sampled so far
+        measured: dict[str, tuple[int, int]] = {}
+        for meta in samples_root.glob("*/meta.jsonl"):
+            n = tok_sum = 0
+            for line in meta.open():
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                t = (row.get("pipeline") or {}).get("n_tokens")
+                if t:
+                    n += 1
+                    tok_sum += t
+            if n:
+                measured[meta.parent.name] = (n, tok_sum // n)
+        rows = []
+        for r in SIZE_REGISTRY:
+            r = dict(r)
+            key = r.pop("sample_key", r["name"].split(" ")[0])
+            m = measured.get(key) or measured.get(r["name"])
+            if m:
+                r["sampled_files"], r["avg_tokens_sampled"] = m
+                r["est_tokens"] = r["files"] * m[1]
+            else:
+                r["est_tokens"] = int(r["files"] * AVG_TOKENS_PER_FILE)
+                r["est_note"] = "corpus-average estimate"
+            rows.append(r)
+        return jsonify({"rows": rows})
 
     @app.route("/api/sample", methods=["POST"])
     def sample():
         data = request.get_json(force=True)
         ds = data.get("dataset")
         n = min(int(data.get("n", 8)), 25)
-        if ds not in samplers:
+        active = all_samplers()
+        if ds not in active:
             return jsonify({"error": f"unknown dataset {ds!r}"}), 400
         ds_dir = samples_root / ds.replace(" ", "_").replace("(", "").replace(")", "")
         ds_dir.mkdir(parents=True, exist_ok=True)
         try:
-            items = samplers[ds](ds_dir, n, rng)
+            items = active[ds](ds_dir, n, rng)
         except Exception as e:
             return jsonify({"error": str(e)}), 502
         rows = []
@@ -204,6 +560,11 @@ def build_app(repo_root: Path) -> Flask:
                 if it["file"]:
                     row["stats"] = note_stats(ds_dir / it["file"])
                     row["url"] = f"/midi/{ds_dir.name}/{it['file']}"
+                    if not ds.startswith("training windows"):
+                        # pipeline views re-tokenize a source file; training
+                        # windows already ARE the pipeline output
+                        row["pipeline"] = viewer.views(
+                            ds_dir / it["file"], ds_dir, ds_dir.name)
                 f.write(json.dumps(row) + "\n")
                 rows.append(row)
         return jsonify({"dataset": ds, "rows": rows})

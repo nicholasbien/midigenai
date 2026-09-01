@@ -71,6 +71,11 @@ def train(
     schedule: str = "wsd",
     decay_steps: int = 0,
     augment: bool = True,
+    aug_pitch: int = 6,
+    aug_velocity: int = 1,
+    doc_start_frac: float = 0.2,
+    mixture: str = "",
+    corpus: str = "corpus_pilot",
     compile: bool = False,
     stage_local: bool = False,
     run_name: str | None = None,
@@ -102,11 +107,14 @@ def train(
     print(f"[modal-train] corpus contents:")
     os.system("ls -la /corpus/ /corpus/shards/ 2>/dev/null | head -20")
 
-    # corpus was uploaded as a subdir; point at the inner data root
-    data_dir = Path("/corpus/v2_corpus_full")
+    # corpus subdir on the volume (upload with:
+    #   modal volume put openmusenet2-v2-corpus <local> /<corpus-name>)
+    data_dir = Path(f"/corpus/{corpus}")
     if not (data_dir / "shards").exists():
-        # fallback: maybe it was uploaded at root
-        data_dir = Path("/corpus")
+        for fallback in ("/corpus/v2_corpus_full", "/corpus"):
+            if (Path(fallback) / "shards").exists():
+                data_dir = Path(fallback)
+                break
 
     if stage_local:
         # Random mmap reads over the volume FUSE mount thrash once the corpus
@@ -137,6 +145,10 @@ def train(
         schedule=schedule,
         decay_steps=decay_steps,
         augment=augment,
+        aug_pitch=aug_pitch,
+        aug_velocity=aug_velocity,
+        doc_start_frac=doc_start_frac,
+        mixture=mixture,
         resume=resume_ckpt,
     )
 
@@ -163,13 +175,19 @@ def train(
 def main(size: str = "medium", max_steps: int = 15000, batch_size: int = 16,
          grad_accum: int = 4, block_size: int = 2048, lr: float = 3e-4,
          eval_interval: int = 500, save_interval: int = 1000,
-         schedule: str = "wsd", augment: bool = True, compile: bool = False,
+         schedule: str = "wsd", augment: bool = True,
+         aug_pitch: int = 6, aug_velocity: int = 1,
+         doc_start_frac: float = 0.2, mixture: str = "",
+         corpus: str = "corpus_pilot", compile: bool = False,
          stage_local: bool = False, run_name: str = "", resume: bool = False):
     """Local entrypoint — invoke training and print result."""
     result = train.remote(size=size, max_steps=max_steps, batch_size=batch_size,
                           grad_accum=grad_accum, block_size=block_size, lr=lr,
                           eval_interval=eval_interval, save_interval=save_interval,
-                          schedule=schedule, augment=augment, compile=compile,
+                          schedule=schedule, augment=augment, aug_pitch=aug_pitch,
+                          aug_velocity=aug_velocity,
+                          doc_start_frac=doc_start_frac, mixture=mixture,
+                          corpus=corpus, compile=compile,
                           stage_local=stage_local, run_name=run_name or None,
                           resume=resume)
     print(f"\n[done] {result}")

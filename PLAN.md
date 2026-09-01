@@ -120,8 +120,8 @@ Lakh validation picks). Sessions:
 
 ### 7. The long run, then scale
 
-- [ ] Pilot-scale sweeps (LR, augmentation on/off, block 2048) — pick settings
-- [ ] Full run at medium (113M): target ~8–10B tokens with WSD + resume
+- [x] Pilot-scale sweeps (LR, augmentation on/off, block 2048) — settings picked
+- [x] Full run at medium (113M): LAUNCHED as medium_full_v1 (24B-token target)
 - [ ] Only after a good 100M model: production config (202M)
 
 ## Sequencing
@@ -130,6 +130,113 @@ Lakh validation picks). Sessions:
 accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
+
+- 2026-09-01: CORRECTION — the "clean SIGINT detach" fix was wrong and killed
+  the run a second time (kill at step 33,160, ~90s after the SIGINT; the
+  "safe to close" verification read the final pre-kill metrics row). In this
+  Modal client version, ANY exit of the `modal run --detach` client — clean
+  or not — cancels the ephemeral app ~1-2 min later. Correct durable pattern
+  now in use: `modal deploy` the app + Function.from_name().spawn() from a
+  short-lived client (call fc-01M1DF2P5ZZT7M3TKSHYCBGWQ0, resumed from
+  ckpt_033000, ~160 steps lost). Rule going forward: production runs launch
+  ONLY via deploy+spawn; health claims ONLY on demonstrated step advancement
+  across two timestamped reads, never a single metrics snapshot. Credit:
+  todolist worker's pmset/app-log forensics for both root-cause corrections.
+
+- 2026-08-31 (evening): ROOT CAUSE of the overnight run kill (credit:
+  todolist worker's pmset forensics): laptop clamshell sleep at 01:45 EDT
+  killed the still-attached `modal run --detach` client's TCP abruptly;
+  Modal cancelled the "abandoned" ephemeral app 2 min later. --detach only
+  survives a CLEAN client exit. Fix applied to the resumed run: SIGINT'd the
+  local client (graceful detach), verified app still running (1 task) and
+  stepping (32,840+). Lesson operationalized: after any detached launch,
+  immediately SIGINT the local client; a 30-min stall/completion watcher now
+  monitors the run. Run resumed from ckpt_031000 with ~3 min of compute lost.
+
+- 2026-08-31 ~02:45: PRODUCTION RUN LAUNCHED — medium_full_v1: 113.8M params,
+  corpus_full (13.2B tokens, 274 shards: lakh/lamd/aria/gigamidi/curated,
+  strict cross-source dedup), 180k steps x 131k tok/step ≈ 24B tokens
+  (~1.8 epochs), block 2048, batch 64, compile, lr 4e-4, WSD, aug on,
+  doc-start 0.2, stage-local. First steps healthy: loss 6.63 -> 1.87 by step
+  440, throughput 321k tok/s and climbing; ETA ~20h ≈ $80. GigaMIDI was
+  recovered pre-launch (nested-zip packaging bug -> 273,766 files / 1.07B
+  tokens after cross-corpus dedup; fetcher fixed, build guard added).
+  Launch authorized by Nicholas via todolist relay ("Agent can launch once
+  build is ready"), consistent with in-session instruction. Next: monitor
+  val curve, eval_checkpoint scorecards on intermediate checkpoints, blind
+  A/B vs v2-100m at cooldown.
+
+- 2026-08-31 (early): PILOT SWEEP COMPLETE — 9 arms at 25M on Modal H100
+  (~$0.30/run, ~4 min each at 1.3M tok/s with torch.compile). Val losses:
+  best combined recipe (block 2048 + lr 6e-4) 0.822; lr 6e-4 alone 0.887 vs
+  baseline 0.906; lr 1e-3 no better; augmentation and doc-start anchoring
+  cost ~nothing on val. New eval harness (midigenai/eval_checkpoint.py)
+  scored generation BEHAVIOR for every arm: EOS termination now works
+  (17-37% self-termination in 1024 tokens vs structurally 0% for v2-100m,
+  best at block 2048), repetition drift slightly negative everywhere (no
+  degradation-over-length signature), no pathologies in any arm.
+  medium_smoke validated 113M at the big-run config: stable, 336k tok/s,
+  val 0.760 after just 260M tokens; resume-with-optimizer-state verified at
+  this scale. Big-run recipe locked: 113M, block 2048, batch 64, compile,
+  lr 4e-4, WSD, aug on, doc-start 0.2, no mixture weights v1, stage-local,
+  ~24B tokens ≈ $65-80 / 17-20h. Awaiting corpus_full build + upload.
+
+- 2026-08-30 (night, cont.): Dedup tightened after human audit found false
+  positives at 0.5 verified-Jaccard: now 0.65 + low-shingle exemption
+  (<64 distinct interval 6-grams never clustered). Strict rerun on the pilot
+  manifest rescued 2,415 of 29,437 previously-dropped files (~8% FP rate at
+  the old threshold); 27,022 true near-dups still removed. corpus_full
+  builds with strict settings tonight; corpus_pilot on Modal retains the
+  loose dedup (fine for config comparisons, not for the big run). Audit view
+  now serves strict clusters for a second listening pass.
+
+- 2026-08-30 (later): NLL scoring RETIRED as a quality signal — both tails
+  human-audited: high-NLL files sound fine (unfamiliarity, not corruption)
+  and low-NLL files are just more repetitive (predictability, not quality).
+  Quality signal comes instead from: source-level curation via mixture
+  weights, GigaMIDI expressiveness/genre metadata (future conditioning or
+  weighting), and human preference labels. Open question for pilot scale:
+  whether long repetitive files are over-weighted by token-uniform sampling
+  (candidate remedy: repetition_rate-aware downweighting or a per-doc
+  sampling cap — NOT truncation, which would corrupt EOS semantics).
+- 2026-08-30 (late): DECISION — no NLL junk filter. Human audit of the
+  worst-scored tail (500-file scoring under v2-100m, median 0.68, p99 2.13)
+  found the high-NLL files sound completely fine: the scorer flags
+  unfamiliar-to-v2-100m music, not corruption. Heuristic filters + dedup are
+  evidently already catching real junk. NLL scoring is retained only for
+  (a) a low-end repetition check (loop spam -> per-file token cap, not a
+  filter) and (b) future re-scoring with a pilot-corpus-trained checkpoint,
+  which removes the old model's style bias. corpus_full is no longer gated
+  on threshold selection; the dup-cluster audit remains the one open
+  quality gate.
+
+- 2026-08-30 (night): Focus shifted to nailing quality of corpus_pilot before
+  scaling data. Large downloads PAUSED mid-flight (gigamidi complete; lamd
+  3.1/9.2GB, aria 0.6/5.4GB partial — resume for the big Modal run with:
+  `DATA_ROOT=~/midigenai_data OUT=~/midigenai_data/corpus_full
+  SOURCES="lakh maestro pop909 giantmidi lamd gigamidi aria"
+  bash midigenai/data/build_pilot_corpus.sh` — downloads resume, clean
+  manifests reuse). New quality tooling: explorer "dup clusters (audit)"
+  plays real dedup clusters side by side (18,638 clusters found in the pilot
+  corpus — audit for false positives); midigenai/score_corpus.py scores files
+  by NLL under a checkpoint and "quality extremes (scored)" plays both tails
+  (500-file scoring run against v2-100m in progress). corpus_pilot uploading
+  to Modal volume for the pilot sweep.
+
+- 2026-08-30 (evening): Post-merge (#11 + #13 rename). New on data-improvements
+  branch: track-view sampling in build_dataset (full mix + up to 2 solo-track
+  docs per multi-track file — matches how users jam single lines); EOS token
+  appended to every training doc (docs previously had NO end marker: the model
+  had never seen a piece end, a direct cause of 'generations run until the
+  token cap'); normalize_drums() promotes mislabeled drum tracks (Ableton
+  exports, v1-era files with drums on piano channels) before tokenizing, wired
+  into build/label/explore paths; explorer shows per-sample pipeline +
+  augmentation views. Further data ideas queued in workstream 2/3: trim
+  leading/trailing silence at build time; per-source mixture weights; GigaMIDI
+  expressiveness CSV + genre tags as quality/conditioning signal; genre or
+  instrumentation control tokens; cap token share of very long repetitive
+  files; tempo-stretch augmentation; user uploads + live-jam captures as a
+  high-weight domain-adaptation set.
 
 - 2026-08-30 (later still): Model scope decision: GENERAL — drums, mono, poly,
   chords all in scope. clean.py drum-only filter removed (drum files stay in

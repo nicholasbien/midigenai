@@ -49,13 +49,13 @@ def load_generator(args, side: str):
     hubv = getattr(args, f"hub_version{'_b' if side == 'b' else ''}", None)
     if side == "b" and ckpt is None and hubv is None:
         return None, None  # no distinct B model -> self-comparison
-    from midigenai.generate import V2Generator
+    from midigenai.generate import Generator
     if ckpt:
         tok = getattr(args, f"tokenizer{'_b' if side == 'b' else ''}", None)
-        return V2Generator(ckpt, tok), Path(ckpt).stem
-    from midigenai.hub import DEFAULT_VERSION, load_v2_from_hub
+        return Generator(ckpt, tok), Path(ckpt).stem
+    from midigenai.hub import DEFAULT_VERSION, load_from_hub
     version = hubv or DEFAULT_VERSION
-    return load_v2_from_hub(version=version), version
+    return load_from_hub(version=version), version
 
 
 class PairFactory:
@@ -89,7 +89,13 @@ class PairFactory:
     def _generate_one(self) -> dict:
         args = self.args
         prompt_file = self.rng.choice(self.prompt_files)
-        prompt_ids = self.gen_a.encode_midi_file(prompt_file)
+        from symusic import Score
+
+        from midigenai.tokenizer import normalize_drums
+        prompt_score = Score(str(prompt_file))
+        # fix drum tracks mislabeled as pitched (Ableton exports, v1-era files)
+        normalize_drums(prompt_score, prompt_file.name)
+        prompt_ids = self.gen_a.tokenizer(prompt_score).ids
         if len(prompt_ids) > args.prompt_tokens:
             start = self.rng.randrange(0, len(prompt_ids) - args.prompt_tokens)
             prompt_ids = prompt_ids[start : start + args.prompt_tokens]

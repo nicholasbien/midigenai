@@ -65,6 +65,10 @@ class TrainConfig:
     schedule: str = "cosine"       # "cosine" | "wsd" (warmup-stable-decay)
     decay_steps: int = 0           # wsd only; 0 -> 10% of max_steps
     augment: bool = True           # on-the-fly pitch shift + velocity jitter
+    doc_start_frac: float = 0.2    # fraction of windows anchored at a BOS
+    aug_pitch: int = 6             # max pitch shift (semitones); 0 disables
+    aug_velocity: int = 1          # max velocity jitter (bins); 0 disables
+    mixture: str = ""              # per-source weights, e.g. "lakh:1,aria:2"
     resume: Path | None = None     # checkpoint to resume from
 
 
@@ -78,20 +82,43 @@ class ShardedTokenStream:
     (it teaches the model to handle context resets).
     """
 
-    def __init__(self, shard_paths: list[Path], block_size: int):
+    def __init__(self, shard_paths: list[Path], block_size: int,
+                 bos_id: int | None = None, doc_start_frac: float = 0.0,
+                 mixture: dict[str, float] | None = None):
         if not shard_paths:
             raise ValueError("no shards provided")
         self.block_size = block_size
         self.shards = [np.load(p, mmap_mode="r") for p in shard_paths]
-        # weight sampling by shard length so all tokens are equally likely
+        # weight sampling by shard length so all tokens are equally likely,
+        # scaled by any per-source mixture weight matched on the filename
+        # (shards are named train_<tag>_NNNNN.npy when built with --tag)
         self.weights = np.array([max(len(s) - block_size - 1, 0) for s in self.shards],
                                 dtype=np.float64)
+        if mixture:
+            for i, path in enumerate(shard_paths):
+                for key, w in mixture.items():
+                    if key in path.name:
+                        self.weights[i] *= w
+                        break
         if self.weights.sum() <= 0:
             raise ValueError(
                 f"all shards shorter than block_size+1={block_size+1}; "
                 "use a smaller block_size or larger shards"
             )
         self.weights /= self.weights.sum()
+
+        # Document starts (BOS positions) per shard. Uniform windows almost
+        # never begin at a piece opening and rarely contain an ending, so a
+        # doc_start_frac of the windows are anchored at a BOS instead.
+        self.doc_start_frac = doc_start_frac
+        self.doc_starts: list[np.ndarray] = []
+        if bos_id is not None and doc_start_frac > 0:
+            for shard in self.shards:
+                pos = np.flatnonzero(np.asarray(shard) == bos_id)
+                pos = pos[pos <= len(shard) - block_size - 1]
+                self.doc_starts.append(pos)
+        else:
+            self.doc_starts = [np.empty(0, dtype=np.int64) for _ in self.shards]
 
     def sample_batch(self, batch_size: int, rng: np.random.Generator,
                      augmenter=None):
@@ -100,7 +127,11 @@ class ShardedTokenStream:
         y = np.empty((batch_size, self.block_size), dtype=np.int64)
         for i, si in enumerate(idxs):
             shard = self.shards[si]
-            start = int(rng.integers(0, len(shard) - self.block_size - 1))
+            starts = self.doc_starts[si]
+            if len(starts) and rng.random() < self.doc_start_frac:
+                start = int(starts[rng.integers(0, len(starts))])
+            else:
+                start = int(rng.integers(0, len(shard) - self.block_size - 1))
             chunk = shard[start : start + self.block_size + 1].astype(np.int64)
             if augmenter is not None:
                 # augment the full window so input and target stay consistent
@@ -219,8 +250,20 @@ def train(cfg: TrainConfig) -> None:
 
     # ---- data
     train_shards, val_shards = collect_shards(cfg.data_dir)
-    train_stream = ShardedTokenStream(train_shards, cfg.block_size)
-    val_stream = ShardedTokenStream(val_shards, cfg.block_size) if val_shards else None
+    from midigenai.tokenizer import build_tokenizer as _bt, load_tokenizer as _lt
+    tok_path = cfg.data_dir / "tokenizer.json"
+    _tok = _lt(tok_path) if tok_path.exists() else _bt()
+    bos_id = _tok.vocab.get("BOS_None", _tok.vocab.get("BOS", 1))
+    mixture = None
+    if cfg.mixture:
+        mixture = {k: float(v) for k, v in
+                   (kv.split(":") for kv in cfg.mixture.split(","))}
+        print(f"[train] mixture weights: {mixture}")
+    train_stream = ShardedTokenStream(train_shards, cfg.block_size, bos_id=bos_id,
+                                      doc_start_frac=cfg.doc_start_frac,
+                                      mixture=mixture)
+    val_stream = ShardedTokenStream(val_shards, cfg.block_size, bos_id=bos_id,
+                                    mixture=mixture) if val_shards else None
     print(f"[train] train_shards={len(train_shards)}  val_shards={len(val_shards)}")
 
     # ---- tokenizer (just to pull vocab size)
@@ -265,7 +308,8 @@ def train(cfg: TrainConfig) -> None:
         from midigenai.tokenizer import build_tokenizer, load_tokenizer
         tok_path = cfg.data_dir / "tokenizer.json"
         tokenizer = load_tokenizer(tok_path) if tok_path.exists() else build_tokenizer()
-        augmenter = TokenAugmenter(tokenizer)
+        augmenter = TokenAugmenter(tokenizer, max_pitch_shift=cfg.aug_pitch,
+                                   max_velocity_jitter=cfg.aug_velocity)
         print(f"[train] augmentation on: pitch ±{augmenter.max_pitch_shift}, "
               f"velocity ±{augmenter.max_velocity_jitter} bins")
 
@@ -377,6 +421,14 @@ def parse_args() -> TrainConfig:
     p.add_argument("--schedule", choices=["cosine", "wsd"], default="cosine")
     p.add_argument("--decay-steps", type=int, default=0,
                    help="wsd only: final decay length (0 = 10%% of max-steps)")
+    p.add_argument("--aug-pitch", type=int, default=6,
+                   help="max pitch-shift semitones (0 disables pitch aug)")
+    p.add_argument("--aug-velocity", type=int, default=1,
+                   help="max velocity jitter in bins (0 disables)")
+    p.add_argument("--doc-start-frac", type=float, default=0.2,
+                   help="fraction of training windows anchored at a document start")
+    p.add_argument("--mixture", default="",
+                   help='per-source shard weights, e.g. "lakh:1,aria:2" (matches shard names)')
     p.add_argument("--augment", action=argparse.BooleanOptionalAction, default=True,
                    help="on-the-fly pitch shift ±6 / velocity jitter ±1 bin")
     p.add_argument("--resume", type=Path, default=None,

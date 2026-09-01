@@ -133,29 +133,36 @@ def download_lamd_via_hf(root: Path) -> Path:
         raise RuntimeError("pip install huggingface_hub") from e
 
     archive_name = "Los-Angeles-MIDI-Dataset-Ver-4-0-CC-BY-NC-SA.zip"
-    archive_path = target / archive_name
-    if not archive_path.exists():
-        print(f"[download] {archive_name} (~9 GB) ...")
-        hf_hub_download(
-            repo_id="projectlosangeles/Los-Angeles-MIDI-Dataset",
-            repo_type="dataset",
-            filename=archive_name,
-            local_dir=str(target),
-        )
+    archive_path = _hf_download_archive(
+        "projectlosangeles/Los-Angeles-MIDI-Dataset", archive_name, target)
     _extract(archive_path, target)
     return target
 
 
-def _hf_download_archive(repo_id: str, filename: str, target: Path) -> Path:
+def _hf_download_archive(repo_id: str, filename: str, target: Path,
+                         attempts: int = 5) -> Path:
+    """Download with retries — multi-GB pulls hit transient resets, and
+    hf_hub_download resumes partial files on retry."""
     try:
         from huggingface_hub import hf_hub_download
     except ImportError as e:
         raise RuntimeError("pip install huggingface_hub") from e
+    import time
     archive = target / filename
-    if not archive.exists():
-        print(f"[download] {repo_id}/{filename} ...")
-        hf_hub_download(repo_id=repo_id, repo_type="dataset",
-                        filename=filename, local_dir=str(target))
+    if archive.exists():
+        return archive
+    for attempt in range(attempts):
+        try:
+            print(f"[download] {repo_id}/{filename} (attempt {attempt + 1}) ...")
+            hf_hub_download(repo_id=repo_id, repo_type="dataset",
+                            filename=filename, local_dir=str(target))
+            return archive
+        except Exception as e:
+            if attempt == attempts - 1:
+                raise
+            wait = 30 * (attempt + 1)
+            print(f"[download] failed ({type(e).__name__}); retrying in {wait}s")
+            time.sleep(wait)
     return archive
 
 
@@ -170,27 +177,40 @@ def download_gigamidi(root: Path) -> Path:
     instantly, no human review.
     """
     target = _ensure_dir(root / "gigamidi")
-    if (target / "extracted").exists():
+    marker = target / "extracted_midis"
+    if marker.exists():
         print("[skip] gigamidi already extracted")
         return target
     archive = _hf_download_archive(
         "Metacreation/GigaMIDI", "Final_GigaMIDI_V2.0_Final.zip", target)
     _extract(archive, target / "extracted")
+    # The outer zip holds NESTED zips (training/validation/test), not MIDIs —
+    # extract each into extracted_midis/ or the cleaner finds zero files.
+    inner = list((target / "extracted").rglob("*.zip"))
+    if not inner:
+        raise RuntimeError("gigamidi: no inner zips found after extraction")
+    for z in inner:
+        if "__MACOSX" in str(z):
+            continue
+        print(f"[extract] {z.name}")
+        _extract(z, marker)
     return target
 
 
 def download_aria(root: Path) -> Path:
     """
-    Aria-MIDI — ~1M solo-piano performance transcriptions. We take the
-    *deduped* variant (2 GB tar.gz); our own near-dup pass still runs after,
-    to catch overlap with the other corpora. Ungated.
+    Aria-MIDI — solo-piano performance transcriptions. We take the *pruned*
+    variant (820,944 files, 5.4 GB tar.gz): the authors recommend it for
+    generative-model pre-training (light filters, dedup cap of 10 per piece).
+    Our own clean + near-dup passes still run after, and catch overlap with
+    the other corpora. Ungated.
     """
     target = _ensure_dir(root / "aria")
     if (target / "extracted").exists():
         print("[skip] aria already extracted")
         return target
     archive = _hf_download_archive(
-        "loubb/aria-midi", "aria-midi-v1-deduped-ext.tar.gz", target)
+        "loubb/aria-midi", "aria-midi-v1-pruned-ext.tar.gz", target)
     _extract(archive, target / "extracted")
     return target
 

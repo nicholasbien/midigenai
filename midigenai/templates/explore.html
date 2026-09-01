@@ -21,6 +21,10 @@
   .meta b { color: #333; font-weight: 600; }
   .stats span { display: inline-block; margin-right: 10px; color: #444; }
   .note { color: #888; font-size: 12px; margin-top: 6px; }
+  .kept { color: #047857; font-weight: 600; font-size: 12px; }
+  .dropped { color: #b91c1c; font-weight: 600; font-size: 12px; }
+  .tokens { font-family: ui-monospace, monospace; font-size: 10px; color: #777;
+            margin-top: 6px; max-width: 340px; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -33,9 +37,19 @@
     <span id="status" class="sub" style="margin:0"></span>
   </div>
   <div id="err" class="err"></div>
+  <details id="mixture-box" style="margin-bottom:10px">
+    <summary style="cursor:pointer; font-size:13px; color:#444; font-weight:600">Training mixture (built corpus)</summary>
+    <div id="mixture" style="margin-top:8px" class="sub">loading…</div>
+  </details>
+  <details id="sizes-box" open style="margin-bottom:16px">
+    <summary style="cursor:pointer; font-size:13px; color:#444; font-weight:600">Corpus sizes</summary>
+    <div id="sizes" style="margin-top:8px"></div>
+  </details>
   <div id="results"></div>
 
 <script>
+let reqSeq = 0;
+
 async function init() {
   const res = await fetch('/api/datasets');
   const d = await res.json();
@@ -44,6 +58,13 @@ async function init() {
     const o = document.createElement('option');
     o.value = o.textContent = name;
     sel.appendChild(o);
+  });
+  sel.addEventListener('change', () => {
+    reqSeq++;  // invalidate any in-flight request for the old dataset
+    document.getElementById('results').innerHTML = '';
+    document.getElementById('err').textContent = '';
+    document.getElementById('status').textContent = `ready to sample ${sel.value}`;
+    document.getElementById('go').disabled = false;
   });
 }
 
@@ -54,20 +75,23 @@ async function sample() {
   const status = document.getElementById('status');
   document.getElementById('err').textContent = '';
   go.disabled = true;
+  const myReq = ++reqSeq;
   status.textContent = `sampling ${ds}… (remote sources can take ~30–90s)`;
   try {
     const res = await fetch('/api/sample', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ dataset: ds, n: +n }) });
     const data = await res.json();
+    if (myReq !== reqSeq) return;  // user switched dataset while sampling
     if (!res.ok) throw new Error(data.error || res.statusText);
     render(data);
     status.textContent = `${data.rows.length} samples from ${ds}`;
   } catch (e) {
+    if (myReq !== reqSeq) return;
     document.getElementById('err').textContent = e.message;
     status.textContent = '';
   } finally {
-    go.disabled = false;
+    if (myReq === reqSeq) go.disabled = false;
   }
 }
 
@@ -78,20 +102,80 @@ function render(data) {
     const stats = r.stats ? Object.entries(r.stats)
       .map(([k, v]) => `<span><b>${k}</b> ${v}</span>`).join('') : '';
     const player = r.url ? `<midi-player src="${r.url}" sound-font></midi-player>` : '<i>no MIDI bytes</i>';
+    const pl = r.pipeline || {};
+    const verdict = pl.clean_verdict
+      ? `<span class="${pl.clean_verdict === 'kept' ? 'kept' : 'dropped'}">${pl.clean_verdict}</span>` : '';
+    const tokStats = pl.n_tokens
+      ? `<span><b>tokens</b> ${pl.n_tokens}</span><span><b>tok/note</b> ${pl.tokens_per_note}</span>` : '';
+    const procPlayer = pl.processed_url
+      ? `<div class="note">processed (training representation)</div><midi-player src="${pl.processed_url}" sound-font></midi-player>` : '';
+    const augPlayer = pl.augmented_url
+      ? `<div class="note">augmented: ${pl.augmentation}</div><midi-player src="${pl.augmented_url}" sound-font></midi-player>` : '';
+    const drumFix = pl.drum_fix ? `<div class="note" style="color:#92400e">🥁 ${pl.drum_fix}</div>` : '';
+    const errs = ['tokenize_error','decode_error','augment_error']
+      .filter(k => pl[k]).map(k => `<div class="dropped">${k}: ${pl[k]}</div>`).join('');
+    const tokens = pl.token_preview ? `<div class="tokens">${pl.token_preview} …</div>` : '';
     return `<tr>
       <td>${player}<div class="note">${r.file || ''}</div></td>
       <td class="stats">${stats}</td>
+      <td>${verdict}${drumFix}<div class="stats">${tokStats}</div>${procPlayer}${augPlayer}${errs}${tokens}</td>
       <td class="meta">${meta}</td>
     </tr>`;
   }).join('');
   document.getElementById('results').innerHTML = `
     <table>
-      <thead><tr><th>listen</th><th>note stats</th><th>source metadata</th></tr></thead>
+      <thead><tr><th>listen (raw)</th><th>note stats</th><th>after pipeline + augmentation</th><th>source metadata</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
 }
 
+async function loadSizes() {
+  try {
+    const d = await (await fetch('/api/sizes')).json();
+    const fmt = n => n >= 1e9 ? (n/1e9).toFixed(1)+'B' : n >= 1e6 ? (n/1e6).toFixed(1)+'M' : n >= 1e3 ? (n/1e3).toFixed(0)+'k' : n;
+    const rows = d.rows.map(r => `<tr>
+      <td>${r.name}</td>
+      <td style="text-align:right">${r.files.toLocaleString()}</td>
+      <td style="text-align:right">${r.size_gb != null ? r.size_gb + ' GB' : '—'}</td>
+      <td style="text-align:right">${fmt(r.est_tokens)}${r.est_note ? '*' : ''}</td>
+      <td>${r.avg_tokens_sampled ? fmt(r.avg_tokens_sampled) + ` (n=${r.sampled_files})` : '—'}</td>
+      <td>${r.status}</td>
+      <td class="meta">${r.note}</td>
+    </tr>`).join('');
+    document.getElementById('sizes').innerHTML = `
+      <table>
+        <thead><tr><th>dataset</th><th style="text-align:right">files</th><th style="text-align:right">archive</th>
+        <th style="text-align:right">est. tokens</th><th>avg tok/file (sampled)</th><th>status</th><th>notes</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+      <div class="note">* corpus-average estimate (~19.6k tok/file); sample the dataset to refine it from real files.</div>`;
+  } catch (e) {}
+}
+
+async function loadMixture() {
+  const el = document.getElementById('mixture');
+  try {
+    const res = await fetch('/api/mixture');
+    const d = await res.json();
+    if (!res.ok) { el.textContent = d.error; return; }
+    el.innerHTML = d.corpora.map(c => {
+      if (c.error) return `<div class="note">${c.corpus}: ${c.error}</div>`;
+      const tot = c.rows.reduce((a, r) => a + r.tokens, 0);
+      return `<div style="margin-bottom:10px"><b style="font-size:12px">${c.corpus}</b> — ${(tot/1e9).toFixed(2)}B tokens
+        <table><thead><tr><th>source</th><th style="text-align:right">tokens</th>
+        <th style="text-align:right">share</th><th style="text-align:right">sampling prob</th></tr></thead><tbody>` +
+        c.rows.map(r => `<tr><td>${r.tag}</td>
+          <td style="text-align:right">${(r.tokens/1e6).toFixed(0)}M</td>
+          <td style="text-align:right">${(100*r.tokens/tot).toFixed(1)}%</td>
+          <td style="text-align:right">${(100*r.prob).toFixed(1)}%</td></tr>`).join('') +
+        `</tbody></table></div>`;
+    }).join('') + `<div class="note">sampling prob equals token share unless --mixture weights are set. Pick a "training windows (…)" dataset above to hear actual training windows.</div>`;
+  } catch (e) { el.textContent = 'corpus not built yet'; }
+}
+
 init();
+loadSizes();
+loadMixture();
 </script>
 </body>
 </html>
