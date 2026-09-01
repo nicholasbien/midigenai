@@ -31,7 +31,10 @@ image = (
 app = modal.App("midigenai-evolution")
 
 
-@app.function(image=image, timeout=3600, volumes={"/runs": runs_volume})
+# A10G (~$1.10/hr): each 10-prompt column takes ~2-3 min ≈ $0.05-0.10 —
+# ~10x faster than the CPU container for pennies more.
+@app.function(image=image, gpu="A10G", timeout=3600,
+              volumes={"/runs": runs_volume})
 def sample_evolution(run_name: str, steps: list[int], prompts: list[dict],
                      max_new_tokens: int = 512, temperature: float = 1.0,
                      top_k: int = 50, seed: int = 0) -> dict:
