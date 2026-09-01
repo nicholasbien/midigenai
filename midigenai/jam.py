@@ -144,6 +144,10 @@ def main():
     ap.add_argument("--context", choices=["phrase", "session"], default="phrase",
                     help="prompt with just your latest phrase (default, lowest "
                          "latency) or the whole running session history")
+    ap.add_argument("--sync", choices=["off", "beat", "bar"], default="beat",
+                    help="delay each answer's start to Live's next beat/bar "
+                         "(via the AbletonMCP socket when available) so answers "
+                         "land on the transport grid")
     ap.add_argument("--temperature", type=float, default=1.0)
     args = ap.parse_args()
 
@@ -167,6 +171,48 @@ def main():
     buf = NoteBuffer()
     history: list[list[dict]] = []   # beat-domain segments (user, model, ...)
 
+    sync_state = {"enabled": args.sync != "off", "fails": 0}
+
+    def sync_delay() -> float | None:
+        """Seconds until Live's next beat/bar, or None (transport stopped /
+        socket unavailable). Fails open and disables itself after 3 errors."""
+        if not sync_state["enabled"]:
+            return None
+        import json as _json
+        import socket as _socket
+        try:
+            sk = _socket.socket()
+            sk.settimeout(0.2)
+            sk.connect(("localhost", 9877))
+            sk.sendall(_json.dumps(
+                {"type": "get_arrangement_info", "params": {}}).encode())
+            raw = b""
+            while True:
+                chunk = sk.recv(65536)
+                if not chunk:
+                    break
+                raw += chunk
+                try:
+                    resp = _json.loads(raw)
+                    break
+                except ValueError:
+                    continue
+            sk.close()
+            res = resp.get("result", {})
+            song_time = res.get("current_song_time")
+            if song_time is None or not res.get("is_playing", False):
+                return None
+            sync_state["fails"] = 0
+            q = 4.0 if args.sync == "bar" else 1.0
+            return ((q - (song_time % q)) % q) * spb
+        except Exception:
+            sync_state["fails"] += 1
+            if sync_state["fails"] >= 3:
+                sync_state["enabled"] = False
+                print("transport sync disabled (Ableton socket unavailable)",
+                      flush=True)
+            return None
+
     def to_beats(notes_secs: list[dict]) -> list[dict]:
         base = min(n["start"] for n in notes_secs)
         return [{
@@ -177,21 +223,29 @@ def main():
         } for n in notes_secs]
 
     def encode_segments(segs: list[list[dict]]) -> tuple[list[int], float]:
+        """Returns (prompt_ids, content_end_beats). content_end is where the
+        encoded material actually ends — NOT padded to a bar. The tokenizer
+        emits nothing after the last note, so treating a bar-padded value as
+        the answer origin silently cropped the first beats of every answer
+        (the padding bug)."""
         from symusic import Score, Track, Note as SNote
         TPQ = 480
         while True:
             score = Score(TPQ)
             tr = Track()
             cursor = 0.0
+            content_end = 0.0
             for seg in segs:
-                seg_len = max(n["start_time"] + n["duration"] for n in seg)
-                seg_len = (int(seg_len // 4) + 1) * 4.0
+                seg_end = max(n["start_time"] + n["duration"] for n in seg)
                 for n in seg:
                     tr.notes.append(SNote(
                         time=int(round((cursor + n["start_time"]) * TPQ)),
                         duration=max(1, int(round(n["duration"] * TPQ))),
                         pitch=int(n["pitch"]), velocity=int(n["velocity"])))
-                cursor += seg_len
+                content_end = cursor + seg_end
+                # inter-segment gap padded to bars (materialized as TimeShifts
+                # between segments, so it is real to the model)
+                cursor += (int(seg_end // 4) + 1) * 4.0
             score.tracks.append(tr)
             with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as f:
                 tmp = f.name
@@ -199,7 +253,7 @@ def main():
             ids = g.encode_midi_file(tmp)
             Path(tmp).unlink(missing_ok=True)
             if len(ids) <= 1500 or len(segs) == 1:
-                return ids, cursor
+                return ids, content_end
             segs = segs[1:]
 
     gen_lock = threading.Lock()          # serialize model access
@@ -236,7 +290,8 @@ def main():
 
     def play_plan(plan: dict, headroom: float = 0.05) -> None:
         import mido as _m
-        start = time.monotonic() + headroom
+        d = sync_delay()
+        start = time.monotonic() + (d if d is not None and d > headroom else headroom)
         for n in plan["notes"]:
             on_t = start + n["start_time"] * spb
             off_t = on_t + min(n["duration"], plan["target"] - n["start_time"]) * spb
@@ -296,7 +351,8 @@ def main():
             target = min((int(phrase_beats // 4) + 1) * 4.0, args.max_answer_bars * 4.0)
             prompt_ids, prompt_beats = encode_segments(prompt_segments(user_notes_beats))
             t0 = time.perf_counter()
-            start = time.monotonic() + 0.15
+            d = sync_delay()
+            start = time.monotonic() + (d if d is not None and d > 0.15 else 0.15)
             resp = []
             for note in g.stream_notes(prompt_ids, tempo_bpm=args.bpm,
                                        max_new_tokens=int(target * 40),
