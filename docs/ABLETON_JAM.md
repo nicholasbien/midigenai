@@ -47,6 +47,14 @@ Tuning flags: `--silence 1.5` (pause that triggers), `--min-notes 4`
 `--in-port/--out-port`.
 
 ### Gotchas (each of these has burned a session)
+- **Never load an instrument onto the 'you' track.** An instrument flips the
+  track to audio output, silently replacing 'MIDI To IAC Bus 1' with 'Main' —
+  the jam goes deaf. To change your sound, put the instrument on
+  'you (sound)'; for the model's sound, on 'model'.
+- **The play-in track's input must never be 'All Ins'** (Live's default for
+  new tracks): All Ins includes IAC Bus 2, so the model's own answers loop
+  back in — a runaway feedback storm. Pin it to your keyboard
+  (setup_jam_set does this automatically).
 - **`--bpm` must match Live's session tempo** or answers play at the wrong
   speed relative to the metronome.
 - Playing through an armed track is enough for jam.py (it taps the MIDI bus).
