@@ -144,6 +144,11 @@ def main():
     ap.add_argument("--context", choices=["phrase", "session"], default="phrase",
                     help="prompt with just your latest phrase (default, lowest "
                          "latency) or the whole running session history")
+    ap.add_argument("--latency-comp", type=float, default=0.037,
+                    help="seconds to schedule answers EARLY, compensating the "
+                         "socket/IAC/Live-input delivery chain (measured ~37ms "
+                         "from recorded arrangement clips; re-measure with the "
+                         "onset diagnostics if your buffer settings change)")
     ap.add_argument("--sync", choices=["off", "beat", "bar"], default="beat",
                     help="delay each answer's start to Live's next beat/bar "
                          "(via the AbletonMCP socket when available) so answers "
@@ -299,14 +304,14 @@ def main():
         d = sync_delay(origin)
         now = time.monotonic()
         if d is not None:
-            start = now + d
+            start = now + d - args.latency_comp
             while start < now + headroom:
                 start += (4.0 if args.sync == "bar" else 1.0) * spb
             how = f"live-grid (wait {start - now:.2f}s)"
         elif phrase_t0 is not None:
             # no transport: continue the phrase's own clock — origin belongs
             # at phrase_t0 + origin beats; land on the next congruent beat
-            start = phrase_t0 + origin * spb
+            start = phrase_t0 + origin * spb - args.latency_comp
             while start < now + headroom:
                 start += spb
             how = f"phrase-clock (wait {start - now:.2f}s)"
@@ -379,11 +384,11 @@ def main():
             d = sync_delay(prompt_beats)
             _now = time.monotonic()
             if d is not None:
-                start = _now + d
+                start = _now + d - args.latency_comp
                 while start < _now + 0.15:
                     start += (4.0 if args.sync == "bar" else 1.0) * spb
             elif phrase_t0 is not None:
-                start = phrase_t0 + prompt_beats * spb
+                start = phrase_t0 + prompt_beats * spb - args.latency_comp
                 while start < _now + 0.15:
                     start += spb
             else:
