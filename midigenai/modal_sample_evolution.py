@@ -54,8 +54,13 @@ def sample_evolution(run_name: str, steps: list[int], prompts: list[dict],
     for step in steps:
         ckpt = Path(f"/runs/{run_name}/ckpt_{step:06d}.pt")
         if not ckpt.exists():
-            results[step] = "missing checkpoint"
-            continue
+            # the run's last save is ckpt_final.pt, not a step-numbered file
+            final = Path(f"/runs/{run_name}/ckpt_final.pt")
+            if final.exists():
+                ckpt = final
+            else:
+                results[step] = "missing checkpoint"
+                continue
         torch.manual_seed(seed)
         gen = Generator(str(ckpt), None, backend="torch")
         rows = []
