@@ -176,7 +176,9 @@ def main():
     buf = NoteBuffer()
     history: list[list[dict]] = []   # beat-domain segments (user, model, ...)
 
-    sync_state = {"enabled": args.sync != "off", "fails": 0}
+    sync_state = {"enabled": args.sync != "off", "fails": 0,
+                  "pos": None, "wall": None, "recording": False}
+    comp = {"value": args.latency_comp}  # live-tunable latency compensation
 
     def sync_delay(phase: float = 0.0) -> float | None:
         """Seconds until Live's next beat/bar, or None (transport stopped /
@@ -189,6 +191,7 @@ def main():
             sk = _socket.socket()
             sk.settimeout(0.2)
             sk.connect(("localhost", 9877))
+            t_req = time.monotonic()
             sk.sendall(_json.dumps(
                 {"type": "get_arrangement_info", "params": {}}).encode())
             raw = b""
@@ -202,12 +205,19 @@ def main():
                     break
                 except ValueError:
                     continue
+            t_resp = time.monotonic()
             sk.close()
             res = resp.get("result", {})
             song_time = res.get("current_song_time")
+            sync_state["recording"] = bool(res.get("record_mode"))
             if song_time is None or not res.get("is_playing", False):
                 return None
             sync_state["fails"] = 0
+            # RTT correction: song_time was sampled ~mid-round-trip; by now
+            # the transport has advanced about half the RTT
+            song_time += ((t_resp - t_req) / 2.0) / spb
+            sync_state["pos"] = song_time
+            sync_state["wall"] = t_resp
             q = 4.0 if args.sync == "bar" else 1.0
             # phase-preserving: the answer's rel-0 sits at content_end, which
             # is generally mid-grid; place it so content_end's grid phase is
@@ -297,6 +307,84 @@ def main():
         return {"notes": notes, "target": target, "prompt_tokens": len(prompt_ids),
                 "origin": prompt_beats, "gen_s": time.perf_counter() - t0}
 
+    cal = {"track": None}
+
+    def _ableton(cmd, params=None, timeout=1.0):
+        import json as _json
+        import socket as _socket
+        sk = _socket.socket()
+        sk.settimeout(timeout)
+        sk.connect(("localhost", 9877))
+        sk.sendall(_json.dumps({"type": cmd, "params": params or {}}).encode())
+        raw = b""
+        while True:
+            chunk = sk.recv(4194304)
+            if not chunk:
+                break
+            raw += chunk
+            try:
+                resp = _json.loads(raw)
+                break
+            except ValueError:
+                continue
+        sk.close()
+        if resp.get("status") == "error":
+            raise RuntimeError(resp.get("message"))
+        return resp.get("result", resp)
+
+    def _find_record_track() -> int | None:
+        """The armed track whose MIDI input is our answer bus."""
+        import re as _re
+        m = _re.search(r"Bus \d+", args.out_port)
+        needle = m.group(0) if m else args.out_port
+        try:
+            n = int(_ableton("get_session_info").get("track_count", 0))
+            for i in range(n):
+                t = _ableton("get_track_info", {"track_index": i})
+                if not t.get("arm"):
+                    continue
+                r = _ableton("get_track_routing", {"track_index": i})
+                if needle in str(r.get("input_routing_type", "")):
+                    return i
+        except Exception:
+            pass
+        return None
+
+    def _calibrate(intended: list[float]) -> None:
+        """Read back where our answer actually landed (recorded arrangement
+        notes) vs where we aimed it, and trim the latency compensation."""
+        try:
+            if cal["track"] is None:
+                cal["track"] = _find_record_track()
+            if cal["track"] is None:
+                return
+            clips = _ableton("get_arrangement_clips",
+                             {"track_index": cal["track"]}).get("clips", [])
+            if not clips:
+                return
+            idx = len(clips) - 1
+            c = clips[idx]
+            notes = _ableton("get_arrangement_clip_notes",
+                             {"track_index": cal["track"],
+                              "arrangement_clip_index": idx}).get("notes", [])
+            lo, hi = min(intended) - 0.5, max(intended) + 0.5
+            landed = sorted(c["start_time"] + n["start_time"] for n in notes
+                            if lo <= c["start_time"] + n["start_time"] <= hi)
+            if len(landed) < 4:
+                return
+            errs = sorted(min((l - i for i in intended), key=abs) for l in landed)
+            median_err_beats = errs[len(errs) // 2]
+            if abs(median_err_beats) > 0.4:
+                return  # matched the wrong material; don't learn from it
+            err_s = median_err_beats * spb
+            new = min(0.15, max(0.0, comp["value"] + 0.5 * err_s))
+            if abs(new - comp["value"]) > 0.002:
+                comp["value"] = new
+                print(f"answered-calibration: landed {err_s*1000:+.0f}ms off — "
+                      f"latency comp now {new*1000:.0f}ms", flush=True)
+        except Exception:
+            pass
+
     def play_plan(plan: dict, phrase_t0: float | None = None,
                   headroom: float = 0.05) -> None:
         import mido as _m
@@ -304,14 +392,26 @@ def main():
         d = sync_delay(origin)
         now = time.monotonic()
         if d is not None:
-            start = now + d - args.latency_comp
+            start = now + d - comp["value"]
             while start < now + headroom:
                 start += (4.0 if args.sync == "bar" else 1.0) * spb
             how = f"live-grid (wait {start - now:.2f}s)"
+            if (sync_state["recording"] and sync_state["pos"] is not None
+                    and plan["notes"]):
+                # intended Live-beat positions of our first notes
+                live_at_start = sync_state["pos"] + \
+                    (start + comp["value"] - sync_state["wall"]) / spb
+                intended = [live_at_start + n["start_time"]
+                            for n in sorted(plan["notes"],
+                                            key=lambda x: x["start_time"])[:10]]
+                total = (max(n["start_time"] + n["duration"]
+                             for n in plan["notes"])) * spb
+                threading.Timer(max(0.0, start - now) + total + 1.0,
+                                _calibrate, args=(intended,)).start()
         elif phrase_t0 is not None:
             # no transport: continue the phrase's own clock — origin belongs
             # at phrase_t0 + origin beats; land on the next congruent beat
-            start = phrase_t0 + origin * spb - args.latency_comp
+            start = phrase_t0 + origin * spb - comp["value"]
             while start < now + headroom:
                 start += spb
             how = f"phrase-clock (wait {start - now:.2f}s)"
@@ -384,11 +484,11 @@ def main():
             d = sync_delay(prompt_beats)
             _now = time.monotonic()
             if d is not None:
-                start = _now + d - args.latency_comp
+                start = _now + d - comp["value"]
                 while start < _now + 0.15:
                     start += (4.0 if args.sync == "bar" else 1.0) * spb
             elif phrase_t0 is not None:
-                start = phrase_t0 + prompt_beats * spb - args.latency_comp
+                start = phrase_t0 + prompt_beats * spb - comp["value"]
                 while start < _now + 0.15:
                     start += spb
             else:
