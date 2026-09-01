@@ -173,7 +173,7 @@ def main():
 
     sync_state = {"enabled": args.sync != "off", "fails": 0}
 
-    def sync_delay() -> float | None:
+    def sync_delay(phase: float = 0.0) -> float | None:
         """Seconds until Live's next beat/bar, or None (transport stopped /
         socket unavailable). Fails open and disables itself after 3 errors."""
         if not sync_state["enabled"]:
@@ -204,7 +204,11 @@ def main():
                 return None
             sync_state["fails"] = 0
             q = 4.0 if args.sync == "bar" else 1.0
-            return ((q - (song_time % q)) % q) * spb
+            # phase-preserving: the answer's rel-0 sits at content_end, which
+            # is generally mid-grid; place it so content_end's grid phase is
+            # kept — then the model's on-grid notes land on Live's grid
+            target_phase = phase % q
+            return ((target_phase - (song_time % q)) % q) * spb
         except Exception:
             sync_state["fails"] += 1
             if sync_state["fails"] >= 3:
@@ -286,12 +290,32 @@ def main():
                           "duration": max(0.05, (note.end - note.start) / spb),
                           "velocity": note.velocity})
         return {"notes": notes, "target": target, "prompt_tokens": len(prompt_ids),
-                "gen_s": time.perf_counter() - t0}
+                "origin": prompt_beats, "gen_s": time.perf_counter() - t0}
 
-    def play_plan(plan: dict, headroom: float = 0.05) -> None:
+    def play_plan(plan: dict, phrase_t0: float | None = None,
+                  headroom: float = 0.05) -> None:
         import mido as _m
-        d = sync_delay()
-        start = time.monotonic() + (d if d is not None and d > headroom else headroom)
+        origin = plan.get("origin", 0.0)
+        d = sync_delay(origin)
+        now = time.monotonic()
+        if d is not None:
+            start = now + d
+            while start < now + headroom:
+                start += (4.0 if args.sync == "bar" else 1.0) * spb
+            how = f"live-grid (wait {start - now:.2f}s)"
+        elif phrase_t0 is not None:
+            # no transport: continue the phrase's own clock — origin belongs
+            # at phrase_t0 + origin beats; land on the next congruent beat
+            start = phrase_t0 + origin * spb
+            while start < now + headroom:
+                start += spb
+            how = f"phrase-clock (wait {start - now:.2f}s)"
+        else:
+            start = now + headroom
+            how = "unaligned"
+        _onsets = sorted(n["start_time"] for n in plan["notes"])[:12]
+        print(f"answer onsets(beats): {[round(o, 2) for o in _onsets]} | {how}",
+              flush=True)
         for n in plan["notes"]:
             on_t = start + n["start_time"] * spb
             off_t = on_t + min(n["duration"], plan["target"] - n["start_time"]) * spb
@@ -327,14 +351,15 @@ def main():
         finally:
             spec["busy"] = False
 
-    def answer(user_notes_beats: list[dict], key) -> None:
+    def answer(user_notes_beats: list[dict], key,
+               phrase_t0: float | None = None) -> None:
         """Speculative hit -> play the precomputed plan instantly; miss ->
         generate now (streaming schedule as notes decode)."""
         with spec_lock:
             hit = spec["plan"] if spec["key"] == key else None
             spec.update(key=None, plan=None)
         if hit is not None:
-            play_plan(hit)
+            play_plan(hit, phrase_t0)
             commit(user_notes_beats, hit, " instantly (speculated)")
             return
         import mido as _m
@@ -344,15 +369,25 @@ def main():
                 hit = spec["plan"] if spec["key"] == key else None
                 spec.update(key=None, plan=None)
             if hit is not None:
-                play_plan(hit)
+                play_plan(hit, phrase_t0)
                 commit(user_notes_beats, hit, " instantly (speculated)")
                 return
             phrase_beats = max(n["start_time"] + n["duration"] for n in user_notes_beats)
             target = min((int(phrase_beats // 4) + 1) * 4.0, args.max_answer_bars * 4.0)
             prompt_ids, prompt_beats = encode_segments(prompt_segments(user_notes_beats))
             t0 = time.perf_counter()
-            d = sync_delay()
-            start = time.monotonic() + (d if d is not None and d > 0.15 else 0.15)
+            d = sync_delay(prompt_beats)
+            _now = time.monotonic()
+            if d is not None:
+                start = _now + d
+                while start < _now + 0.15:
+                    start += (4.0 if args.sync == "bar" else 1.0) * spb
+            elif phrase_t0 is not None:
+                start = phrase_t0 + prompt_beats * spb
+                while start < _now + 0.15:
+                    start += spb
+            else:
+                start = _now + 0.15
             resp = []
             for note in g.stream_notes(prompt_ids, tempo_bpm=args.bpm,
                                        max_new_tokens=int(target * 40),
@@ -413,9 +448,13 @@ def main():
             if (silent and n_notes >= args.min_notes) or n_notes >= args.max_notes:
                 key = buffer_key()
                 spec["trigger"] = key  # let an in-flight speculation land post-flush
+                phrase_t0 = buf.t0
                 notes = buf.flush()
-                print(f"phrase captured: {len(notes)} notes", flush=True)
-                answer(to_beats(notes), key)
+                _onsets = sorted((n["start"] - min(x["start"] for x in notes)) / spb
+                                 for n in notes)[:12]
+                print(f"phrase captured: {len(notes)} notes | onsets(beats): "
+                      f"{[round(o, 2) for o in _onsets]}", flush=True)
+                answer(to_beats(notes), key, phrase_t0)
                 spec["trigger"] = None
             elif silent and n_notes < args.min_notes:
                 buf.flush()  # discard stray taps
