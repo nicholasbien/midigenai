@@ -104,6 +104,12 @@ class PairFactory:
         pair_id = f"{datetime.datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:8]}"
         gen_kwargs = dict(max_new_tokens=args.max_new_tokens,
                           temperature=args.temperature, top_k=args.top_k)
+        # cross-model fairness: each side can run at its own best temperature
+        kwargs_by_side = {
+            "a": gen_kwargs,
+            "b": {**gen_kwargs,
+                  "temperature": args.temperature_b or args.temperature},
+        }
 
         from symusic import Tempo
 
@@ -115,7 +121,7 @@ class PairFactory:
 
         conts = {}
         for name, gen in (("a", self.gen_a), ("b", self.gen_b)):
-            new_ids = list(gen.generate_ids(prompt_ids, **gen_kwargs))
+            new_ids = list(gen.generate_ids(prompt_ids, **kwargs_by_side[name]))
             conts[name] = new_ids
             # Decode with full prompt context (programs, ringing notes), then
             # trim to the continuation only: shorter files review much faster.
@@ -139,6 +145,7 @@ class PairFactory:
             "model_b": self.label_b,
             "cross_model": self.cross_model,
             "tempo_bpm": tempo,
+            "temperature_b": kwargs_by_side["b"]["temperature"],
             **gen_kwargs,
         }
         (self.pairs_dir / f"{pair_id}.json").write_text(json.dumps(meta))
@@ -302,6 +309,8 @@ def main():
     # ~64 notes / ~30-45s of music: enough to judge, short enough to label fast
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--temperature", type=float, default=1.2)
+    p.add_argument("--temperature-b", type=float, default=None,
+                   help="model B's temperature (cross-model fairness); defaults to --temperature")
     p.add_argument("--top-k", type=int, default=50)
     # plumbing
     p.add_argument("--queue-size", type=int, default=4)
