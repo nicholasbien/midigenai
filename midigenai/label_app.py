@@ -73,8 +73,14 @@ class PairFactory:
         self.label_b = label_b or self.label_a
         self.cross_model = gen_b is not None
 
-        self.prompt_files = sorted(Path(args.prompts).glob("*.mid")) + \
-                            sorted(Path(args.prompts).glob("*.midi"))
+        self.blacklist_path = Path(args.out).resolve() / "bad_prompts.txt"
+        blacklisted = set()
+        if self.blacklist_path.exists():
+            blacklisted = set(self.blacklist_path.read_text().split())
+        self.prompt_files = [
+            f for f in sorted(Path(args.prompts).glob("*.mid")) +
+                       sorted(Path(args.prompts).glob("*.midi"))
+            if f.name not in blacklisted]
         if not self.prompt_files:
             raise SystemExit(f"no .mid files in {args.prompts}")
         print(f"[label] {len(self.prompt_files)} prompt files; "
@@ -232,9 +238,19 @@ def build_app(args) -> Flask:
     @app.route("/api/vote", methods=["POST"])
     def vote():
         data = request.get_json(force=True)
-        choice = data.get("choice")  # left | right | tie | bad | skip
-        if choice not in ("left", "right", "tie", "bad", "skip"):
+        choice = data.get("choice")  # left | right | tie | bad | skip | bad_prompt
+        if choice not in ("left", "right", "tie", "bad", "skip", "bad_prompt"):
             return jsonify({"error": f"bad choice {choice!r}"}), 400
+        if choice == "bad_prompt" and data.get("pair_id"):
+            # the source example itself is unusable: blacklist it from future
+            # serving here, and downstream from training/eval prompt sets
+            meta_path = factory.pairs_dir / f"{data['pair_id']}.json"
+            if meta_path.exists():
+                pf = Path(json.loads(meta_path.read_text())["prompt_file"])
+                with factory.blacklist_path.open("a") as bf:
+                    bf.write(pf.name + "\n")
+                factory.prompt_files = [f for f in factory.prompt_files
+                                        if f.name != pf.name]
         record = {
             "ts": utcnow(),
             "session_id": data.get("session_id", ""),
