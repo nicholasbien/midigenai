@@ -1,9 +1,12 @@
 """
 One-command Ableton set setup for the jam flow (midigenai/jam.py).
 
-Creates and configures two tracks in the open Live set:
-  "you"   — your instrument, Monitor Auto, armed, MIDI To -> IAC Bus 1
-  "model" — the model's instrument, Monitor In, MIDI From -> IAC Bus 2
+Creates and configures three tracks in the open Live set (an instrument
+track outputs AUDIO, so the play-in track must carry no instrument for the
+IAC buses to appear in its output options — hence the split):
+  "you"         — NO instrument, armed, Monitor Auto, MIDI To -> IAC Bus 1
+  "you (sound)" — your instrument, MIDI From -> IAC Bus 1, Monitor In
+  "model"       — the model's instrument, MIDI From -> IAC Bus 2, Monitor In
 
 Requires the AbletonMCP control surface WITH the routing tools
 (ableton-mcp-pro PR #6: get/set_track_input_routing, set_track_output_routing,
@@ -69,17 +72,19 @@ def main():
 
     manual: list[str] = []
 
-    def make_track(name: str, instrument: str) -> int:
+    def make_track(name: str, instrument: str | None) -> int:
         n = int(live.send("get_session_info").get("track_count", 0))
         idx = live.send("create_midi_track", {"index": -1}).get("index", n)
         live.send("set_track_name", {"track_index": idx, "name": name})
-        live.send("load_instrument_or_effect", {"track_index": idx, "uri": instrument})
+        if instrument:
+            live.send("load_instrument_or_effect",
+                      {"track_index": idx, "uri": instrument})
         return idx
 
-    you = make_track("you", args.you_instrument)
+    you = make_track("you", None)          # no instrument: keeps MIDI outputs
+    sound = make_track("you (sound)", args.you_instrument)
     model = make_track("model", args.model_instrument)
 
-    # routing (needs the routing tools in the remote script)
     have_routing = True
     try:
         routing = live.send("get_track_routing", {"track_index": you})
@@ -87,43 +92,42 @@ def main():
         have_routing = False
 
     if have_routing:
-        out_name = pick_routing(routing.get("available_output_routing_types", []),
-                                "IAC", args.out_bus)
-        if out_name:
-            live.send("set_track_output_routing",
-                      {"track_index": you, "routing_type_name": out_name})
-            print(f"'you' MIDI To -> {out_name}")
-        else:
-            manual.append(f"'you': set MIDI To -> IAC Driver ({args.out_bus})")
+        def route(idx, direction, *needles):
+            r = live.send("get_track_routing", {"track_index": idx})
+            name = pick_routing(r.get(f"available_{direction}_routing_types", []),
+                                *needles)
+            if name:
+                live.send(f"set_track_{direction}_routing",
+                          {"track_index": idx, "routing_type_name": name})
+                print(f"track {idx} {direction} -> {name}")
+            else:
+                manual.append(f"track {idx}: set {direction} routing to "
+                              f"IAC ({needles[-1]}) manually")
 
-        m_routing = live.send("get_track_routing", {"track_index": model})
-        in_name = pick_routing(m_routing.get("available_input_routing_types", []),
-                               "IAC", args.in_bus)
-        if in_name:
-            live.send("set_track_input_routing",
-                      {"track_index": model, "routing_type_name": in_name})
-            print(f"'model' MIDI From -> {in_name}")
-        else:
-            manual.append(f"'model': set MIDI From -> IAC Driver ({args.in_bus})")
-
+        route(you, "output", "IAC", args.out_bus)
+        route(sound, "input", "IAC", args.out_bus)
+        route(model, "input", "IAC", args.in_bus)
         live.send("set_track_monitoring", {"track_index": you, "state": 1})    # Auto
+        live.send("set_track_monitoring", {"track_index": sound, "state": 0})  # In
         live.send("set_track_monitoring", {"track_index": model, "state": 0})  # In
     else:
         manual += [
             f"'you': MIDI To -> IAC Driver ({args.out_bus}), Monitor Auto",
+            f"'you (sound)': MIDI From -> IAC Driver ({args.out_bus}), Monitor In",
             f"'model': MIDI From -> IAC Driver ({args.in_bus}), Monitor In",
-            "(routing tools not in the loaded remote script — install "
-            "ableton-mcp-pro PR #6 and reload the control surface to automate this)",
+            "(routing tools not loaded — install ableton-mcp-pro PR #6 and "
+            "restart Live to automate this)",
         ]
 
     # arm LAST: Live auto-arms newly created tracks, which would otherwise
     # steal the arm from 'you' (this burned a previous session)
-    live.send("set_track_arm", {"track_index": model, "arm": False})
+    for idx in (sound, model):
+        live.send("set_track_arm", {"track_index": idx, "arm": False})
     live.send("set_track_arm", {"track_index": you, "arm": True})
 
     tempo = live.send("get_session_info").get("tempo", 120)
-    print(f"tracks ready: 'you' (idx {you}, armed) / 'model' (idx {model}); "
-          f"session tempo {tempo:.0f}")
+    print(f"tracks ready: 'you' (idx {you}, armed) / 'you (sound)' (idx {sound}) "
+          f"/ 'model' (idx {model}); session tempo {tempo:.0f}")
     if manual:
         print("manual steps remaining:")
         for m in manual:
