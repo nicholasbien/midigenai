@@ -488,6 +488,26 @@ def build_app(repo_root: Path) -> Flask:
             return jsonify({"error": "no built corpus found yet"}), 503
         return jsonify({"corpora": corpora})
 
+    @app.route("/evolution")
+    def evolution_page():
+        return send_from_directory(app.template_folder, "evolution.html")
+
+    @app.route("/api/evolution")
+    def evolution_api():
+        evo = samples_root / "evolution"
+        pj = evo / "prompts.json"
+        if not pj.exists():
+            return jsonify({"error": "no evolution data yet"}), 404
+        prompts = [{k: p[k] for k in ("name", "source", "file")}
+                   for p in json.loads(pj.read_text())]
+        cells, steps = {}, []
+        for mf in sorted(evo.glob("manifest_*.json")):
+            step = str(int(mf.stem.split("_")[1]))
+            steps.append(step)
+            cells[step] = {r["prompt"]: r for r in json.loads(mf.read_text())}
+        return jsonify({"run": "medium_full_v1", "prompts": prompts,
+                        "steps": steps, "cells": cells})
+
     @app.route("/api/sizes")
     def sizes():
         # measured average tokens/file from whatever has been sampled so far
