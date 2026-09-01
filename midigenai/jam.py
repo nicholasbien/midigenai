@@ -394,7 +394,8 @@ def main():
         except Exception:
             pass
 
-    clip_state = {"track": None, "slot": 0, "n_slots": 8, "fails": 0}
+    clip_state = {"track": None, "slot": 0, "n_slots": 8, "fails": 0,
+                  "write_s": 0.4}  # recent arrangement-write latency (adaptive)
 
     def _find_model_track() -> int | None:
         try:
@@ -486,11 +487,23 @@ def main():
                               "velocity": n["velocity"]})
             length = max(1.0, math.ceil(max(x["start_time"] + x["duration"]
                                             for x in notes)))
-            # next whole beat with ~0.35s of headroom for the socket round trip
-            start_beat = math.ceil(song_time + 0.35 / spb)
+            # headroom: the create call runs on Live's main thread and its
+            # latency varies — lead by twice the recently observed write time
+            # (min 0.5s) so the clip lands ahead of the playhead
+            lead_s = max(0.5, 2.0 * clip_state["write_s"])
+            start_beat = math.ceil(song_time + lead_s / spb)
+            t_w = time.monotonic()
             _ableton("create_arrangement_midi_clip",
                      {"track_index": clip_state["track"], "time": start_beat,
-                      "length": length, "notes": notes})
+                      "length": length, "notes": notes}, timeout=3.0)
+            clip_state["write_s"] = 0.7 * clip_state["write_s"] + \
+                0.3 * (time.monotonic() - t_w)
+            now_time = _ableton("get_arrangement_info").get("current_song_time", 0)
+            if now_time >= start_beat:
+                print(f"WARNING: arrangement write landed late (playhead "
+                      f"{now_time:.2f} >= clip start {start_beat}) — raising "
+                      f"headroom", flush=True)
+                clip_state["write_s"] += 0.3
             # if a session clip ever took this track over, hand it back to
             # the arrangement so the new clip actually sounds
             try:
