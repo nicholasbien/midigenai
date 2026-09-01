@@ -436,6 +436,12 @@ def main():
                                      "length": length})
             _ableton("add_notes_to_clip", {"track_index": tr, "clip_index": slot,
                                            "notes": notes})
+            try:
+                # play once and stop — call-and-response, not a loop
+                _ableton("set_clip_loop", {"track_index": tr, "clip_index": slot,
+                                           "loop": False})
+            except Exception:
+                pass
             _ableton("fire_clip", {"track_index": tr, "clip_index": slot})
             clip_state["slot"] = (slot + 1) % clip_state["n_slots"]
             clip_state["fails"] = 0
