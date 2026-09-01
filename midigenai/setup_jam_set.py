@@ -144,9 +144,11 @@ def main():
         ]
 
     # arm LAST: Live auto-arms newly created tracks, which would otherwise
-    # steal the arm from 'you' (this burned a previous session)
-    for idx in (sound, model):
-        live.send("set_track_arm", {"track_index": idx, "arm": False})
+    # steal the arm from 'you' (this burned a previous session).
+    # 'you' AND 'model' both stay armed so hitting Live's Record captures
+    # the whole jam — your part and the model's — into the arrangement.
+    live.send("set_track_arm", {"track_index": sound, "arm": False})
+    live.send("set_track_arm", {"track_index": model, "arm": True})
     live.send("set_track_arm", {"track_index": you, "arm": True})
 
     tempo = live.send("get_session_info").get("tempo", 120)
