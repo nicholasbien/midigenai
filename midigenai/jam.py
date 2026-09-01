@@ -112,6 +112,9 @@ def main():
     ap.add_argument("--max-notes", type=int, default=100,
                     help="answer immediately once this many notes are buffered")
     ap.add_argument("--max-answer-bars", type=int, default=8)
+    ap.add_argument("--context", choices=["phrase", "session"], default="phrase",
+                    help="prompt with just your latest phrase (default, lowest "
+                         "latency) or the whole running session history")
     ap.add_argument("--temperature", type=float, default=1.0)
     args = ap.parse_args()
 
@@ -144,10 +147,9 @@ def main():
             "velocity": n["velocity"],
         } for n in notes_secs]
 
-    def encode_history() -> tuple[list[int], float]:
+    def encode_segments(segs: list[list[dict]]) -> tuple[list[int], float]:
         from symusic import Score, Track, Note as SNote
         TPQ = 480
-        segs = list(history)
         while True:
             score = Score(TPQ)
             tr = Track()
@@ -173,10 +175,13 @@ def main():
 
     def answer(user_notes_beats: list[dict]):
         import mido as _m
-        history.append(user_notes_beats)
         phrase_beats = max(n["start_time"] + n["duration"] for n in user_notes_beats)
         target = min((int(phrase_beats // 4) + 1) * 4.0, args.max_answer_bars * 4.0)
-        prompt_ids, prompt_beats = encode_history()
+        if args.context == "session":
+            history.append(user_notes_beats)
+            prompt_ids, prompt_beats = encode_segments(list(history))
+        else:
+            prompt_ids, prompt_beats = encode_segments([user_notes_beats])
 
         t0 = time.perf_counter()
         start = time.monotonic() + 0.15   # tiny scheduling headroom
@@ -203,11 +208,13 @@ def main():
             n_sent += 1
         dt = time.perf_counter() - t0
         if resp:
-            history.append(resp)
+            if args.context == "session":
+                history.append(resp)
             print(f"answered: {n_sent} notes / {target:.0f} beats "
                   f"(gen {dt:.2f}s, context {len(prompt_ids)} tokens)", flush=True)
         else:
-            history.pop()
+            if args.context == "session":
+                history.pop()
             print("no notes generated — keep playing", flush=True)
 
     # ---------- main loop ---------- #
