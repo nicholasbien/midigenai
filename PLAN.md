@@ -155,6 +155,18 @@ accumulate while everything else runs), then 4 → 7 → 6.
   top-50 ≥ 0.999) so top-k 50 is a no-op and temperature is the only lever;
   a single-seed t=0.9/1.0/1.2 comparison had the multi-track seed lose its
   lead/bass at 1.2, so 1.0 stays the default.
+- 2026-09-01 (late): ctx4096_ext experiment CONCLUDED (~$11): resumed
+  medium_full_v1's pre-decay ckpt_162000 at block 4096 for +3B tokens + re-
+  anneal. Mechanically flawless (no loss spike at the context switch).
+  Matched-context val verdict: long-context skill bought at short-context
+  cost (@2048: 0.810 vs base 0.797; @4096: 0.763). Since serving runs at
+  <1024 total context, medium_full_v1 remains the v3 candidate; ctx4096_ext
+  kept on the volume for future long-form features. Decision for the 202M
+  run: train 4096 NATIVELY (avoids the extension tradeoff). Behavior
+  scorecard: extension slightly better repetition/coherence, polyphony
+  3.6->6.5 unexplained (needs ears if ever revisited). A/B gate standing:
+  medium_full_v1 over v2-100m 12-4 (75/25) across both prompt sources.
+
 - 2026-09-01 15:5x UTC: TRAINING COMPLETE — medium_full_v1: 180,000 steps,
   23.6B tokens (~1.8 epochs of the 13.2B-token corpus_full), final val loss
   0.7495 (still descending at cooldown end — extended-run headroom exists via
