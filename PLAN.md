@@ -131,6 +131,16 @@ accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
 
+- 2026-08-31 (evening): ROOT CAUSE of the overnight run kill (credit:
+  todolist worker's pmset forensics): laptop clamshell sleep at 01:45 EDT
+  killed the still-attached `modal run --detach` client's TCP abruptly;
+  Modal cancelled the "abandoned" ephemeral app 2 min later. --detach only
+  survives a CLEAN client exit. Fix applied to the resumed run: SIGINT'd the
+  local client (graceful detach), verified app still running (1 task) and
+  stepping (32,840+). Lesson operationalized: after any detached launch,
+  immediately SIGINT the local client; a 30-min stall/completion watcher now
+  monitors the run. Run resumed from ckpt_031000 with ~3 min of compute lost.
+
 - 2026-08-31 ~02:45: PRODUCTION RUN LAUNCHED — medium_full_v1: 113.8M params,
   corpus_full (13.2B tokens, 274 shards: lakh/lamd/aria/gigamidi/curated,
   strict cross-source dedup), 180k steps x 131k tok/step ≈ 24B tokens
