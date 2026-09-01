@@ -214,6 +214,21 @@ class LiveSession:
                                      "clip_index": resp_slot})
         print(f"answered in {dt:.2f}s: {len(resp)} notes / {target:.0f} beats "
               f"(context {len(prompt_ids)} tokens)", flush=True)
+        # A fired clip only sounds while Live's transport runs; if the user
+        # stopped playback (spacebar) the pending launch is silently dropped.
+        # Verify after the launch-quantization window and re-fire once —
+        # firing with a stopped transport starts playback.
+        time.sleep(2.0)
+        try:
+            tr = self.live.send("get_track_info", {"track_index": self.resp_track})
+            clip = next((sl.get("clip") or {} for sl in tr.get("clip_slots", [])
+                         if sl.get("index") == resp_slot), {})
+            if not clip.get("is_playing"):
+                self.live.send("fire_clip", {"track_index": self.resp_track,
+                                             "clip_index": resp_slot})
+                print("transport was stopped — re-fired the answer", flush=True)
+        except RuntimeError:
+            pass
 
     # ---------- watching ---------- #
 
