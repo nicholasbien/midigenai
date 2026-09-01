@@ -105,7 +105,7 @@ function render() {
   setTimeout(() => stage.classList.remove('flash'), 400);
   stage.innerHTML = `
     <div class="prompt">
-      <h3>Prompt</h3>
+      <h3>Prompt <span style="font-weight:400;color:#4f46e5">· ${p.prompt_source || ''}</span> <span style="font-weight:400;color:#999">${p.prompt_name || ''}</span></h3>
       <midi-player src="${p.prompt_url}" sound-font></midi-player>
     </div>
     <div class="row">

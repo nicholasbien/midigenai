@@ -158,8 +158,14 @@ class PairFactory:
 
         # randomize which continuation shows on which side
         left, right = ("a", "b") if self.rng.random() < 0.5 else ("b", "a")
+        name = prompt_file.name
+        source = ("your upload" if name.startswith("user_")
+                  else f"held-out val ({name.split('_')[1]})" if name.startswith("val_")
+                  else "prompt set")
         return {
             "pair_id": pair_id,
+            "prompt_source": source,
+            "prompt_name": name,
             "prompt_url": f"/midi/{pair_id}_prompt.mid",
             "left_url": f"/midi/{pair_id}_{left}.mid",
             "right_url": f"/midi/{pair_id}_{right}.mid",
