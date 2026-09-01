@@ -20,13 +20,15 @@ model answer  ← Ableton track ("MIDI From: IAC Bus 2") ← jam.py streams note
 2. **Ableton template**: open one of the `midi_test*` sets
    (`~/Music/Ableton/process Project/midi_test_copy.als` or similar) — they
    have the routing below already. To build it fresh in any set:
-   - Track A (you play here): your instrument, Monitor **Auto**, armed,
-     **MIDI To → IAC Driver (IAC Bus 1)**
-   - Track B (the model): an instrument, Monitor **In**,
-     **MIDI From → IAC Driver (IAC Bus 2)**
-   - With the routing-tools remote script (ableton-mcp-pro PR #6) this can be
-     done programmatically via `set_track_output_routing` /
-     `set_track_input_routing` / `set_track_monitoring`.
+   - **Three tracks, not two** — a MIDI track with an instrument outputs
+     *audio*, so IAC buses don't appear in its output options:
+     - "you": NO instrument, armed, Monitor Auto, **MIDI To → IAC Bus 1**
+     - "you (sound)": your instrument, **MIDI From → IAC Bus 1**, Monitor In
+     - "model": the model's instrument, **MIDI From → IAC Bus 2**, Monitor In
+   - Or just run **`python -m midigenai.setup_jam_set`** — with the
+     routing-tools remote script loaded (ableton-mcp-pro PR #6, needs a Live
+     restart after install) it builds all of this with zero clicks; verified
+     end-to-end on a fresh set 2026-09-01.
 
 ### Run it
 ```bash

@@ -22,6 +22,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import collections
 import heapq
 import tempfile
 import threading
@@ -66,15 +67,20 @@ class NoteBuffer:
 
 class Player:
     """Streams scheduled note events to a MIDI output with a small lookahead
-    buffer so slightly out-of-order arrivals still play in order."""
+    buffer so slightly out-of-order arrivals still play in order. A note_on
+    that arrives more than MAX_LATE behind schedule is dropped (matching the
+    old note_player's misfire behavior) — better to skip a note than smear
+    the timing; its note_off still sends, which is harmless."""
 
-    LOOKAHEAD = 0.3  # seconds held back before sending
+    MAX_LATE = 0.15  # seconds a note_on may run behind schedule before dropping
 
     def __init__(self, outport):
         self.outport = outport
         self.heap: list[tuple[float, int, object]] = []
         self.lock = threading.Condition()
         self.seq = 0
+        self.dropped = 0
+        self.sent = collections.deque(maxlen=1024)  # (t, pitch) of recent sends
         threading.Thread(target=self._run, daemon=True).start()
 
     def schedule(self, when: float, msg):
@@ -94,7 +100,23 @@ class Player:
                     self.lock.wait(timeout=min(delay, 0.05))
                     continue
                 heapq.heappop(self.heap)
+            if msg.type == "note_on" and time.monotonic() - when > self.MAX_LATE:
+                self.dropped += 1
+                continue
+            if msg.type == "note_on":
+                self.sent.append((time.monotonic(), msg.note))
             self.outport.send(msg)
+
+    def sent_recently(self, pitch: int, window: float = 0.35) -> bool:
+        """True if we just sent this pitch — used to reject echoes of our own
+        output looping back through a misrouted Ableton track."""
+        now = time.monotonic()
+        for t, p in reversed(self.sent):
+            if now - t > window:
+                return False
+            if p == pitch:
+                return True
+        return False
 
 
 def main():
@@ -106,8 +128,15 @@ def main():
     ap.add_argument("--in-port", default="IAC Driver Bus 1")
     ap.add_argument("--out-port", default="IAC Driver Bus 2")
     ap.add_argument("--bpm", type=float, default=120.0)
-    ap.add_argument("--silence", type=float, default=1.5,
+    ap.add_argument("--silence", type=float, default=0.8,
                     help="seconds of silence that triggers an answer")
+    ap.add_argument("--speculate", action=argparse.BooleanOptionalAction, default=True,
+                    help="start generating during the pause; if you stay quiet the "
+                         "answer plays instantly (draft discarded if you keep playing)")
+    ap.add_argument("--adaptive-silence", action=argparse.BooleanOptionalAction,
+                    default=True,
+                    help="halve the silence window when your phrase ends on a "
+                         "whole-bar boundary of its own grid")
     ap.add_argument("--min-notes", type=int, default=4)
     ap.add_argument("--max-notes", type=int, default=100,
                     help="answer immediately once this many notes are buffered")
@@ -173,68 +202,166 @@ def main():
                 return ids, cursor
             segs = segs[1:]
 
-    def answer(user_notes_beats: list[dict]):
-        import mido as _m
+    gen_lock = threading.Lock()          # serialize model access
+    spec_lock = threading.Lock()
+    spec = {"key": None, "plan": None, "busy": False}
+
+    def prompt_segments(user_notes_beats: list[dict]) -> list[list[dict]]:
+        if args.context == "session":
+            return list(history) + [user_notes_beats]
+        return [user_notes_beats]
+
+    def generate_plan(user_notes_beats: list[dict]) -> dict:
+        """Full generation with no side effects: returns the answer as a note
+        plan. Used by the speculative worker (and could serve the direct path
+        too, but the direct path streams for lower first-note latency)."""
         phrase_beats = max(n["start_time"] + n["duration"] for n in user_notes_beats)
         target = min((int(phrase_beats // 4) + 1) * 4.0, args.max_answer_bars * 4.0)
-        if args.context == "session":
-            history.append(user_notes_beats)
-            prompt_ids, prompt_beats = encode_segments(list(history))
-        else:
-            prompt_ids, prompt_beats = encode_segments([user_notes_beats])
-
+        prompt_ids, prompt_beats = encode_segments(prompt_segments(user_notes_beats))
         t0 = time.perf_counter()
-        start = time.monotonic() + 0.15   # tiny scheduling headroom
-        resp: list[dict] = []
-        n_sent = 0
+        notes = []
         for note in g.stream_notes(prompt_ids, tempo_bpm=args.bpm,
                                    max_new_tokens=int(target * 40),
                                    temperature=args.temperature):
-            nb = note.start / spb  # stream_notes gives seconds from sequence start
-            if nb < prompt_beats - 1e-6:
-                continue  # prompt part of the decoded sequence
-            rel_beat = nb - prompt_beats
+            rel_beat = note.start / spb - prompt_beats
+            if rel_beat < -1e-6:
+                continue
             if rel_beat >= target:
                 break
-            on_t = start + rel_beat * spb
-            off_t = start + min((note.end / spb) - prompt_beats, target) * spb
-            player.schedule(on_t, _m.Message("note_on", note=note.pitch,
-                                             velocity=note.velocity))
+            notes.append({"pitch": note.pitch, "start_time": rel_beat,
+                          "duration": max(0.05, (note.end - note.start) / spb),
+                          "velocity": note.velocity})
+        return {"notes": notes, "target": target, "prompt_tokens": len(prompt_ids),
+                "gen_s": time.perf_counter() - t0}
+
+    def play_plan(plan: dict, headroom: float = 0.05) -> None:
+        import mido as _m
+        start = time.monotonic() + headroom
+        for n in plan["notes"]:
+            on_t = start + n["start_time"] * spb
+            off_t = on_t + min(n["duration"], plan["target"] - n["start_time"]) * spb
+            player.schedule(on_t, _m.Message("note_on", note=n["pitch"],
+                                             velocity=n["velocity"]))
             player.schedule(max(off_t, on_t + 0.05),
-                            _m.Message("note_off", note=note.pitch, velocity=0))
-            resp.append({"pitch": note.pitch, "start_time": rel_beat,
-                         "duration": max(0.05, (note.end - note.start) / spb),
-                         "velocity": note.velocity})
-            n_sent += 1
-        dt = time.perf_counter() - t0
-        if resp:
-            if args.context == "session":
-                history.append(resp)
-            print(f"answered: {n_sent} notes / {target:.0f} beats "
-                  f"(gen {dt:.2f}s, context {len(prompt_ids)} tokens)", flush=True)
-        else:
-            if args.context == "session":
-                history.pop()
+                            _m.Message("note_off", note=n["pitch"], velocity=0))
+
+    def commit(user_notes_beats: list[dict], plan: dict, how: str) -> None:
+        if not plan["notes"]:
             print("no notes generated — keep playing", flush=True)
+            return
+        if args.context == "session":
+            history.append(user_notes_beats)
+            history.append(plan["notes"])
+        print(f"answered{how}: {len(plan['notes'])} notes / {plan['target']:.0f} beats "
+              f"(gen {plan['gen_s']:.2f}s, context {plan['prompt_tokens']} tokens)",
+              flush=True)
+
+    def buffer_key():
+        return (len(buf.notes), buf.last_event)
+
+    def spec_worker(snapshot: list[dict], key):
+        try:
+            with gen_lock:
+                if buffer_key() != key and spec.get("trigger") != key:
+                    return  # user kept playing while we waited for the model
+                plan = generate_plan(to_beats(snapshot))
+            with spec_lock:
+                # still current, or exactly the phrase that just triggered
+                if buffer_key() == key or spec.get("trigger") == key:
+                    spec.update(key=key, plan=plan)
+        finally:
+            spec["busy"] = False
+
+    def answer(user_notes_beats: list[dict], key) -> None:
+        """Speculative hit -> play the precomputed plan instantly; miss ->
+        generate now (streaming schedule as notes decode)."""
+        with spec_lock:
+            hit = spec["plan"] if spec["key"] == key else None
+            spec.update(key=None, plan=None)
+        if hit is not None:
+            play_plan(hit)
+            commit(user_notes_beats, hit, " instantly (speculated)")
+            return
+        import mido as _m
+        with gen_lock:
+            # a speculative run may have finished while we waited for the lock
+            with spec_lock:
+                hit = spec["plan"] if spec["key"] == key else None
+                spec.update(key=None, plan=None)
+            if hit is not None:
+                play_plan(hit)
+                commit(user_notes_beats, hit, " instantly (speculated)")
+                return
+            phrase_beats = max(n["start_time"] + n["duration"] for n in user_notes_beats)
+            target = min((int(phrase_beats // 4) + 1) * 4.0, args.max_answer_bars * 4.0)
+            prompt_ids, prompt_beats = encode_segments(prompt_segments(user_notes_beats))
+            t0 = time.perf_counter()
+            start = time.monotonic() + 0.15
+            resp = []
+            for note in g.stream_notes(prompt_ids, tempo_bpm=args.bpm,
+                                       max_new_tokens=int(target * 40),
+                                       temperature=args.temperature):
+                rel_beat = note.start / spb - prompt_beats
+                if rel_beat < -1e-6:
+                    continue
+                if rel_beat >= target:
+                    break
+                on_t = start + rel_beat * spb
+                off_t = start + min(note.end / spb - prompt_beats, target) * spb
+                player.schedule(on_t, _m.Message("note_on", note=note.pitch,
+                                                 velocity=note.velocity))
+                player.schedule(max(off_t, on_t + 0.05),
+                                _m.Message("note_off", note=note.pitch, velocity=0))
+                resp.append({"pitch": note.pitch, "start_time": rel_beat,
+                             "duration": max(0.05, (note.end - note.start) / spb),
+                             "velocity": note.velocity})
+            plan = {"notes": resp, "target": target, "prompt_tokens": len(prompt_ids),
+                    "gen_s": time.perf_counter() - t0}
+        commit(user_notes_beats, plan, "")
 
     # ---------- main loop ---------- #
     try:
         while True:
             for msg in inport.iter_pending():
-                if msg.type in ("note_on", "note_off"):
-                    if buf.t0 is None and msg.type == "note_on" and msg.velocity > 0:
-                        print("hearing you...", flush=True)
-                    buf.feed(msg, time.monotonic())
+                if msg.type not in ("note_on", "note_off"):
+                    continue
+                # echo guard: our own answer looping back through a misrouted
+                # track (e.g. an armed track with input "All Ins") would
+                # otherwise be captured as user playing — a feedback loop
+                if player.sent_recently(msg.note):
+                    continue
+                if buf.t0 is None and msg.type == "note_on" and msg.velocity > 0:
+                    print("hearing you...", flush=True)
+                buf.feed(msg, time.monotonic())
             now = time.monotonic()
             n_notes = len(buf.notes)
-            silent = (buf.last_event is not None
-                      and now - buf.last_event >= args.silence
+            # adaptive window: a phrase that stops on a whole-bar boundary of
+            # its own grid is probably finished — halve the wait
+            window = args.silence
+            if args.adaptive_silence and buf.t0 is not None and buf.last_event:
+                end_beats = (buf.last_event - buf.t0) / spb
+                if abs(end_beats - round(end_beats / 4.0) * 4.0) < 0.25:
+                    window = args.silence * 0.5
+            quiet_for = (now - buf.last_event) if buf.last_event else 0.0
+            silent = (buf.last_event is not None and quiet_for >= window
                       and not buf.open)
+            # speculation: after a short beat of quiet, generate the answer in
+            # the background; discarded automatically if more notes arrive
+            if (args.speculate and not buf.open and n_notes >= args.min_notes
+                    and 0.15 <= quiet_for and not spec["busy"]
+                    and spec["key"] != buffer_key()):
+                spec["busy"] = True
+                threading.Thread(target=spec_worker,
+                                 args=(list(buf.notes), buffer_key()),
+                                 daemon=True).start()
             if (silent and n_notes >= args.min_notes) or n_notes >= args.max_notes:
+                key = buffer_key()
+                spec["trigger"] = key  # let an in-flight speculation land post-flush
                 notes = buf.flush()
                 print(f"phrase captured: {len(notes)} notes", flush=True)
-                answer(to_beats(notes))
-            elif silent and buf.last_event is not None and n_notes < args.min_notes:
+                answer(to_beats(notes), key)
+                spec["trigger"] = None
+            elif silent and n_notes < args.min_notes:
                 buf.flush()  # discard stray taps
             time.sleep(0.01)
     except KeyboardInterrupt:
