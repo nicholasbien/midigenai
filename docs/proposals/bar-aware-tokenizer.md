@@ -32,6 +32,14 @@ tokens:
 REMI's Position tokens make the downbeat explicit in every bar, so the model
 learns "phrases start near position 0" as a direct statistical fact.
 
+## Optional rider: triplet-capable resolution
+
+Current grid is 1/8 beat (32nd notes) — plenty fine for straight material,
+but true triplets (1/3 beat) are unrepresentable and were warped to 32nds in
+training. Since this retrain already changes the vocab, `beat_res` of 12/beat
+(covers 16ths + triplets) or 24/beat (adds 32nds back) is nearly free to
+include. Low priority per review — evaluate only if the pilot budget allows.
+
 ## Costs / risks
 
 - **Full retrain** — new vocab means no checkpoint reuse. At post-#21 Modal
