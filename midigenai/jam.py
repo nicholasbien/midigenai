@@ -176,7 +176,7 @@ def main():
     buf = NoteBuffer()
     history: list[list[dict]] = []   # beat-domain segments (user, model, ...)
 
-    sync_state = {"enabled": args.sync != "off", "fails": 0,
+    sync_state = {"enabled": args.sync != "off", "fails": 0, "retry_at": 0.0,
                   "pos": None, "wall": None, "recording": False}
     comp = {"value": args.latency_comp}  # live-tunable latency compensation
 
@@ -185,11 +185,16 @@ def main():
         socket unavailable). Fails open and disables itself after 3 errors."""
         if not sync_state["enabled"]:
             return None
+        if sync_state["fails"] >= 3:
+            # cooling down after repeated socket failures; retry periodically
+            if time.monotonic() < sync_state["retry_at"]:
+                return None
+            sync_state["fails"] = 2  # allow one probe
         import json as _json
         import socket as _socket
         try:
             sk = _socket.socket()
-            sk.settimeout(0.2)
+            sk.settimeout(0.5)
             sk.connect(("localhost", 9877))
             t_req = time.monotonic()
             sk.sendall(_json.dumps(
@@ -227,9 +232,9 @@ def main():
         except Exception:
             sync_state["fails"] += 1
             if sync_state["fails"] >= 3:
-                sync_state["enabled"] = False
-                print("transport sync disabled (Ableton socket unavailable)",
-                      flush=True)
+                sync_state["retry_at"] = time.monotonic() + 30.0
+                print("transport sync failing — will retry in 30s "
+                      "(answers use phrase-clock meanwhile)", flush=True)
             return None
 
     def to_beats(notes_secs: list[dict]) -> list[dict]:
