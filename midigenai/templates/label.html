@@ -105,7 +105,7 @@ function render() {
   setTimeout(() => stage.classList.remove('flash'), 400);
   stage.innerHTML = `
     <div class="prompt">
-      <h3>Prompt</h3>
+      <h3>Prompt <span style="font-weight:400;color:#4f46e5">· ${p.prompt_source || ''}</span> <span style="font-weight:400;color:#999">${p.prompt_name || ''}</span></h3>
       <midi-player src="${p.prompt_url}" sound-font></midi-player>
     </div>
     <div class="row">
@@ -126,6 +126,7 @@ function render() {
       <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
       <button onclick="vote('bad')">Both bad<kbd>x</kbd></button>
       <button onclick="vote('skip')">Skip<kbd>s</kbd></button>
+      <button onclick="vote('bad_prompt')" style="border-color:#dc2626;color:#dc2626">Bad prompt — exclude from data<kbd>p</kbd></button>
     </div>
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
   `;
@@ -150,7 +151,7 @@ async function vote(choice) {
     await fetch('/api/vote', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) });
-    if (choice !== 'skip') { sessionCount++; totalCount++; updateCount(); }
+    if (choice !== 'skip' && choice !== 'bad_prompt') { sessionCount++; totalCount++; updateCount(); }
   } catch (e) {
     alert('failed to record vote: ' + e.message);
     return;
@@ -160,7 +161,7 @@ async function vote(choice) {
 
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
-  const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip' };
+  const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip', 'p': 'bad_prompt' };
   if (map[e.key]) { e.preventDefault(); vote(map[e.key]); return; }
   const flagMap = { q: ['left', 'degrades'], w: ['right', 'degrades'],
                     e: ['left', 'too_long'], r: ['right', 'too_long'] };
