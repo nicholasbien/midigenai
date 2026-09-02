@@ -166,18 +166,36 @@ class Generator:
         max_new_tokens: int = 512,
         temperature: float = 1.0,
         top_k: int = 50,
+        min_new_tokens: int = 0,
+        seed: int | None = None,
     ) -> Iterator[int]:
+        """
+        `min_new_tokens`: hold EOS back for the first N tokens. Any prompt whose
+        voices all stop at the same instant (an excerpt cut on a bar line, a
+        jam partner who stops playing) reads as a piece ending — measured
+        P(EOS) as the first token was 0.5–0.93 on such prompts vs ~0.02 with
+        natural note-offs — so set this to roughly the length you want
+        guaranteed before the model may choose to end.
+
+        `seed`: seeds the backend RNG (mlx / torch) for reproducible takes.
+        """
         if self.bos_id is not None and (not prompt_ids or prompt_ids[0] != self.bos_id):
             prompt_ids = [self.bos_id, *prompt_ids]
         if self.backend == "mlx":
+            import mlx.core as mx
+            if seed is not None:
+                mx.random.seed(seed)
             yield from self.model.generate(
                 prompt_ids,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 top_k=top_k,
                 eos_id=self.eos_id,
+                min_new_tokens=min_new_tokens,
             )
             return
+        if seed is not None:
+            torch.manual_seed(seed)
         prompt = torch.tensor([prompt_ids], dtype=torch.long, device=self.device)
         yield from self.model.generate(
             prompt,
@@ -185,6 +203,7 @@ class Generator:
             temperature=temperature,
             top_k=top_k,
             eos_id=self.eos_id,
+            min_new_tokens=min_new_tokens,
         )
 
     def stream_notes(
@@ -258,6 +277,11 @@ if __name__ == "__main__":
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-k", type=int, default=50)
+    parser.add_argument("--min-new-tokens", type=int, default=0,
+                        help="mask EOS for the first N generated tokens (guards "
+                             "against prompts that look like a piece ending)")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="RNG seed for a reproducible take")
     parser.add_argument("--tempo-bpm", type=float, default=None,
                         help="output tempo; defaults to input MIDI's tempo")
     parser.add_argument("--dtype", default="float16",
@@ -278,6 +302,8 @@ if __name__ == "__main__":
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_k=args.top_k,
+        min_new_tokens=args.min_new_tokens,
+        seed=args.seed,
     )
     print(json.dumps({"prompt_tokens": len(prompt), "generated_tokens": len(new_ids),
                       "output": args.output_midi}))

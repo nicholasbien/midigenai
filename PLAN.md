@@ -51,6 +51,16 @@ we scale to 202M.
 - [ ] Source-weighted sampling: upsample curated sets (MAESTRO, POP909,
       GiantMIDI) relative to raw LAMD/Lakh
 - [ ] Ablate each filter at pilot scale (~$1.50/run) before trusting it
+- [ ] **Fragment-EOS for the next run**: build the corpus with
+      `build_dataset --fragment-under-seconds 30` so short files get BOS but
+      no EOS. Why: GigaMIDI is loops/clips (median 27 s, 51% < 30 s, ~24% of
+      training docs) and each one teaches "8 bars, then EOS" — ctx4096_ext
+      puts P(EOS) > 0.2 on ~35% of random 8-bar Lakh excerpts even with
+      natural note-offs. Keeps GigaMIDI's tokens (main drums/multi-track
+      source), drops only the ending signal. Check: P(EOS)-at-bar-8 sweep
+      (20 random Lakh files, see 2026-09-01 log) should fall well below the
+      current 35% / mean 0.18. Inference guard already exists
+      (`generate --min-new-tokens`) — the data fix is what removes the cause.
 
 ### 3. More data
 
@@ -130,6 +140,21 @@ Lakh validation picks). Sessions:
 accumulate while everything else runs), then 4 → 7 → 6.
 
 ## Log
+
+- 2026-09-01: Early-EOS diagnosis on ctx4096_ext. Two causes. (a) Prompts
+  whose voices all stop at one instant (bar-line cut, truncated note-offs)
+  get P(EOS)=0.51–0.93 as the *first* generated token vs 0.02 with natural
+  overhanging note-offs — the model correctly imitating corpus endings;
+  fixed at inference with `generate --min-new-tokens N` (+ `--seed`), added
+  to both backends. (b) Even with natural note-offs, 35% of 20 random Lakh
+  files cut at bar 8 had P(EOS) > 0.2 (mean 0.18): an "ends at bar 8" prior
+  from GigaMIDI's short clips (`clean.py` has MIN_NOTES=32 but no duration
+  floor). Fix queued for the next run: `build_dataset
+  --fragment-under-seconds 30` (workstream 2). Sampling note from the same
+  measurement: the model is very peaked (median top-10 mass 0.97–1.0,
+  top-50 ≥ 0.999) so top-k 50 is a no-op and temperature is the only lever;
+  a single-seed t=0.9/1.0/1.2 comparison had the multi-track seed lose its
+  lead/bass at 1.2, so 1.0 stays the default.
 
 - 2026-09-01: CORRECTION — the "clean SIGINT detach" fix was wrong and killed
   the run a second time (kill at step 33,160, ~90s after the SIGINT; the

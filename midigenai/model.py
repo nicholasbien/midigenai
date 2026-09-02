@@ -235,15 +235,21 @@ class MusicTransformer(nn.Module):
         temperature: float = 1.0,
         top_k: int | None = 50,
         eos_id: int | None = None,
+        min_new_tokens: int = 0,
     ):
-        """Single-batch streaming generator. Yields token IDs one at a time."""
+        """Single-batch streaming generator. Yields token IDs one at a time.
+
+        `min_new_tokens`: EOS is masked out of the first N sampled tokens (see
+        MusicTransformerMLX.generate for why)."""
         self.eval()
         kv_caches: list | None = None
         cur = ids
-        for _ in range(max_new_tokens):
+        for i in range(max_new_tokens):
             logits, kv_caches = self.forward(cur, kv_caches)
             # fp32 for top-k/softmax so half-precision inference samples cleanly
             logits = logits[:, -1, :].float() / max(temperature, 1e-6)
+            if eos_id is not None and i < min_new_tokens:
+                logits[:, eos_id] = -float("inf")
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float("inf")

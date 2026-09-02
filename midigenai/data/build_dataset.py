@@ -142,7 +142,19 @@ def build(
     workers: int | None = None,
     track_views: int = TRACK_VIEWS,
     tag: str = "",
+    fragment_under_seconds: float | None = None,
 ) -> dict:
+    """
+    `fragment_under_seconds`: source files shorter than this get BOS but **no
+    EOS** — they are treated as fragments of a longer piece rather than pieces
+    that end. Motivation (2026-09-01): GigaMIDI is mostly loops/clips (median
+    27 s, 51% under 30 s, ~24% of all training docs), and every one of them
+    teaches "8 bars, then EOS". The ctx4096_ext model assigns P(EOS) > 0.2 to
+    ~35% of random 8-bar Lakh excerpts as a result. Dropping the files instead
+    would lose the corpus's main drums/multi-track source, so keep the tokens
+    and drop only the ending signal. Off by default (None) so existing
+    corpora rebuild byte-identically.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     tokenizer = build_tokenizer()
     save_tokenizer(tokenizer, out_dir / "tokenizer.json")
@@ -171,12 +183,14 @@ def build(
         entries = entries[:limit]
     random.Random(0).shuffle(entries)
     paths = [e["path"] for e in entries]
+    duration_by_path = {e["path"]: e.get("duration_seconds") for e in entries}
 
     n_workers = workers or max(1, (os.cpu_count() or 2) - 1)
     print(f"[tokenize] {len(paths)} files, {n_workers} workers")
 
     n_view_docs = 0
     n_view_tokens = 0
+    n_fragment_docs = 0
     with Pool(n_workers, initializer=_worker_init,
               initargs=(track_views,)) as pool:
         for path, docs in tqdm(
@@ -190,8 +204,19 @@ def build(
             # never straddle train and val through its views
             split = split_by_path(path, val_fraction)
             writer = val_writer if split == "val" else train_writer
+            # solo views inherit the parent's fragment status: a 20 s loop's
+            # bass line is no more "a piece that ends" than the loop itself
+            dur = duration_by_path.get(path)
+            is_fragment = (
+                fragment_under_seconds is not None
+                and dur is not None
+                and dur < fragment_under_seconds
+            )
+            tail = [] if is_fragment else [eos_id]
             for d, ids in enumerate(docs):
-                arr = np.asarray([bos_id, *ids, eos_id], dtype=np.uint16)
+                arr = np.asarray([bos_id, *ids, *tail], dtype=np.uint16)
+                if is_fragment:
+                    n_fragment_docs += 1
                 writer.append(arr)
                 if split == "val":
                     n_val_tokens += len(arr)
@@ -213,6 +238,8 @@ def build(
         "n_files_failed": n_failed,
         "n_train_tokens": n_train_tokens,
         "n_val_tokens": n_val_tokens,
+        "fragment_under_seconds": fragment_under_seconds,
+        "n_fragment_docs": n_fragment_docs,
         "n_train_shards": n_train_shards,
         "n_val_shards": n_val_shards,
         "shard_tokens": shard_tokens,
@@ -241,6 +268,9 @@ if __name__ == "__main__":
                         help="parallel tokenizer workers (default: cpu_count-1)")
     parser.add_argument("--track-views", type=int, default=TRACK_VIEWS,
                         help="extra single-track docs per multi-track file (0 disables)")
+    parser.add_argument("--fragment-under-seconds", type=float, default=None,
+                        help="files shorter than this get no EOS (treated as "
+                             "fragments, not endings); see build_dataset docstring")
     parser.add_argument("--tag", default="",
                         help="source tag baked into shard names for mixture weighting")
     args = parser.parse_args()
@@ -253,4 +283,5 @@ if __name__ == "__main__":
         workers=args.workers,
         track_views=args.track_views,
         tag=args.tag,
+        fragment_under_seconds=args.fragment_under_seconds,
     )
