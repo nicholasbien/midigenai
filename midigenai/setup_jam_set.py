@@ -117,9 +117,14 @@ def main():
             chosen = pick_routing(r.get("available_input_routing_types", []),
                                   args.you_input)
         else:
+            # exclude buses, meta-inputs, and OTHER TRACKS (their names appear
+            # as routable inputs — "1-MIDI" is a track, not a keyboard)
+            n_tracks = int(live.send("get_session_info").get("track_count", 0))
+            track_names = {live.send("get_track_info", {"track_index": i}).get("name")
+                           for i in range(n_tracks)}
             hw = [n for n in avail if n not in ("All Ins", "Computer Keyboard",
                                                 "No Input")
-                  and "IAC" not in n and n not in ("you (sound)", "model", "you")]
+                  and "IAC" not in n and n not in track_names]
             chosen = hw[0] if hw else (
                 "Computer Keyboard" if "Computer Keyboard" in avail else None)
         if chosen:
