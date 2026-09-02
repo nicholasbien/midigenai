@@ -124,6 +124,11 @@ Lakh validation picks). Sessions:
       agreement per metric and for the fitted reward
 - [ ] Gate: only use a programmatic reward for GRPO if it predicts human
       preference clearly above chance on held-out labels; re-fit as labels grow
+      (STATUS: ~30 usable v3-era pairs of the ~150 needed; labeling app is
+      serving v3 self-vs-self pairs at the calibrated t=1.1)
+- [ ] WRITE the GRPO training loop (rollout generation, group-relative
+      advantages, KL-regularized updates on the Modal stack) — the one
+      unbuilt piece; ~a day of work, blocked only on the reward gate
 - [ ] GRPO prototype against the validated reward with meaningful KL penalty;
       A/B every RL checkpoint against its base in the labeling app
 - [ ] DPO becomes viable once labeled pairs reach the low thousands; revisit then
@@ -132,7 +137,9 @@ Lakh validation picks). Sessions:
 
 - [x] Pilot-scale sweeps (LR, augmentation on/off, block 2048) — settings picked
 - [x] Full run at medium (113M): LAUNCHED as medium_full_v1 (24B-token target)
-- [ ] Only after a good 100M model: production config (202M)
+- [ ] Production config (202M), native block 4096, ~$150-200 for 24-30B
+      tokens at measured-throughput estimates (~170-190k tok/s) — DEFERRED
+      by decision 2026-09-02: data fixes and GRPO come first
 
 ## Sequencing
 
@@ -155,6 +162,13 @@ accumulate while everything else runs), then 4 → 7 → 6.
   top-50 ≥ 0.999) so top-k 50 is a no-op and temperature is the only lever;
   a single-seed t=0.9/1.0/1.2 comparison had the multi-track seed lose its
   lead/bass at 1.2, so 1.0 stays the default.
+- 2026-09-02: v3 SHIPPED (medium_full_v1 -> HF hub v3/, release PR #33; blind
+  A/B final: 23-6, p=0.0012). Sequencing decision (Nicholas): further data
+  fixes BEFORE the 202M run; at current labeling scale GRPO (tiny fitted
+  reward calibrated on preference pairs, ~150-pair gate) over DPO (needs
+  thousands). Labeling app now collects v3 self-vs-self pairs. Remaining
+  build item for the RL phase: the GRPO training loop itself.
+
 - 2026-09-01 (late): ctx4096_ext experiment CONCLUDED (~$11): resumed
   medium_full_v1's pre-decay ckpt_162000 at block 4096 for +3B tokens + re-
   anneal. Mechanically flawless (no loss spike at the context switch).
