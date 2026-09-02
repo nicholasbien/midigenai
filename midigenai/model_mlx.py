@@ -137,9 +137,14 @@ class MusicTransformerMLX(nn.Module):
     def new_caches(self) -> list[KVCache]:
         return [KVCache() for _ in self.blocks]
 
-    def _sample(self, logits: mx.array, temperature: float, top_k: int | None) -> mx.array:
-        """Same sampling semantics as model.py: fp32 logits, temperature, top-k."""
+    def _sample(self, logits: mx.array, temperature: float, top_k: int | None,
+                suppress_id: int | None = None) -> mx.array:
+        """Same sampling semantics as model.py: fp32 logits, temperature, top-k.
+        `suppress_id` (if given) is masked out before top-k — used to hold EOS
+        back until `min_new_tokens` have been generated."""
         logits = logits[:, -1, :].astype(mx.float32) / max(temperature, 1e-6)
+        if suppress_id is not None:
+            logits = logits.at[:, suppress_id].add(-mx.inf)
         if top_k is not None and top_k < logits.shape[-1]:
             kth = mx.sort(logits, axis=-1)[:, -top_k]
             logits = mx.where(logits < kth[:, None], -mx.inf, logits)
@@ -152,20 +157,29 @@ class MusicTransformerMLX(nn.Module):
         temperature: float = 1.0,
         top_k: int | None = 50,
         eos_id: int | None = None,
+        min_new_tokens: int = 0,
     ) -> Iterator[int]:
         """Single-batch streaming generator, pipelined one step ahead: while
         the host syncs on token n (.item()), the GPU is already computing
-        step n+1. Worth ~1.4x over a synchronous loop."""
+        step n+1. Worth ~1.4x over a synchronous loop.
+
+        `min_new_tokens`: EOS is masked out of the first N sampled tokens.
+        Prompts whose voices all stop at once (a bar-line cut, a user who
+        stops playing) look like a piece ending to the model, which then
+        emits EOS immediately; this is the standard min-length guard."""
         if max_new_tokens <= 0:
             return
         caches = self.new_caches()
+        # token i is sampled at step i; hold EOS back while i < min_new_tokens
+        def suppress(i: int) -> int | None:
+            return eos_id if (eos_id is not None and i < min_new_tokens) else None
         logits = self(mx.array([prompt_ids]), caches)
-        token = self._sample(logits, temperature, top_k)
+        token = self._sample(logits, temperature, top_k, suppress(0))
         mx.async_eval(token)
         for i in range(max_new_tokens):
             if i + 1 < max_new_tokens:
                 next_logits = self(token[:, None], caches)
-                next_token = self._sample(next_logits, temperature, top_k)
+                next_token = self._sample(next_logits, temperature, top_k, suppress(i + 1))
                 mx.async_eval(next_token)
             else:
                 next_token = None
