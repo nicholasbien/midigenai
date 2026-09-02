@@ -149,6 +149,15 @@ def main():
                          "socket/IAC/Live-input delivery chain (measured ~37ms "
                          "from recorded arrangement clips; re-measure with the "
                          "onset diagnostics if your buffer settings change)")
+    ap.add_argument("--output", choices=["arrange", "clip", "stream"],
+                    default="arrange",
+                    help="arrange (default): write each answer into the "
+                         "ARRANGEMENT just ahead of the playhead — the timeline "
+                         "plays it sample-accurately and the jam accumulates on "
+                         "the model track's lane. clip: fire session clips "
+                         "instead. stream: raw MIDI over the bus. All modes "
+                         "fall back to streaming when the transport is stopped "
+                         "or the remote-script socket is unavailable.")
     ap.add_argument("--sync", choices=["off", "beat", "bar"], default="beat",
                     help="delay each answer's start to Live's next beat/bar "
                          "(via the AbletonMCP socket when available) so answers "
@@ -385,6 +394,133 @@ def main():
         except Exception:
             pass
 
+    clip_state = {"track": None, "slot": 0, "n_slots": 8, "fails": 0,
+                  "write_s": 0.4}  # recent arrangement-write latency (adaptive)
+
+    def _find_model_track() -> int | None:
+        try:
+            n = int(_ableton("get_session_info").get("track_count", 0))
+            for i in range(n):
+                if _ableton("get_track_info", {"track_index": i}).get("name") == "model":
+                    return i
+        except Exception:
+            pass
+        return None
+
+    def play_clip(plan: dict) -> bool:
+        """Write the answer as a session clip on the 'model' track and fire it.
+        Live plays the clip from its own timeline — sample-accurate, nothing
+        to compensate. Returns False on any failure (caller falls back to
+        streaming)."""
+        import math
+        try:
+            # fired session clips only sound while Live's transport runs;
+            # free-time jamming (transport stopped) streams over MIDI instead
+            if not _ableton("get_arrangement_info").get("is_playing", False):
+                return False
+            if clip_state["track"] is None:
+                clip_state["track"] = _find_model_track()
+            if clip_state["track"] is None:
+                return False
+            origin = plan.get("origin", 0.0)
+            base = math.floor(origin)  # integer beat: preserves grid phase
+            notes = []
+            for n in plan["notes"]:
+                start = origin + n["start_time"] - base
+                notes.append({"pitch": n["pitch"],
+                              "start_time": round(start, 4),
+                              "duration": max(0.05, round(n["duration"], 4)),
+                              "velocity": n["velocity"]})
+            length = max(4.0, math.ceil(max(x["start_time"] + x["duration"]
+                                            for x in notes) / 4.0) * 4.0)
+            tr = clip_state["track"]
+            slot = clip_state["slot"]
+            try:
+                _ableton("delete_clip", {"track_index": tr, "clip_index": slot})
+            except Exception:
+                pass
+            _ableton("create_clip", {"track_index": tr, "clip_index": slot,
+                                     "length": length})
+            _ableton("add_notes_to_clip", {"track_index": tr, "clip_index": slot,
+                                           "notes": notes})
+            try:
+                # play once and stop — call-and-response, not a loop
+                _ableton("set_clip_loop", {"track_index": tr, "clip_index": slot,
+                                           "loop": False})
+            except Exception:
+                pass
+            _ableton("fire_clip", {"track_index": tr, "clip_index": slot})
+            clip_state["slot"] = (slot + 1) % clip_state["n_slots"]
+            clip_state["fails"] = 0
+            print(f"answer -> clip slot {slot} ({len(notes)} notes, "
+                  f"{length:.0f} beats, fires on Live's launch quantization)",
+                  flush=True)
+            return True
+        except Exception:
+            clip_state["fails"] += 1
+            if clip_state["fails"] == 3:
+                print("clip output failing — falling back to MIDI streaming",
+                      flush=True)
+            return False
+
+    def play_arrange(plan: dict) -> bool:
+        """Write the answer into the arrangement just ahead of the playhead —
+        Live's timeline plays it sample-accurately, and the jam accumulates
+        on the model track's arrangement lane. Needs a running transport."""
+        import math
+        try:
+            info = _ableton("get_arrangement_info")
+            if not info.get("is_playing", False):
+                return False
+            if clip_state["track"] is None:
+                clip_state["track"] = _find_model_track()
+            if clip_state["track"] is None:
+                return False
+            song_time = float(info["current_song_time"])
+            origin = plan.get("origin", 0.0)
+            base = math.floor(origin)  # integer-beat rebase keeps grid phase
+            notes = []
+            for n in plan["notes"]:
+                notes.append({"pitch": n["pitch"],
+                              "start_time": round(origin + n["start_time"] - base, 4),
+                              "duration": max(0.05, round(n["duration"], 4)),
+                              "velocity": n["velocity"]})
+            length = max(1.0, math.ceil(max(x["start_time"] + x["duration"]
+                                            for x in notes)))
+            # headroom: the create call runs on Live's main thread and its
+            # latency varies — lead by twice the recently observed write time
+            # (min 0.5s) so the clip lands ahead of the playhead
+            lead_s = max(0.5, 2.0 * clip_state["write_s"])
+            start_beat = math.ceil(song_time + lead_s / spb)
+            t_w = time.monotonic()
+            _ableton("create_arrangement_midi_clip",
+                     {"track_index": clip_state["track"], "time": start_beat,
+                      "length": length, "notes": notes}, timeout=3.0)
+            clip_state["write_s"] = 0.7 * clip_state["write_s"] + \
+                0.3 * (time.monotonic() - t_w)
+            now_time = _ableton("get_arrangement_info").get("current_song_time", 0)
+            if now_time >= start_beat:
+                print(f"WARNING: arrangement write landed late (playhead "
+                      f"{now_time:.2f} >= clip start {start_beat}) — raising "
+                      f"headroom", flush=True)
+                clip_state["write_s"] += 0.3
+            # if a session clip ever took this track over, hand it back to
+            # the arrangement so the new clip actually sounds
+            try:
+                _ableton("set_back_to_arranger")
+            except Exception:
+                pass
+            clip_state["fails"] = 0
+            print(f"answer -> arrangement at beat {start_beat} "
+                  f"({len(notes)} notes, {length:.0f} beats)", flush=True)
+            return True
+        except Exception:
+            clip_state["fails"] += 1
+            if clip_state["fails"] == 3:
+                print("arrangement output failing — falling back to MIDI "
+                      "streaming", flush=True)
+            return False
+
     def play_plan(plan: dict, phrase_t0: float | None = None,
                   headroom: float = 0.05) -> None:
         import mido as _m
@@ -463,8 +599,16 @@ def main():
         with spec_lock:
             hit = spec["plan"] if spec["key"] == key else None
             spec.update(key=None, plan=None)
+        def deliver(plan: dict) -> None:
+            if clip_state["fails"] < 3:
+                if args.output == "arrange" and play_arrange(plan):
+                    return
+                if args.output == "clip" and play_clip(plan):
+                    return
+            play_plan(plan, phrase_t0)
+
         if hit is not None:
-            play_plan(hit, phrase_t0)
+            deliver(hit)
             commit(user_notes_beats, hit, " instantly (speculated)")
             return
         import mido as _m
@@ -474,8 +618,13 @@ def main():
                 hit = spec["plan"] if spec["key"] == key else None
                 spec.update(key=None, plan=None)
             if hit is not None:
-                play_plan(hit, phrase_t0)
+                deliver(hit)
                 commit(user_notes_beats, hit, " instantly (speculated)")
+                return
+            if args.output in ("arrange", "clip") and clip_state["fails"] < 3:
+                plan = generate_plan(user_notes_beats)
+                deliver(plan)
+                commit(user_notes_beats, plan, "")
                 return
             phrase_beats = max(n["start_time"] + n["duration"] for n in user_notes_beats)
             target = min((int(phrase_beats // 4) + 1) * 4.0, args.max_answer_bars * 4.0)
