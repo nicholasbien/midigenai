@@ -222,9 +222,10 @@ def t_drums(b0, bar):
 def t_perc(b0, bar):
     sec = t_section(bar)
     if sec in ("intro", "outro") or bar < 12: return []
-    n = [N(37, b0 + i * 0.25 + 0.125, 0.08, 48 + (i % 2) * 18) for i in range(16)]   # shaker-ish 16ths, offset
-    n += [N(41, b0 + 1.5, 0.15, 80), N(43, b0 + 2.75, 0.15, 74), N(41, b0 + 3.5, 0.15, 70)]
-    if sec == "drop": n += [N(45, b0 + 0.75, 0.12, 66), N(45, b0 + 2.25, 0.12, 60)]
+    # sparse, syncopated: a clave-ish figure, not 16ths
+    n = [N(37, b0 + 0.75, 0.1, 72), N(37, b0 + 2.5, 0.1, 64), N(37, b0 + 3.25, 0.1, 58)]
+    n += [N(41, b0 + 1.5, 0.15, 80), N(43, b0 + 3.5, 0.15, 70)]
+    if sec == "drop": n += [N(45, b0 + 2.25, 0.12, 60)]
     return n
 
 
@@ -295,11 +296,12 @@ def add_fx(track, *uris):
 
 
 def set_param(track, device, name, value):
-    """Best effort: parameter names differ per device version."""
+    """Best effort: parameter names differ per device version (Echo's mix is
+    'Dry Wet', Reverb's is 'Dry/Wet')."""
     try:
         params = live("get_device_parameters", {"track_index": track, "device_index": device}).get("parameters", [])
         for prm in params:
-            if prm.get("name") == name:
+            if prm.get("name") in (name, name.replace("/", " ")):
                 live("set_device_parameter", {"track_index": track, "device_index": device,
                                               "parameter_index": prm.get("index"), "value": value})
                 return True
@@ -338,7 +340,9 @@ def build_techno() -> dict:
     add_fx(model, FX["echo"], FX["reverb"])
     add_fx(-1, FX["glue"], FX["limiter"])           # master
     for tr, dev in ((idx["stab"], 2), (idx["stab"], 3), (idx["pad"], 1), (3, 1), (3, 2), (model, 1), (model, 2)):
-        set_param(tr, dev, "Dry/Wet", 0.22)
+        set_param(tr, dev, "Dry/Wet", 0.26)                       # Echo -> 'Dry Wet', Reverb -> 'Dry/Wet'
+    for tr, dev in ((idx["stab"], 2), (3, 1), (model, 1)):
+        set_param(tr, dev, "Feedback", 0.4)
     live("set_track_volume", {"track_index": idx["pad"], "volume": 0.62})
     live("set_track_volume", {"track_index": idx["stab"], "volume": 0.7})
     live("set_track_volume", {"track_index": idx["bass"], "volume": 0.8})
@@ -407,6 +411,24 @@ def route(idx, direction, name):
     live(f"set_track_{direction}_routing", {"track_index": idx, "routing_type_name": name})
 
 
+def dub_chain(tr):
+    """Dub techno on a chord lane: LP auto filter with slow LFO, chorus,
+    dotted-8th feedback echo, long reverb. Devices are found by name."""
+    add_fx(tr, "query:AudioFx#Chorus-Ensemble")
+    names = [d["name"] for d in live("get_track_info", {"track_index": tr})["devices"]]
+    for di, n in enumerate(names):
+        if n == "Auto Filter":
+            set_param(tr, di, "Frequency", 0.58); set_param(tr, di, "LFO Amount", 0.12)
+        elif n == "Echo":
+            # (delay time stays at its dotted-8th default: the API only takes
+            # normalized 0-1 values and the '16th' params are raw)
+            set_param(tr, di, "Dry Wet", 0.38); set_param(tr, di, "Feedback", 0.58)
+            set_param(tr, di, "LP Freq", 0.62); set_param(tr, di, "HP Freq", 0.25)
+        elif n == "Reverb":
+            set_param(tr, di, "Decay Time", 0.62); set_param(tr, di, "Dry/Wet", 0.32)
+            set_param(tr, di, "Room Size", 0.85)
+
+
 def build_band(idx: dict) -> dict:
     """Extra lanes on top of build_techno(); needs IAC Buses 3-6."""
     you, model = idx["you"], idx["model"]
@@ -427,10 +449,23 @@ def build_band(idx: dict) -> dict:
             route(i, "input", f"IAC Driver ({in_bus})")
             live("set_track_monitoring", {"track_index": i, "state": 1})   # Auto: hear the bus, play back the take
         lanes[name] = i
+    # the call lanes carry no instrument (they send MIDI out), so give each a
+    # sound lane listening to it — otherwise the composed calls are inaudible
+    for name, src, inst in (("you chords (sound)", "you chords", T_STAB),
+                            ("you drums (sound)", "you drums", T_KIT)):
+        i = live("create_midi_track", {"index": -1})["index"]
+        live("set_track_name", {"track_index": i, "name": name})
+        live("load_instrument_or_effect", {"track_index": i, "uri": inst})
+        route(i, "input", src)
+        live("set_track_monitoring", {"track_index": i, "state": 0})       # In
+        live("set_track_arm", {"track_index": i, "arm": False})
+        lanes[name] = i
     add_fx(lanes["model drums"], FX["drumbuss"])
-    add_fx(lanes["model chords"], FX["autofilter"], FX["echo"], FX["reverb"])
-    set_param(lanes["model chords"], 2, "Dry/Wet", 0.22); set_param(lanes["model chords"], 3, "Dry/Wet", 0.22)
-    live("set_track_volume", {"track_index": lanes["model chords"], "volume": 0.7})
+    add_fx(lanes["you drums (sound)"], FX["drumbuss"])
+    for t in (lanes["model chords"], lanes["you chords (sound)"]):
+        add_fx(t, FX["autofilter"], FX["echo"], FX["reverb"])
+        dub_chain(t)
+        live("set_track_volume", {"track_index": t, "volume": 0.7})
     # arm the three answer lanes last (a new track steals the arm)
     for t in (model, lanes["model drums"], lanes["model chords"]):
         live("set_track_arm", {"track_index": t, "arm": True})
