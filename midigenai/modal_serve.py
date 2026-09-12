@@ -87,6 +87,9 @@ class MidiGen:
         gen = self.gen
         if gen.bos_id is not None and (not prompt_ids or prompt_ids[0] != gen.bos_id):
             prompt_ids = [gen.bos_id, *prompt_ids]
+        # Long uploads: keep the prompt tail so prompt + continuation fits the
+        # context window (decoding past it crashes attention).
+        prompt_ids, max_new_tokens = gen.fit_to_context(prompt_ids, max_new_tokens)
         model = gen.model
         ids = torch.tensor([prompt_ids] * n_samples, dtype=torch.long, device=gen.device)
         outs: list[list[int]] = [[] for _ in range(n_samples)]

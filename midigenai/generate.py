@@ -48,6 +48,41 @@ class Note:
     program: int = 0
 
 
+MIN_PROMPT_TOKENS = 256  # never shrink a long prompt below this to make room for generation
+
+
+def fit_to_context(
+    prompt_ids: list[int],
+    max_new_tokens: int,
+    max_seq_len: int,
+    bos_id: int | None = None,
+    min_prompt_tokens: int = MIN_PROMPT_TOKENS,
+) -> tuple[list[int], int]:
+    """Make `len(prompt) + max_new_tokens <= max_seq_len`.
+
+    The prompt is a MIDI the user wants continued, so its *tail* is what
+    matters: a too-long prompt keeps its last tokens (BOS, if present, stays
+    at the front). `max_new_tokens` is only reduced when the prompt could not
+    otherwise keep `min_prompt_tokens` of context.
+
+    Without this, a dense upload (~7.7k+ tokens at the 8192 serving context)
+    ran the KV cache past the RoPE table mid-decode and crashed attention with
+    a shape mismatch — every request for that file 500'd.
+    """
+    if max_seq_len <= 0:
+        return list(prompt_ids), max_new_tokens
+    has_bos = bos_id is not None and len(prompt_ids) > 0 and prompt_ids[0] == bos_id
+    min_prompt = min(min_prompt_tokens, len(prompt_ids))
+    max_new_tokens = max(0, min(max_new_tokens, max_seq_len - min_prompt))
+    keep = max_seq_len - max_new_tokens
+    if len(prompt_ids) > keep:
+        if has_bos:
+            prompt_ids = [bos_id, *prompt_ids[len(prompt_ids) - (keep - 1):]] if keep > 1 else [bos_id]
+        else:
+            prompt_ids = prompt_ids[len(prompt_ids) - keep:]
+    return list(prompt_ids), max_new_tokens
+
+
 class Generator:
     def __init__(
         self,
@@ -99,6 +134,7 @@ class Generator:
             # load_model keeps a converted .safetensors sidecar next to the
             # checkpoint, so warm loads skip torch.load (~1.3 s -> ~15 ms).
             self.model, cfg = load_model(checkpoint_path, dtype=mlx_dtype)
+            cfg.max_seq_len = max(cfg.max_seq_len, inference_seq_len)
         else:
             self.device = device or _auto_device()
             ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -109,6 +145,9 @@ class Generator:
             self.model = MusicTransformer(cfg).to(self.device).eval()
             self.model.load_state_dict(ckpt["model"])
             self.model = self.model.to(self.dtype)
+        # Hard ceiling on prompt + generated tokens (the torch RoPE table has
+        # exactly this many rows; decoding past it crashes attention).
+        self.max_seq_len = cfg.max_seq_len
 
         self.tokenizer = (
             load_tokenizer(tokenizer_path) if tokenizer_path else build_tokenizer()
@@ -121,6 +160,15 @@ class Generator:
             if c in self.tokenizer.vocab:
                 return self.tokenizer.vocab[c]
         return None
+
+    def fit_to_context(
+        self, prompt_ids: list[int], max_new_tokens: int
+    ) -> tuple[list[int], int]:
+        """Trim `prompt_ids` / `max_new_tokens` so prompt + generation fits in
+        `self.max_seq_len`. See `fit_to_context`."""
+        return fit_to_context(
+            prompt_ids, max_new_tokens, self.max_seq_len, bos_id=self.bos_id
+        )
 
     # ---------- encode user input ---------- #
 
@@ -181,6 +229,7 @@ class Generator:
         """
         if self.bos_id is not None and (not prompt_ids or prompt_ids[0] != self.bos_id):
             prompt_ids = [self.bos_id, *prompt_ids]
+        prompt_ids, max_new_tokens = self.fit_to_context(prompt_ids, max_new_tokens)
         if self.backend == "mlx":
             import mlx.core as mx
             if seed is not None:
