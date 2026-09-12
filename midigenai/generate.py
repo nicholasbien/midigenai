@@ -55,32 +55,31 @@ def fit_to_context(
     prompt_ids: list[int],
     max_new_tokens: int,
     max_seq_len: int,
-    bos_id: int | None = None,
     min_prompt_tokens: int = MIN_PROMPT_TOKENS,
 ) -> tuple[list[int], int]:
     """Make `len(prompt) + max_new_tokens <= max_seq_len`.
 
-    The prompt is a MIDI the user wants continued, so its *tail* is what
-    matters: a too-long prompt keeps its last tokens (BOS, if present, stays
-    at the front). `max_new_tokens` is only reduced when the prompt could not
+    A too-long prompt is cut at the *end*: the model continues from wherever
+    the cut lands, and callers join `fitted_prompt + continuation` so the
+    result is one coherent piece (the dropped tail is simply gone). The head
+    is kept rather than the tail so the cut point is easy to show against the
+    original file. `max_new_tokens` is only reduced when the prompt could not
     otherwise keep `min_prompt_tokens` of context.
 
     Without this, a dense upload (~7.7k+ tokens at the 8192 serving context)
     ran the KV cache past the RoPE table mid-decode and crashed attention with
     a shape mismatch — every request for that file 500'd.
     """
+    prompt_ids = list(prompt_ids)
     if max_seq_len <= 0:
-        return list(prompt_ids), max_new_tokens
-    has_bos = bos_id is not None and len(prompt_ids) > 0 and prompt_ids[0] == bos_id
-    min_prompt = min(min_prompt_tokens, len(prompt_ids))
+        return prompt_ids, max_new_tokens
+    # (a tiny context, e.g. in tests, still leaves at least half for generation)
+    min_prompt = min(min_prompt_tokens, len(prompt_ids), max_seq_len // 2)
     max_new_tokens = max(0, min(max_new_tokens, max_seq_len - min_prompt))
     keep = max_seq_len - max_new_tokens
     if len(prompt_ids) > keep:
-        if has_bos:
-            prompt_ids = [bos_id, *prompt_ids[len(prompt_ids) - (keep - 1):]] if keep > 1 else [bos_id]
-        else:
-            prompt_ids = prompt_ids[len(prompt_ids) - keep:]
-    return list(prompt_ids), max_new_tokens
+        prompt_ids = prompt_ids[:keep]
+    return prompt_ids, max_new_tokens
 
 
 class Generator:
@@ -161,14 +160,20 @@ class Generator:
                 return self.tokenizer.vocab[c]
         return None
 
+    def _needs_bos(self, prompt_ids: list[int]) -> bool:
+        return self.bos_id is not None and (not prompt_ids or prompt_ids[0] != self.bos_id)
+
     def fit_to_context(
         self, prompt_ids: list[int], max_new_tokens: int
     ) -> tuple[list[int], int]:
-        """Trim `prompt_ids` / `max_new_tokens` so prompt + generation fits in
-        `self.max_seq_len`. See `fit_to_context`."""
-        return fit_to_context(
-            prompt_ids, max_new_tokens, self.max_seq_len, bos_id=self.bos_id
-        )
+        """Trim `prompt_ids` / `max_new_tokens` so prompt (+ the BOS that
+        generation prepends) + continuation fits `self.max_seq_len`.
+        Idempotent, so callers may fit first and join `fitted + new_ids`;
+        `generate_ids` fits again internally as a safety net."""
+        added = self._needs_bos(prompt_ids)
+        ids = [self.bos_id, *prompt_ids] if added else list(prompt_ids)
+        ids, max_new_tokens = fit_to_context(ids, max_new_tokens, self.max_seq_len)
+        return (ids[1:] if added else ids), max_new_tokens
 
     # ---------- encode user input ---------- #
 
@@ -227,9 +232,9 @@ class Generator:
 
         `seed`: seeds the backend RNG (mlx / torch) for reproducible takes.
         """
-        if self.bos_id is not None and (not prompt_ids or prompt_ids[0] != self.bos_id):
-            prompt_ids = [self.bos_id, *prompt_ids]
         prompt_ids, max_new_tokens = self.fit_to_context(prompt_ids, max_new_tokens)
+        if self._needs_bos(prompt_ids):
+            prompt_ids = [self.bos_id, *prompt_ids]
         if self.backend == "mlx":
             import mlx.core as mx
             if seed is not None:
@@ -272,6 +277,9 @@ class Generator:
         (in beat units); we just rescale at decode time.
         """
         emitted = 0
+        if "max_new_tokens" in gen_kwargs:
+            prompt_ids, gen_kwargs["max_new_tokens"] = self.fit_to_context(
+                prompt_ids, gen_kwargs["max_new_tokens"])
         buffer: list[int] = list(prompt_ids)
         n_in_buffer_since_decode = 0
         for tid in self.generate_ids(prompt_ids, **gen_kwargs):
@@ -306,6 +314,9 @@ class Generator:
         tempo_bpm: float = 120.0,
         **gen_kwargs,
     ) -> list[int]:
+        if "max_new_tokens" in gen_kwargs:
+            prompt_ids, gen_kwargs["max_new_tokens"] = self.fit_to_context(
+                prompt_ids, gen_kwargs["max_new_tokens"])
         new_ids = list(self.generate_ids(prompt_ids, **gen_kwargs))
         full_ids = list(prompt_ids) + new_ids
         score = self.tokenizer.decode(full_ids)
