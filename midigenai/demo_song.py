@@ -509,12 +509,26 @@ def record_pass(you: int, model: int, bars: int = BARS, extra_you=(), extra_mode
             live("delete_arrangement_clip", {"track_index": t, "arrangement_clip_index": 0})
     live("set_song_time", {"time": 0.0})
     live("set_record_mode", {"on": True})
+    # Live's start_playing() starts from the arrangement insert marker (the
+    # last place you clicked), not from the playhead we just set — so start,
+    # then relocate while playing, and verify
     live("start_playback")
+    live("set_song_time", {"time": 0.0})
+    pos = float(live("get_arrangement_info")["current_song_time"])
+    if pos > 16.0:
+        live("stop_playback"); live("set_record_mode", {"on": False})
+        raise SystemExit(f"could not start from the top (playhead at beat {pos:.1f}); "
+                         f"click at bar 1 in the arrangement and retry")
     tempo = live("get_session_info").get("tempo", 120.0)
-    time.sleep(bars * 4 * 60.0 / tempo + 4.0)
+    time.sleep(bars * 4 * 60.0 / tempo + 4.0 - pos * 60.0 / tempo)
     live("stop_playback")
     live("set_record_mode", {"on": False})
     live("set_track_arm", {"track_index": you, "arm": True})
+    for t in (model, *extra_model):                     # a relocation can leave an empty clip past the end
+        cl = live("get_arrangement_clips", {"track_index": t})["clips"]
+        for i in range(len(cl) - 1, -1, -1):
+            if cl[i]["start_time"] >= bars * 4:
+                live("delete_arrangement_clip", {"track_index": t, "arrangement_clip_index": i})
     clips = live("get_arrangement_clips", {"track_index": model})["clips"]
     total = sum(len(live("get_arrangement_clip_notes",
                          {"track_index": model, "arrangement_clip_index": i})["notes"])
