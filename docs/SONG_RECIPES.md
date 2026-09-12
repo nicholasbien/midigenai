@@ -9,8 +9,11 @@ end, so the same flow can be re-run on a new take. Three CLIs, each one step:
 | 2. trio | `python -m midigenai.arrange_trio` | solo-piano `.mid` → piano + upright bass + brushed kit `.mid`/`.mp3` |
 | 3. flip | `python -m midigenai.hiphop_flip` | solo-piano `.mid` → lo-fi boom-bap beat `.mp3` (+ stems) |
 
-Everything downstream of the model is deterministic (seeded RNGs), so a
-command line reproduces a file byte-for-byte.
+Everything downstream of the model is seeded, so a command line reproduces a
+file: the trio mp3s come back byte-identical; the hip hop flip's mix wav
+matches to 1 LSB on a couple of dozen samples and `loudnorm` is repeatable,
+but ffmpeg's mp3 encoder is not bit-repeatable even on identical input, so
+compare flips by decoding (they match to ≤ 1 LSB, ≈ −86 dB), not by md5.
 
 ## Prerequisites
 
