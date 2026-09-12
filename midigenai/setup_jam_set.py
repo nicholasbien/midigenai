@@ -22,30 +22,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
-import socket
 
 
 class Live:
+    """Thin wrapper kept for the send() call sites; see live_client.live."""
+
     def __init__(self, port: int = 9877):
-        self.sock = socket.socket()
-        self.sock.connect(("localhost", port))
-        self.sock.settimeout(20)
+        from .live_client import live as _live
+        self._live, self.port = _live, port
+        self.send("get_session_info")           # fail fast if Live is unreachable
 
     def send(self, command_type: str, params: dict | None = None):
-        self.sock.sendall(json.dumps(
-            {"type": command_type, "params": params or {}}).encode())
-        buf = b""
-        while True:
-            buf += self.sock.recv(262144)
-            try:
-                resp = json.loads(buf)
-                break
-            except json.JSONDecodeError:
-                continue
-        if resp.get("status") == "error":
-            raise RuntimeError(f"{command_type}: {resp.get('message')}")
-        return resp.get("result", resp)
+        return self._live(command_type, params, timeout=30.0, port=self.port)
 
 
 def pick_routing(available: list[dict], *needles: str) -> str | None:
@@ -71,9 +59,8 @@ def main():
 
     try:
         live = Live(args.port)
-    except OSError:
-        raise SystemExit("Can't reach Ableton on localhost:%d — is Live running "
-                         "with the AbletonMCP control surface enabled?" % args.port)
+    except Exception as e:
+        raise SystemExit(str(e))
 
     manual: list[str] = []
 

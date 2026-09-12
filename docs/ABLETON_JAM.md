@@ -147,6 +147,13 @@ drums; `--role` names the Live track the answers are recorded on (each
 answer lane is armed, Monitor Auto, on its bus). Kick and hats stay on
 the backing lane; the drum calls carry the top of the kit.
 
+### Tools
+- `python -m midigenai.jam_diag lanes` — every track's arm, routing, devices, clip count
+- `python -m midigenai.jam_diag timing model` — recorded notes vs the model's 1/8-beat grid (ground truth for timing)
+- `python -m midigenai.jam_diag socket-latency | clock-check | midi-probe <port> | ports`
+- `midigenai/live_client.py` — the socket client + helpers (`live`, `tracks`, `track_by_name`, `arrangement_notes`, `clear_arrangement_clips`, `set_param`) to build on instead of ad-hoc scripts
+- `docs/JAM_ENGINEERING_NOTES.md` — how all of this was found, with numbers
+
 ## The clip watcher (midigenai/live_session.py)
 
 Needs Live running with the AbletonMCP control surface (ableton-mcp-pro).

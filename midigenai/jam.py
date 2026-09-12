@@ -298,8 +298,8 @@ def main():
 
     def adopt_tempo(new_spb: float) -> None:
         nonlocal spb
-        if abs(new_spb - spb) / spb > 0.003:    # 0.3% hysteresis (~0.4 bpm)
-            print(f"tempo from MIDI clock: {60.0 / new_spb:.1f} bpm", flush=True)
+        if abs(new_spb - spb) / spb > 0.0002:   # 0.02%: ~0.03 bpm at 128
+            print(f"tempo: {60.0 / new_spb:.2f} bpm", flush=True)
             spb = new_spb
 
     inport = mido.open_input(args.in_port)
@@ -506,7 +506,7 @@ def main():
     # time-critical may wait on it. A background poller keeps a dead-reckoned
     # transport clock instead: beat = pos + elapsed wall time / spb.
     clock = {"pos": None, "wall": None, "playing": False, "lat": 0.0,
-             "recording": False}
+             "recording": False, "tempo": None}
     clock_lock = threading.Lock()
 
     def _clock_poll():
@@ -519,6 +519,8 @@ def main():
                     clock["lat"] = t1 - t0
                     clock["playing"] = bool(r.get("is_playing", False))
                     clock["recording"] = bool(r.get("record_mode", False))
+                    if r.get("tempo"):
+                        clock["tempo"] = float(r["tempo"])   # exact, unlike a clock estimate
                     if clock["playing"] and r.get("current_song_time") is not None:
                         # measured under light load: the delay is on the request
                         # side and the reading is current at response time
@@ -1028,10 +1030,18 @@ def main():
                     phrase_live["start"] = b
                 buf.feed(msg, time.monotonic())
             now = time.monotonic()
-            if args.bpm is None:
-                est = mclock.spb()
-                if est is not None and buf.t0 is None:
-                    adopt_tempo(est)
+            if args.bpm is None and buf.t0 is None:
+                # Live's reported tempo is exact; the MIDI-clock estimate
+                # (0.1 bpm steps) is the fallback. A 0.1 bpm error drifted
+                # answers ~7 ms over 4 bars at 128.
+                with clock_lock:
+                    sock_tempo = clock["tempo"]
+                if sock_tempo:
+                    adopt_tempo(60.0 / sock_tempo)
+                else:
+                    est = mclock.spb()
+                    if est is not None:
+                        adopt_tempo(est)
             n_notes = len(buf.notes)
             trigger = False
             if args.call_bars and buf.t0 is not None and phrase_live["start"] is not None:

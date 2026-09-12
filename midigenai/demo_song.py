@@ -21,30 +21,12 @@ deleted, setup_jam_set adds you / you (sound) / model, and bass goes last.
 from __future__ import annotations
 
 import argparse
-import json
-import socket
 import subprocess
 import sys
 import time
 
 
-def live(cmd, params=None, timeout=30):
-    sk = socket.socket()
-    sk.settimeout(timeout)
-    sk.connect(("localhost", 9877))
-    sk.sendall(json.dumps({"type": cmd, "params": params or {}}).encode())
-    buf = b""
-    while True:
-        buf += sk.recv(1 << 20)
-        try:
-            r = json.loads(buf)
-            break
-        except ValueError:
-            continue
-    sk.close()
-    if r.get("status") == "error":
-        raise RuntimeError(f"{cmd}: {r.get('message')}")
-    return r.get("result", r)
+from .live_client import live, set_param  # noqa: E402  (shared socket client)
 
 
 def N(p, t, d, v):
@@ -295,21 +277,6 @@ T_CALLS = [
 def add_fx(track, *uris):
     for u in uris:
         live("load_instrument_or_effect", {"track_index": track, "uri": u})
-
-
-def set_param(track, device, name, value):
-    """Best effort: parameter names differ per device version (Echo's mix is
-    'Dry Wet', Reverb's is 'Dry/Wet')."""
-    try:
-        params = live("get_device_parameters", {"track_index": track, "device_index": device}).get("parameters", [])
-        for prm in params:
-            if prm.get("name") in (name, name.replace("/", " ")):
-                live("set_device_parameter", {"track_index": track, "device_index": device,
-                                              "parameter_index": prm.get("index"), "value": value})
-                return True
-    except Exception as e:
-        print(f"  (param {name} on track {track}: {e})")
-    return False
 
 
 def build_techno() -> dict:
