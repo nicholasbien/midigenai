@@ -59,8 +59,8 @@ ROOTS = [33, 29, 36, 36]
 DRUM_KIT = "query:Drums#FileId_45674"                          # 909 Core Kit
 ORGAN = "query:Sounds#Piano%20&%20Keys:FileId_45178"           # Organ House
 BASS = "query:Sounds#Bass:FileId_47417"                        # Dub Techno Bass
-YOU_SOUND = "query:Sounds#Piano%20&%20Keys:FileId_45155"       # E-Piano Classic
 MODEL_SOUND = "query:Sounds#Piano%20&%20Keys:FileId_47319"     # Wurli Classic Piano
+YOU_SOUND = MODEL_SOUND                                        # same voice for call and answer
 
 
 def drum_bar(b0, bar):
@@ -176,8 +176,10 @@ T_PERC = "query:Drums#FileId_45687"                           # Percussion Core 
 T_STAB = "query:Sounds#Synth%20Lead:FileId_46735"             # Analog Stab Lead
 T_PAD = "query:Sounds#Pad:FileId_45215"                       # Dark Corner Pad
 T_BASS = "query:Sounds#Bass:FileId_45533"                     # Sub Drive
-T_YOU = "query:Sounds#Synth%20Lead:FileId_44976"              # Tech Lead
+# call and answer on the SAME sound (one voice in conversation reads far
+# better than two contrasting synths — user preference, 2026-09-11)
 T_MODEL = "query:Sounds#Synth%20Lead:FileId_80915"            # Classic Club Saw
+T_YOU = T_MODEL
 FX = {"drumbuss": "query:AudioFx#Drum%20Buss", "sat": "query:AudioFx#Saturator",
       "reverb": "query:AudioFx#Reverb", "echo": "query:AudioFx#Echo",
       "autofilter": "query:AudioFx#Auto%20Filter", "glue": "query:AudioFx#Glue%20Compressor",
