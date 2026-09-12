@@ -6,7 +6,7 @@ track outputs AUDIO, so the play-in track must carry no instrument for the
 IAC buses to appear in its output options — hence the split):
   "you"         — NO instrument, armed, Monitor Auto, MIDI To -> IAC Bus 1
   "you (sound)" — your instrument, MIDI From -> IAC Bus 1, Monitor In
-  "model"       — the model's instrument, MIDI From -> IAC Bus 2, Monitor In,
+  "model"       — the model's instrument, MIDI From -> IAC Bus 2, Monitor Auto,
                   armed (Record captures the model's streamed answers)
 
 Requires the AbletonMCP control surface WITH the routing tools
@@ -151,14 +151,15 @@ def main():
 
     # arm LAST: Live auto-arms newly created tracks, which would otherwise
     # steal the arm from 'you' (this burned a previous session).
-    # 'you' AND 'model' both stay armed (model: Monitor In) so hitting Live's
+    # 'you' AND 'model' both stay armed (Monitor Auto) so hitting Live's
     # Record captures the whole jam — your part and the model's streamed
-    # answers — into the arrangement. jam.py --output arrange flips the
+    # answers — into the arrangement, and the take plays back afterwards
+    # (Monitor In would mute the recorded clips). jam.py --output arrange flips the
     # model track to disarmed / Monitor Auto by itself (arrangement Record
     # would overwrite the clips it writes; Monitor In would mute them).
     live.send("set_track_arm", {"track_index": sound, "arm": False})
     if have_routing:
-        live.send("set_track_monitoring", {"track_index": model, "state": 0})  # In
+        live.send("set_track_monitoring", {"track_index": model, "state": 1})  # Auto
     live.send("set_track_arm", {"track_index": model, "arm": True})
     live.send("set_track_arm", {"track_index": you, "arm": True})
 

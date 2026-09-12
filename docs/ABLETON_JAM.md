@@ -25,8 +25,7 @@ model answer  ← Ableton track ("MIDI From: IAC Bus 2") ← jam.py streams note
      - "you": NO instrument, armed, Monitor Auto, **MIDI To → IAC Bus 1**
      - "you (sound)": your instrument, **MIDI From → IAC Bus 1**, Monitor In
      - "model": the model's instrument, **MIDI From → IAC Bus 2**, Monitor
-       In, armed (jam.py flips it to Auto / disarmed itself for
-       `--output arrange`)
+       Auto, armed (jam.py disarms it itself for `--output arrange`)
    - Or just run **`python -m midigenai.setup_jam_set`** — with the
      routing-tools remote script loaded (ableton-mcp-pro PR #6, needs a Live
      restart after install) it builds all of this with zero clicks; verified
@@ -62,8 +61,11 @@ seconds stale while Live records — answers then slide or land off-grid.
 **Delivery (`--output stream`, the default).** Answers are streamed over
 IAC Bus 2 with each note scheduled on the wall clock from the transport
 clock: measured ≤5 ms from the 16th grid inside recorded clips. Keep the
-`model` track armed with Monitor In (setup_jam_set does) and hit Live's
-Record: your call lands on the `you` lane, the answer on the `model` lane.
+`model` track armed with **Monitor Auto** (setup_jam_set does; jam.py sets
+it too) and hit Live's Record: your call lands on the `you` lane, the
+answer on the `model` lane. Monitor In would also let you hear answers
+live, but a track on Monitor In never plays its clips — takes recorded
+that way are silent on playback until you switch it back to Auto.
 `--output arrange` writes the answer into the arrangement instead —
 sample-accurate placement, but each write costs 0.6-1.5s of socket
 latency, so an answer may slide to the following bar line.
@@ -142,7 +144,7 @@ env/bin/python -m midigenai.demo_song --style techno --band-only --skip-build --
 ```
 `--drums` encodes the call on a drum track so the model continues with
 drums; `--role` names the Live track the answers are recorded on (each
-answer lane is armed with Monitor In on its bus). Kick and hats stay on
+answer lane is armed, Monitor Auto, on its bus). Kick and hats stay on
 the backing lane; the drum calls carry the top of the kit.
 
 ## The clip watcher (midigenai/live_session.py)

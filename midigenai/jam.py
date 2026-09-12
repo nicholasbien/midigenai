@@ -700,8 +700,8 @@ def main():
     def _model_monitor(mode: str) -> None:
         """Arrangement delivery needs the model track DISARMED (arrangement
         recording would overwrite its answer clips) with Monitor Auto (In
-        mutes the lane); streaming needs Monitor In and ARMED so Live's
-        Record captures the answer. Switch as needed (slow socket calls, so
+        mutes the lane); streaming needs the track ARMED (Monitor Auto) so
+        you hear the bus and Live's Record captures the answer. Switch as needed (slow socket calls, so
         only on a change, and never on the answer path's critical section)."""
         if clip_state.get("monitor") == mode:
             return
@@ -717,7 +717,10 @@ def main():
                 _ableton("set_track_arm", {"track_index": tr, "arm": False})
                 _ableton("set_track_monitoring", {"track_index": tr, "state": 1})
             else:
-                _ableton("set_track_monitoring", {"track_index": tr, "state": 0})
+                # Auto, not In: an armed track in Auto monitors the bus (you
+                # hear answers live) AND plays back the clips recorded on it;
+                # Monitor In never plays clips, so takes went silent on replay
+                _ableton("set_track_monitoring", {"track_index": tr, "state": 1})
                 _ableton("set_track_arm", {"track_index": tr, "arm": True})
                 # exclusive-arm can steal the arm from your track: give it back
                 you = _find_you_track()
@@ -725,11 +728,11 @@ def main():
                     _ableton("set_track_arm", {"track_index": you, "arm": True})
             clip_state["monitor"] = mode
             print(f"model track -> "
-                  f"{'Monitor Auto, disarmed' if mode == 'arrange' else 'Monitor In, armed'}",
+                  f"{'Monitor Auto, disarmed' if mode == 'arrange' else 'Monitor Auto, armed'}",
                   flush=True)
         except Exception as e:
             print(f"WARNING: could not set the model track's state ({e}); "
-                  f"set it by hand: {'Monitor Auto, disarmed' if mode == 'arrange' else 'Monitor In, armed'}",
+                  f"set it by hand: {'Monitor Auto, disarmed' if mode == 'arrange' else 'Monitor Auto, armed'}",
                   flush=True)
 
     if args.output == "stream":
