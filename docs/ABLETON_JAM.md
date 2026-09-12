@@ -115,6 +115,36 @@ playing would; the answers are recorded onto the `model` lane. Save the set
 afterwards (there is no save command over the socket). Then arm `you`,
 press Record and play your own calls over the same backing.
 
+### Techno / 1-bar calls (`--style techno`)
+```bash
+env/bin/python -m midigenai.demo_song --style techno            # 128 bpm, 64 bars, 20 one-bar calls, effects
+env/bin/python -m midigenai.jam --call-bars 1 --min-notes 3 --spec-lead 0.75
+env/bin/python -m midigenai.demo_song --style techno --skip-build --record
+```
+Measured 2026-09-11: 148 recorded answer notes, median 1 ms from the
+model's 1/8-beat grid, 90% within 4 ms, worst 10 ms. With 1-bar calls the
+speculation window is short (0.5 beat = 0.23 s at 128 was not always
+enough for a 0.15-0.3 s generation, so the downbeat played up to 110 ms
+late) — use `--spec-lead 0.75` and end each call by beat 3.5.
+
+### The model as a band (`--band`): melody 1 bar, drums 1 bar, chords 4 bars
+One jam.py per role on its own IAC bus pair (create Buses 3-6 in Audio
+MIDI Setup → IAC Driver; Live's clock Sync stays on Bus 1 and the other
+instances read it with `--clock-port`):
+```bash
+env/bin/python -m midigenai.demo_song --style techno --band
+env/bin/python -m midigenai.jam --call-bars 1 --min-notes 3 --spec-lead 0.75
+env/bin/python -m midigenai.jam --call-bars 1 --min-notes 3 --spec-lead 0.75 --drums \
+    --role "model drums" --in-port "IAC Driver Bus 3" --out-port "IAC Driver Bus 4" --clock-port "IAC Driver Bus 1"
+env/bin/python -m midigenai.jam --call-bars 4 --role "model chords" \
+    --in-port "IAC Driver Bus 5" --out-port "IAC Driver Bus 6" --clock-port "IAC Driver Bus 1"
+env/bin/python -m midigenai.demo_song --style techno --band-only --skip-build --record
+```
+`--drums` encodes the call on a drum track so the model continues with
+drums; `--role` names the Live track the answers are recorded on (each
+answer lane is armed with Monitor In on its bus). Kick and hats stay on
+the backing lane; the drum calls carry the top of the kit.
+
 ## The clip watcher (midigenai/live_session.py)
 
 Needs Live running with the AbletonMCP control surface (ableton-mcp-pro).

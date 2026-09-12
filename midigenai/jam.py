@@ -217,6 +217,16 @@ def main():
     ap.add_argument("--tokenizer", default=None)
     ap.add_argument("--in-port", default="IAC Driver Bus 1")
     ap.add_argument("--out-port", default="IAC Driver Bus 2")
+    ap.add_argument("--clock-port", default=None,
+                    help="MIDI input carrying Live's clock (Sync out) when it is "
+                         "not --in-port — lets several jam.py instances (melody, "
+                         "drums, chords on their own bus pairs) share one clock")
+    ap.add_argument("--role", default=None,
+                    help="label for log lines and the Live track to answer on "
+                         "(default 'model'; e.g. 'model drums')")
+    ap.add_argument("--drums", action="store_true",
+                    help="the call is a drum part: encode it on a drum track so "
+                         "the model continues with drums")
     ap.add_argument("--bpm", type=float, default=None,
                     help="session tempo; default: follow Live's MIDI clock "
                          "(120 until the first clocks arrive)")
@@ -293,7 +303,10 @@ def main():
             spb = new_spb
 
     inport = mido.open_input(args.in_port)
+    clockport = mido.open_input(args.clock_port) if args.clock_port and \
+        args.clock_port != args.in_port else None
     outport = mido.open_output(args.out_port)
+    model_track_name = args.role or "model"
     player = Player(outport)
     mclock = MidiClock()
     print(f"jamming: listening on '{args.in_port}', answering on '{args.out_port}' "
@@ -305,8 +318,9 @@ def main():
     else:
         print(f"play; pause {args.silence}s and the model answers. Ctrl+C to stop.",
               flush=True)
-    print(f"MIDI clock: waiting for Live's Sync output on '{args.in_port}' "
-          f"(falls back to the remote-script socket)", flush=True)
+    print(f"MIDI clock: waiting for Live's Sync output on "
+          f"'{args.clock_port or args.in_port}' (falls back to the remote-script "
+          f"socket)", flush=True)
 
     buf = NoteBuffer()
     history: list[list[dict]] = []   # beat-domain segments (user, model, ...)
@@ -348,7 +362,9 @@ def main():
         TPQ = 480
         while True:
             score = Score(TPQ)
-            tr = Track()
+            tr = Track(is_drum=args.drums)
+            if args.drums:
+                tr.program = 0
             cursor = 0.0
             content_end = 0.0
             for seg in segs:
@@ -604,7 +620,7 @@ def main():
         try:
             n = int(_ableton("get_session_info").get("track_count", 0))
             for i in range(n):
-                if _ableton("get_track_info", {"track_index": i}).get("name") == "model":
+                if _ableton("get_track_info", {"track_index": i}).get("name") == model_track_name:
                     return i
         except Exception:
             pass
@@ -693,8 +709,8 @@ def main():
             if clip_state["track"] is None:
                 clip_state["track"] = _find_model_track()
             if clip_state["track"] is None:
-                print("WARNING: no track named 'model' in the Live set — "
-                      "run setup_jam_set", flush=True)
+                print(f"WARNING: no track named '{model_track_name}' in the Live "
+                      f"set — run setup_jam_set", flush=True)
                 return
             tr = clip_state["track"]
             if mode == "arrange":
@@ -975,8 +991,14 @@ def main():
     # ---------- main loop ---------- #
     try:
         while True:
+            if clockport is not None:
+                for msg in clockport.iter_pending():
+                    if msg.type in ("clock", "start", "continue", "stop", "songpos"):
+                        mclock.feed(msg, time.monotonic())
             for msg in inport.iter_pending():
                 if msg.type in ("clock", "start", "continue", "stop", "songpos"):
+                    if clockport is not None:
+                        continue
                     mclock.feed(msg, time.monotonic())
                     if mclock.events:
                         for ev in mclock.events:
