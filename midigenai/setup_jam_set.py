@@ -6,7 +6,8 @@ track outputs AUDIO, so the play-in track must carry no instrument for the
 IAC buses to appear in its output options — hence the split):
   "you"         — NO instrument, armed, Monitor Auto, MIDI To -> IAC Bus 1
   "you (sound)" — your instrument, MIDI From -> IAC Bus 1, Monitor In
-  "model"       — the model's instrument, MIDI From -> IAC Bus 2, Monitor In
+  "model"       — the model's instrument, MIDI From -> IAC Bus 2, Monitor In,
+                  armed (Record captures the model's streamed answers)
 
 Requires the AbletonMCP control surface WITH the routing tools
 (ableton-mcp-pro PR #6: get/set_track_input_routing, set_track_output_routing,
@@ -117,9 +118,14 @@ def main():
             chosen = pick_routing(r.get("available_input_routing_types", []),
                                   args.you_input)
         else:
+            # exclude buses, meta-inputs, and OTHER TRACKS (their names appear
+            # as routable inputs — "1-MIDI" is a track, not a keyboard)
+            n_tracks = int(live.send("get_session_info").get("track_count", 0))
+            track_names = {live.send("get_track_info", {"track_index": i}).get("name")
+                           for i in range(n_tracks)}
             hw = [n for n in avail if n not in ("All Ins", "Computer Keyboard",
                                                 "No Input")
-                  and "IAC" not in n and n not in ("you (sound)", "model", "you")]
+                  and "IAC" not in n and n not in track_names]
             chosen = hw[0] if hw else (
                 "Computer Keyboard" if "Computer Keyboard" in avail else None)
         if chosen:
@@ -133,7 +139,7 @@ def main():
         route(model, "input", "IAC", args.in_bus)
         live.send("set_track_monitoring", {"track_index": you, "state": 1})    # Auto
         live.send("set_track_monitoring", {"track_index": sound, "state": 0})  # In
-        live.send("set_track_monitoring", {"track_index": model, "state": 0})  # In
+        # (model's monitoring is set with its arm state below)
     else:
         manual += [
             f"'you': MIDI To -> IAC Driver ({args.out_bus}), Monitor Auto",
@@ -145,9 +151,14 @@ def main():
 
     # arm LAST: Live auto-arms newly created tracks, which would otherwise
     # steal the arm from 'you' (this burned a previous session).
-    # 'you' AND 'model' both stay armed so hitting Live's Record captures
-    # the whole jam — your part and the model's — into the arrangement.
+    # 'you' AND 'model' both stay armed (model: Monitor In) so hitting Live's
+    # Record captures the whole jam — your part and the model's streamed
+    # answers — into the arrangement. jam.py --output arrange flips the
+    # model track to disarmed / Monitor Auto by itself (arrangement Record
+    # would overwrite the clips it writes; Monitor In would mute them).
     live.send("set_track_arm", {"track_index": sound, "arm": False})
+    if have_routing:
+        live.send("set_track_monitoring", {"track_index": model, "state": 0})  # In
     live.send("set_track_arm", {"track_index": model, "arm": True})
     live.send("set_track_arm", {"track_index": you, "arm": True})
 

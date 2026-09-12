@@ -9,9 +9,12 @@ The modern successor to openmusenet2's ableton_bridge.py + note_player.py:
   Bus 2") as the model emits notes — first notes sound almost immediately
 - keeps a running conversation (your phrases + its answers) as context
 
-Ableton side (the midi_test template): one track with your instrument,
-"MIDI To" -> IAC Bus 1; another track "MIDI From" -> IAC Bus 2, monitor In,
-with the model's instrument.
+Ableton side (setup_jam_set builds it): 'you' with "MIDI To" -> IAC Bus 1
+(no instrument), 'you (sound)' with your instrument listening to 'you',
+'model' with the model's instrument, "MIDI From" -> IAC Bus 2. For tight
+timing turn on Sync for IAC Bus 1 in Live's MIDI preferences (Output):
+jam.py then follows Live's MIDI clock instead of the slow remote-script
+socket, and schedules answers to the millisecond.
 
 Usage:
     python -m midigenai.jam [--checkpoint ... --tokenizer ...] [--bpm 120]
@@ -38,6 +41,7 @@ class NoteBuffer:
         self.notes: list[dict] = []                     # {pitch,start,end,velocity} secs
         self.t0: float | None = None
         self.last_event: float | None = None
+        self.n_on = 0                                   # note_ons this phrase
 
     def feed(self, msg, now: float):
         if msg.type == "note_on" and msg.velocity > 0:
@@ -45,6 +49,7 @@ class NoteBuffer:
                 self.t0 = now
             self.open[msg.note] = (now - self.t0, msg.velocity)
             self.last_event = now
+            self.n_on += 1
         elif msg.type == "note_off" or (msg.type == "note_on" and msg.velocity == 0):
             if msg.note in self.open:
                 start, vel = self.open.pop(msg.note)
@@ -62,7 +67,19 @@ class NoteBuffer:
         self.open.clear()
         self.t0 = None
         self.last_event = None
+        self.n_on = 0
         return notes
+
+    def snapshot(self, now: float) -> list[dict]:
+        """Finished notes plus held ones closed at `now` (for speculating
+        ahead of a bar line while keys are still down)."""
+        out = list(self.notes)
+        if self.t0 is not None:
+            rel = now - self.t0
+            for pitch, (start, vel) in self.open.items():
+                out.append({"pitch": pitch, "start": start,
+                            "end": max(rel, start + 0.1), "velocity": vel})
+        return out
 
 
 class Player:
@@ -119,6 +136,79 @@ class Player:
         return False
 
 
+class MidiClock:
+    """Live's transport, from its MIDI sync output (Preferences > Link/Tempo/
+    MIDI > Sync on the IAC port jam.py listens to): 24 clocks per beat plus
+    start / continue / stop / song-position. Sample-derived and pushed, so
+    it is accurate to a few ms with no request latency — unlike the
+    remote-script socket (0.4-1.5s per call). Also yields the tempo."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.playing = False
+        self.pos = 0.0            # beats at self.wall
+        self.wall: float | None = None
+        self.first = False        # next clock is the first after start/continue
+        self.ticks = collections.deque(maxlen=385)  # wall times of recent clocks (16 beats)
+        self.seen = False
+        self.events: list[str] = []                 # transport events, for the log
+
+    def feed(self, msg, now: float) -> None:
+        t = msg.type
+        with self.lock:
+            if t == "clock":
+                self.seen = True
+                if not self.playing:
+                    return
+                if self.first:
+                    self.first = False
+                else:
+                    self.pos += 1.0 / 24.0
+                self.wall = now
+                self.ticks.append(now)
+            elif t == "songpos":
+                self.pos = msg.pos * 0.25           # SPP counts 16ths
+                self.wall = now
+                self.events.append(f"songpos -> beat {self.pos:.2f}")
+            elif t == "start":
+                self.pos, self.wall = 0.0, now
+                self.playing, self.first = True, True
+                self.ticks.clear()
+                self.events.append("start (beat 0)")
+            elif t == "continue":
+                self.wall = now
+                self.playing, self.first = True, True
+                self.ticks.clear()
+                self.events.append(f"continue at beat {self.pos:.2f}")
+            elif t == "stop":
+                self.playing = False
+                self.events.append(f"stop at beat {self.pos:.2f}")
+
+    def resync(self, pos: float, wall: float) -> None:
+        """Re-seat the clock (e.g. from an authoritative socket reading)."""
+        with self.lock:
+            self.pos, self.wall = pos, wall
+
+    def ref(self, max_age: float = 0.5) -> tuple[float, float] | None:
+        """(beat, wall) of the latest clock, or None when stopped / stale."""
+        with self.lock:
+            if not self.playing or self.wall is None:
+                return None
+            if time.monotonic() - self.wall > max_age:
+                return None
+            return self.pos, self.wall
+
+    def spb(self) -> float | None:
+        """Seconds per beat over the last 8-16 beats of clocks, rounded to
+        0.1 bpm (read-loop jitter on individual clocks is ms-scale)."""
+        with self.lock:
+            n = len(self.ticks)
+            if n < 193:
+                return None
+            bpm = 60.0 * ((n - 1) / 24.0) / (self.ticks[-1] - self.ticks[0])
+            return 60.0 / (round(bpm * 10.0) / 10.0)
+
+
 def main():
     import mido
 
@@ -127,7 +217,9 @@ def main():
     ap.add_argument("--tokenizer", default=None)
     ap.add_argument("--in-port", default="IAC Driver Bus 1")
     ap.add_argument("--out-port", default="IAC Driver Bus 2")
-    ap.add_argument("--bpm", type=float, default=120.0)
+    ap.add_argument("--bpm", type=float, default=None,
+                    help="session tempo; default: follow Live's MIDI clock "
+                         "(120 until the first clocks arrive)")
     ap.add_argument("--silence", type=float, default=0.8,
                     help="seconds of silence that triggers an answer")
     ap.add_argument("--speculate", action=argparse.BooleanOptionalAction, default=True,
@@ -141,6 +233,12 @@ def main():
     ap.add_argument("--max-notes", type=int, default=100,
                     help="answer immediately once this many notes are buffered")
     ap.add_argument("--max-answer-bars", type=int, default=8)
+    ap.add_argument("--answer-bars", default="match",
+                    help="answer length in bars: 'match' (default) answers a "
+                         "1-bar call with 1 bar and a 4-bar call with 4 bars "
+                         "(call rounded up to whole bars, 1/4-beat tolerance); "
+                         "an integer forces a fixed length. Capped by "
+                         "--max-answer-bars.")
     ap.add_argument("--context", choices=["phrase", "session"], default="phrase",
                     help="prompt with just your latest phrase (default, lowest "
                          "latency) or the whole running session history")
@@ -149,19 +247,33 @@ def main():
                          "socket/IAC/Live-input delivery chain (measured ~37ms "
                          "from recorded arrangement clips; re-measure with the "
                          "onset diagnostics if your buffer settings change)")
-    ap.add_argument("--output", choices=["arrange", "clip", "stream"],
-                    default="arrange",
-                    help="arrange (default): write each answer into the "
-                         "ARRANGEMENT just ahead of the playhead — the timeline "
-                         "plays it sample-accurately and the jam accumulates on "
-                         "the model track's lane. clip: fire session clips "
-                         "instead. stream: raw MIDI over the bus. All modes "
-                         "fall back to streaming when the transport is stopped "
-                         "or the remote-script socket is unavailable.")
-    ap.add_argument("--sync", choices=["off", "beat", "bar"], default="beat",
-                    help="delay each answer's start to Live's next beat/bar "
-                         "(via the AbletonMCP socket when available) so answers "
-                         "land on the transport grid")
+    ap.add_argument("--output", choices=["stream", "arrange", "clip"],
+                    default="stream",
+                    help="stream (default): play the answer over the MIDI bus, "
+                         "scheduled on the transport clock to the ms — record "
+                         "the armed 'model' track to keep it. arrange: write "
+                         "each answer into the ARRANGEMENT instead (sample-"
+                         "accurate but each write costs 0.6-1.5s of Live socket "
+                         "latency, so an answer may slide to the next bar "
+                         "line). clip: fire session clips. Both fall back to "
+                         "streaming when the transport is stopped.")
+    ap.add_argument("--sync", choices=["off", "beat", "bar"], default="bar",
+                    help="snap each answer's origin to Live's bar (default) or "
+                         "beat grid, keeping the model's grid phase; off: "
+                         "answer on the phrase's own clock")
+    ap.add_argument("--call-bars", type=int, default=0,
+                    help="fixed-length calls: your phrase is taken to be this "
+                         "many bars from the bar line it started on, and the "
+                         "answer triggers AT that bar line (no silence wait; "
+                         "speculation starts --spec-lead beats before it). "
+                         "0 (default): free phrases, answer after a pause")
+    ap.add_argument("--anchor", choices=["beat", "note"], default="beat",
+                    help="free phrases: take the call's grid to start on the "
+                         "nearest Live beat to your first note (default), or "
+                         "exactly at the first note ('note')")
+    ap.add_argument("--spec-lead", type=float, default=1.0,
+                    help="with --call-bars: beats before the bar line to start "
+                         "generating from what has been played so far")
     ap.add_argument("--temperature", type=float, default=1.0)
     args = ap.parse_args()
 
@@ -172,74 +284,50 @@ def main():
         from .hub import load_from_hub
         g = load_from_hub()
 
-    spb = 60.0 / args.bpm  # seconds per beat
+    spb = 60.0 / (args.bpm or 120.0)  # seconds per beat (updated by MIDI clock)
+
+    def adopt_tempo(new_spb: float) -> None:
+        nonlocal spb
+        if abs(new_spb - spb) / spb > 0.003:    # 0.3% hysteresis (~0.4 bpm)
+            print(f"tempo from MIDI clock: {60.0 / new_spb:.1f} bpm", flush=True)
+            spb = new_spb
 
     inport = mido.open_input(args.in_port)
     outport = mido.open_output(args.out_port)
     player = Player(outport)
+    mclock = MidiClock()
     print(f"jamming: listening on '{args.in_port}', answering on '{args.out_port}' "
-          f"({args.bpm:.0f} bpm, backend {g.backend})", flush=True)
-    print(f"play; pause {args.silence}s and the model answers. Ctrl+C to stop.",
-          flush=True)
+          f"({60.0 / spb:.0f} bpm{'' if args.bpm else ' until MIDI clock'}, "
+          f"output {args.output}, sync {args.sync}, backend {g.backend})", flush=True)
+    if args.call_bars:
+        print(f"fixed {args.call_bars}-bar calls: answers trigger at the bar line. "
+              f"Ctrl+C to stop.", flush=True)
+    else:
+        print(f"play; pause {args.silence}s and the model answers. Ctrl+C to stop.",
+              flush=True)
+    print(f"MIDI clock: waiting for Live's Sync output on '{args.in_port}' "
+          f"(falls back to the remote-script socket)", flush=True)
 
     buf = NoteBuffer()
     history: list[list[dict]] = []   # beat-domain segments (user, model, ...)
 
-    sync_state = {"enabled": args.sync != "off", "fails": 0,
-                  "pos": None, "wall": None, "recording": False}
     comp = {"value": args.latency_comp}  # live-tunable latency compensation
 
-    def sync_delay(phase: float = 0.0) -> float | None:
-        """Seconds until Live's next beat/bar, or None (transport stopped /
-        socket unavailable). Fails open and disables itself after 3 errors."""
-        if not sync_state["enabled"]:
-            return None
-        import json as _json
-        import socket as _socket
-        try:
-            sk = _socket.socket()
-            sk.settimeout(0.2)
-            sk.connect(("localhost", 9877))
-            t_req = time.monotonic()
-            sk.sendall(_json.dumps(
-                {"type": "get_arrangement_info", "params": {}}).encode())
-            raw = b""
-            while True:
-                chunk = sk.recv(65536)
-                if not chunk:
-                    break
-                raw += chunk
-                try:
-                    resp = _json.loads(raw)
-                    break
-                except ValueError:
-                    continue
-            t_resp = time.monotonic()
-            sk.close()
-            res = resp.get("result", {})
-            song_time = res.get("current_song_time")
-            sync_state["recording"] = bool(res.get("record_mode"))
-            if song_time is None or not res.get("is_playing", False):
-                return None
-            sync_state["fails"] = 0
-            # RTT correction: song_time was sampled ~mid-round-trip; by now
-            # the transport has advanced about half the RTT
-            song_time += ((t_resp - t_req) / 2.0) / spb
-            sync_state["pos"] = song_time
-            sync_state["wall"] = t_resp
-            q = 4.0 if args.sync == "bar" else 1.0
-            # phase-preserving: the answer's rel-0 sits at content_end, which
-            # is generally mid-grid; place it so content_end's grid phase is
-            # kept — then the model's on-grid notes land on Live's grid
-            target_phase = phase % q
-            return ((target_phase - (song_time % q)) % q) * spb
-        except Exception:
-            sync_state["fails"] += 1
-            if sync_state["fails"] >= 3:
-                sync_state["enabled"] = False
-                print("transport sync disabled (Ableton socket unavailable)",
-                      flush=True)
-            return None
+    def answer_target(phrase_beats: float) -> float:
+        """Beats the answer should span, measured from the call's content end.
+        With --call-bars the call's grid length is known, so the answer is
+        stretched to end on a bar line even when the last note was released
+        early."""
+        import math
+        call_len = args.call_bars * 4.0 if args.call_bars else phrase_beats
+        if args.answer_bars == "match":
+            bars = max(1, math.ceil((call_len - 0.25) / 4.0))
+        else:
+            bars = max(1, int(args.answer_bars))
+        beats = min(bars, args.max_answer_bars) * 4.0
+        if args.call_bars:
+            beats += max(0.0, call_len - phrase_beats)
+        return beats
 
     def to_beats(notes_secs: list[dict]) -> list[dict]:
         base = min(n["start"] for n in notes_secs)
@@ -298,11 +386,11 @@ def main():
         plan. Used by the speculative worker (and could serve the direct path
         too, but the direct path streams for lower first-note latency)."""
         phrase_beats = max(n["start_time"] + n["duration"] for n in user_notes_beats)
-        target = min((int(phrase_beats // 4) + 1) * 4.0, args.max_answer_bars * 4.0)
+        target = answer_target(phrase_beats)
         prompt_ids, prompt_beats = encode_segments(prompt_segments(user_notes_beats))
         t0 = time.perf_counter()
         notes = []
-        for note in g.stream_notes(prompt_ids, tempo_bpm=args.bpm,
+        for note in g.stream_notes(prompt_ids, tempo_bpm=60.0 / spb,
                                    max_new_tokens=int(target * 40),
                                    temperature=args.temperature):
             rel_beat = note.start / spb - prompt_beats
@@ -391,11 +479,126 @@ def main():
                 comp["value"] = new
                 print(f"answered-calibration: landed {err_s*1000:+.0f}ms off — "
                       f"latency comp now {new*1000:.0f}ms", flush=True)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"(calibration skipped: {e})", flush=True)
 
     clip_state = {"track": None, "slot": 0, "n_slots": 8, "fails": 0,
                   "write_s": 0.4}  # recent arrangement-write latency (adaptive)
+
+    # Live's remote-script socket answers in 0.4-1.5s while the transport runs
+    # (its Python threads only get time between Live's ticks), so nothing
+    # time-critical may wait on it. A background poller keeps a dead-reckoned
+    # transport clock instead: beat = pos + elapsed wall time / spb.
+    clock = {"pos": None, "wall": None, "playing": False, "lat": 0.0,
+             "recording": False}
+    clock_lock = threading.Lock()
+
+    def _clock_poll():
+        while True:
+            try:
+                t0 = time.monotonic()
+                r = _ableton("get_arrangement_info", timeout=3.0)
+                t1 = time.monotonic()
+                with clock_lock:
+                    clock["lat"] = t1 - t0
+                    clock["playing"] = bool(r.get("is_playing", False))
+                    clock["recording"] = bool(r.get("record_mode", False))
+                    if clock["playing"] and r.get("current_song_time") is not None:
+                        # measured under light load: the delay is on the request
+                        # side and the reading is current at response time
+                        # (error ~0.02 beats). Under load (recording, clip
+                        # writes) a reading can be SECONDS stale, so a reading
+                        # behind the dead-reckoned estimate is ignored; only a
+                        # big backwards jump (a seek / restart) resets.
+                        pos = float(r["current_song_time"])
+                        est = None
+                        if clock["wall"] is not None and t1 - clock["wall"] < 4.0:
+                            est = clock["pos"] + (t1 - clock["wall"]) / spb
+                        if est is None or pos >= est - 0.05 or est - pos > 8.0:
+                            clock["pos"], clock["wall"] = pos, t1
+                        else:
+                            clock["pos"], clock["wall"] = est, t1
+                m = mclock.ref(max_age=1.0)
+                if m is not None and clock["playing"]:
+                    midi_est = m[0] + (t1 - m[1]) / spb
+                    if pos - midi_est > 0.25:
+                        print(f"MIDI clock behind Live by {pos - midi_est:.2f} beats "
+                              f"(missed position message?) — resynced from socket",
+                              flush=True)
+                        mclock.resync(pos, t1)
+            except Exception:
+                with clock_lock:
+                    clock["playing"] = False
+            time.sleep(0.3)
+
+    clock_src = {"midi": False}
+
+    def clock_ref() -> tuple[float, float] | None:
+        """(beat, wall) reference for Live's transport: the MIDI clock when it
+        is running, else the socket poller. None when stopped / unknown."""
+        r = mclock.ref()
+        if r is not None:
+            if not clock_src["midi"]:
+                clock_src["midi"] = True
+                print("MIDI clock locked — transport timing now sample-derived",
+                      flush=True)
+            return r
+        if mclock.seen and mclock.playing:
+            return None          # clocks stalled (transport stopping)
+        with clock_lock:
+            if not clock["playing"] or clock["wall"] is None:
+                return None
+            if time.monotonic() - clock["wall"] > 4.0:
+                return None
+            return clock["pos"], clock["wall"]
+
+    def clock_now() -> float | None:
+        r = clock_ref()
+        if r is None:
+            return None
+        pos, wall = r
+        return pos + (time.monotonic() - wall) / spb
+
+    def wall_at(beat: float) -> float | None:
+        r = clock_ref()
+        if r is None:
+            return None
+        pos, wall = r
+        return wall + (beat - pos) * spb
+
+    def place(origin: float, anchor: float | None, headroom_s: float,
+              allow_past: bool = False):
+        """Where on Live's grid an answer goes. The answer's rel-0 belongs at
+        anchor + origin (anchor: Live beat of the call's start, origin: the
+        call's content end in its own beats). Snap that to --sync's grid,
+        keeping the fractional remainder as a note shift so the model's
+        on-grid notes land on Live's grid.
+
+        allow_past (streaming): the grid start may already be behind the
+        playhead — the model's continuation then begins mid-way (its notes
+        before now are simply skipped), so a call whose last note ended
+        early, or an answer triggered at the bar line, is NOT pushed a whole
+        bar later; the model's beat 16 still lands on Live's bar line.
+        Otherwise (arrangement writes) slide later by whole grid units until
+        the write can beat the playhead.
+        Returns (start_beat, shift, exact) or None (no transport clock)."""
+        import math
+        now_beat = clock_now()
+        if now_beat is None or anchor is None or args.sync == "off":
+            return None
+        q = 4.0 if args.sync == "bar" else 1.0
+        exact = anchor + origin
+        start_beat = round(exact / q) * q
+        earliest = now_beat + headroom_s / spb
+        if start_beat < earliest and not allow_past:
+            start_beat += math.ceil((earliest - start_beat) / q) * q
+        shift = exact - start_beat
+        while shift < -0.5 * q:
+            shift += q
+        return start_beat, shift, exact
+
+    if args.sync != "off":
+        threading.Thread(target=_clock_poll, daemon=True).start()
 
     def _find_model_track() -> int | None:
         try:
@@ -463,46 +666,122 @@ def main():
                       flush=True)
             return False
 
-    def play_arrange(plan: dict) -> bool:
-        """Write the answer into the arrangement just ahead of the playhead —
+    def _find_you_track() -> int | None:
+        """The track that sends your playing to our input bus."""
+        import re as _re
+        m = _re.search(r"Bus \d+", args.in_port)
+        needle = m.group(0) if m else args.in_port
+        try:
+            n = int(_ableton("get_session_info").get("track_count", 0))
+            for i in range(n):
+                r = _ableton("get_track_routing", {"track_index": i})
+                if needle in str(r.get("output_routing_type", "")):
+                    return i
+        except Exception:
+            pass
+        return None
+
+    def _model_monitor(mode: str) -> None:
+        """Arrangement delivery needs the model track DISARMED (arrangement
+        recording would overwrite its answer clips) with Monitor Auto (In
+        mutes the lane); streaming needs Monitor In and ARMED so Live's
+        Record captures the answer. Switch as needed (slow socket calls, so
+        only on a change, and never on the answer path's critical section)."""
+        if clip_state.get("monitor") == mode:
+            return
+        try:
+            if clip_state["track"] is None:
+                clip_state["track"] = _find_model_track()
+            if clip_state["track"] is None:
+                return
+            tr = clip_state["track"]
+            if mode == "arrange":
+                _ableton("set_track_arm", {"track_index": tr, "arm": False})
+                _ableton("set_track_monitoring", {"track_index": tr, "state": 1})
+            else:
+                _ableton("set_track_monitoring", {"track_index": tr, "state": 0})
+                _ableton("set_track_arm", {"track_index": tr, "arm": True})
+                # exclusive-arm can steal the arm from your track: give it back
+                you = _find_you_track()
+                if you is not None and you != tr:
+                    _ableton("set_track_arm", {"track_index": you, "arm": True})
+            clip_state["monitor"] = mode
+            print(f"model track -> "
+                  f"{'Monitor Auto, disarmed' if mode == 'arrange' else 'Monitor In, armed'}",
+                  flush=True)
+        except Exception:
+            pass
+
+    if args.output == "stream":
+        threading.Thread(target=_model_monitor, args=("stream",),
+                         daemon=True).start()
+
+    def play_arrange(plan: dict, live_start: float | None = None) -> bool:
+        """Write the answer into the arrangement where the call ended —
         Live's timeline plays it sample-accurately, and the jam accumulates
-        on the model track's arrangement lane. Needs a running transport."""
+        on the model track's arrangement lane. Needs a running transport.
+
+        live_start: Live beat where the call's first note sounded (when
+        known). The answer's origin then sits at live_start + call length,
+        snapped to --sync's grid (bar: the answer to a 4-bar call starts on
+        the next bar line), and only slides later — by whole grid units — if
+        the write can't beat the playhead."""
         import math
         try:
-            info = _ableton("get_arrangement_info")
-            if not info.get("is_playing", False):
-                return False
+            song_time = clock_now()
+            if song_time is None:
+                if args.sync == "off":
+                    info = _ableton("get_arrangement_info")
+                    if not info.get("is_playing", False):
+                        return False
+                    song_time = float(info["current_song_time"])
+                else:
+                    return False
             if clip_state["track"] is None:
                 clip_state["track"] = _find_model_track()
             if clip_state["track"] is None:
                 return False
-            song_time = float(info["current_song_time"])
+            _model_monitor("arrange")
             origin = plan.get("origin", 0.0)
-            base = math.floor(origin)  # integer-beat rebase keeps grid phase
+            # headroom: the write runs on Live's main thread and its latency
+            # varies — lead by 1.5x the recently observed write time (min
+            # 0.5s) so the clip lands ahead of the playhead
+            lead_s = max(0.5, 1.5 * clip_state["write_s"])
+            earliest = math.ceil(song_time + lead_s / spb)
+            placed = place(origin, live_start, lead_s)
+            if placed is not None:
+                start_beat, shift, exact = placed
+                where = (f"bar {start_beat / 4 + 1:.2f} (call ended at bar "
+                         f"{exact / 4 + 1:.2f})")
+            else:
+                base = math.floor(origin)       # integer-beat rebase keeps grid phase
+                start_beat = earliest
+                shift = origin - base
+                where = f"beat {start_beat}"
             notes = []
             for n in plan["notes"]:
+                st = shift + n["start_time"]
+                if st < -0.02:
+                    continue                    # belongs before the clip start
                 notes.append({"pitch": n["pitch"],
-                              "start_time": round(origin + n["start_time"] - base, 4),
+                              "start_time": round(max(0.0, st), 4),
                               "duration": max(0.05, round(n["duration"], 4)),
                               "velocity": n["velocity"]})
+            if not notes:
+                return False
             length = max(1.0, math.ceil(max(x["start_time"] + x["duration"]
                                             for x in notes)))
-            # headroom: the create call runs on Live's main thread and its
-            # latency varies — lead by twice the recently observed write time
-            # (min 0.5s) so the clip lands ahead of the playhead
-            lead_s = max(0.5, 2.0 * clip_state["write_s"])
-            start_beat = math.ceil(song_time + lead_s / spb)
             t_w = time.monotonic()
             _ableton("create_arrangement_midi_clip",
                      {"track_index": clip_state["track"], "time": start_beat,
-                      "length": length, "notes": notes}, timeout=3.0)
-            clip_state["write_s"] = 0.7 * clip_state["write_s"] + \
-                0.3 * (time.monotonic() - t_w)
-            now_time = _ableton("get_arrangement_info").get("current_song_time", 0)
-            if now_time >= start_beat:
+                      "length": length, "notes": notes}, timeout=5.0)
+            took = time.monotonic() - t_w
+            clip_state["write_s"] = 0.7 * clip_state["write_s"] + 0.3 * took
+            now_time = clock_now()
+            if now_time is not None and now_time >= start_beat:
                 print(f"WARNING: arrangement write landed late (playhead "
-                      f"{now_time:.2f} >= clip start {start_beat}) — raising "
-                      f"headroom", flush=True)
+                      f"{now_time:.2f} >= clip start {start_beat}, write took "
+                      f"{took:.2f}s) — raising headroom", flush=True)
                 clip_state["write_s"] += 0.3
             # if a session clip ever took this track over, hand it back to
             # the arrangement so the new clip actually sounds
@@ -511,7 +790,7 @@ def main():
             except Exception:
                 pass
             clip_state["fails"] = 0
-            print(f"answer -> arrangement at beat {start_beat} "
+            print(f"answer -> arrangement at {where} "
                   f"({len(notes)} notes, {length:.0f} beats)", flush=True)
             return True
         except Exception:
@@ -522,22 +801,34 @@ def main():
             return False
 
     def play_plan(plan: dict, phrase_t0: float | None = None,
-                  headroom: float = 0.05) -> None:
+                  anchor: float | None = None, headroom: float = 0.05) -> None:
+        """Stream the answer over the MIDI bus, each note scheduled on the
+        wall clock from the transport clock (MIDI clock: ~ms accurate)."""
         import mido as _m
+        if args.output != "stream":
+            _model_monitor("stream")
         origin = plan.get("origin", 0.0)
-        d = sync_delay(origin)
         now = time.monotonic()
-        if d is not None:
-            start = now + d - comp["value"]
-            while start < now + headroom:
-                start += (4.0 if args.sync == "bar" else 1.0) * spb
-            how = f"live-grid (wait {start - now:.2f}s)"
-            if (sync_state["recording"] and sync_state["pos"] is not None
-                    and plan["notes"]):
-                # intended Live-beat positions of our first notes
-                live_at_start = sync_state["pos"] + \
-                    (start + comp["value"] - sync_state["wall"]) / spb
-                intended = [live_at_start + n["start_time"]
+        placed = place(origin, anchor, headroom, allow_past=True)
+        if placed is not None:
+            start_beat, shift, exact = placed
+            start = wall_at(start_beat) - comp["value"]
+            # notes up to MAX_LATE behind schedule still play (Player policy)
+            first = min((shift + n["start_time"] for n in plan["notes"]
+                         if start + (shift + n["start_time"]) * spb
+                         >= now - Player.MAX_LATE),
+                        default=None)
+            with clock_lock:
+                sock_est = (clock["pos"] + (now - clock["wall"]) / spb
+                            if clock["playing"] and clock["wall"] else None)
+            agree = (f", socket clock {sock_est - (clock_now() or 0):+.2f} beats"
+                     if sock_est is not None else "")
+            how = (f"live-clock: grid bar {start_beat / 4 + 1:.2f} (call ended "
+                   f"at bar {exact / 4 + 1:.2f}); first note in "
+                   f"{(start + first * spb - now) if first is not None else 0:.2f}s"
+                   f"{agree}")
+            if clock["recording"] and plan["notes"]:
+                intended = [start_beat + shift + n["start_time"]
                             for n in sorted(plan["notes"],
                                             key=lambda x: x["start_time"])[:10]]
                 total = (max(n["start_time"] + n["duration"]
@@ -547,18 +838,23 @@ def main():
         elif phrase_t0 is not None:
             # no transport: continue the phrase's own clock — origin belongs
             # at phrase_t0 + origin beats; land on the next congruent beat
+            shift = 0.0
             start = phrase_t0 + origin * spb - comp["value"]
             while start < now + headroom:
                 start += spb
             how = f"phrase-clock (wait {start - now:.2f}s)"
         else:
+            shift = 0.0
             start = now + headroom
             how = "unaligned"
         _onsets = sorted(n["start_time"] for n in plan["notes"])[:12]
         print(f"answer onsets(beats): {[round(o, 2) for o in _onsets]} | {how}",
               flush=True)
         for n in plan["notes"]:
-            on_t = start + n["start_time"] * spb
+            rel = shift + n["start_time"]
+            if rel < -0.02:
+                continue                        # belongs before the answer's grid start
+            on_t = start + rel * spb
             off_t = on_t + min(n["duration"], plan["target"] - n["start_time"]) * spb
             player.schedule(on_t, _m.Message("note_on", note=n["pitch"],
                                              velocity=n["velocity"]))
@@ -577,7 +873,9 @@ def main():
               flush=True)
 
     def buffer_key():
-        return (len(buf.notes), buf.last_event)
+        # note_ons only: a release after a speculation started must not
+        # invalidate the draft (held notes are speculated closed at 'now')
+        return (buf.n_on, buf.t0)
 
     def spec_worker(snapshot: list[dict], key):
         try:
@@ -593,7 +891,8 @@ def main():
             spec["busy"] = False
 
     def answer(user_notes_beats: list[dict], key,
-               phrase_t0: float | None = None) -> None:
+               phrase_t0: float | None = None,
+               live_start: float | None = None) -> None:
         """Speculative hit -> play the precomputed plan instantly; miss ->
         generate now (streaming schedule as notes decode)."""
         with spec_lock:
@@ -601,11 +900,11 @@ def main():
             spec.update(key=None, plan=None)
         def deliver(plan: dict) -> None:
             if clip_state["fails"] < 3:
-                if args.output == "arrange" and play_arrange(plan):
+                if args.output == "arrange" and play_arrange(plan, live_start):
                     return
                 if args.output == "clip" and play_clip(plan):
                     return
-            play_plan(plan, phrase_t0)
+            play_plan(plan, phrase_t0, live_start)
 
         if hit is not None:
             deliver(hit)
@@ -627,15 +926,17 @@ def main():
                 commit(user_notes_beats, plan, "")
                 return
             phrase_beats = max(n["start_time"] + n["duration"] for n in user_notes_beats)
-            target = min((int(phrase_beats // 4) + 1) * 4.0, args.max_answer_bars * 4.0)
+            target = answer_target(phrase_beats)
             prompt_ids, prompt_beats = encode_segments(prompt_segments(user_notes_beats))
             t0 = time.perf_counter()
-            d = sync_delay(prompt_beats)
             _now = time.monotonic()
-            if d is not None:
-                start = _now + d - comp["value"]
-                while start < _now + 0.15:
-                    start += (4.0 if args.sync == "bar" else 1.0) * spb
+            shift = 0.0
+            placed = place(prompt_beats, live_start, 0.15, allow_past=True)
+            if placed is not None:
+                start_beat, shift, exact = placed
+                start = wall_at(start_beat) - comp["value"]
+                print(f"streaming answer as it decodes -> bar {start_beat / 4 + 1:.2f}",
+                      flush=True)
             elif phrase_t0 is not None:
                 start = phrase_t0 + prompt_beats * spb - comp["value"]
                 while start < _now + 0.15:
@@ -643,7 +944,7 @@ def main():
             else:
                 start = _now + 0.15
             resp = []
-            for note in g.stream_notes(prompt_ids, tempo_bpm=args.bpm,
+            for note in g.stream_notes(prompt_ids, tempo_bpm=60.0 / spb,
                                        max_new_tokens=int(target * 40),
                                        temperature=args.temperature):
                 rel_beat = note.start / spb - prompt_beats
@@ -651,8 +952,10 @@ def main():
                     continue
                 if rel_beat >= target:
                     break
-                on_t = start + rel_beat * spb
-                off_t = start + min(note.end / spb - prompt_beats, target) * spb
+                if shift + rel_beat < -0.02:
+                    continue                    # before the answer's grid start
+                on_t = start + (shift + rel_beat) * spb
+                off_t = start + (shift + min(note.end / spb - prompt_beats, target)) * spb
                 player.schedule(on_t, _m.Message("note_on", note=note.pitch,
                                                  velocity=note.velocity))
                 player.schedule(max(off_t, on_t + 0.05),
@@ -664,10 +967,18 @@ def main():
                     "gen_s": time.perf_counter() - t0}
         commit(user_notes_beats, plan, "")
 
+    phrase_live: dict = {"start": None}
     # ---------- main loop ---------- #
     try:
         while True:
             for msg in inport.iter_pending():
+                if msg.type in ("clock", "start", "continue", "stop", "songpos"):
+                    mclock.feed(msg, time.monotonic())
+                    if mclock.events:
+                        for ev in mclock.events:
+                            print(f"transport: {ev}", flush=True)
+                        mclock.events.clear()
+                    continue
                 if msg.type not in ("note_on", "note_off"):
                     continue
                 # echo guard: our own answer looping back through a misrouted
@@ -677,29 +988,65 @@ def main():
                     continue
                 if buf.t0 is None and msg.type == "note_on" and msg.velocity > 0:
                     print("hearing you...", flush=True)
+                    # where on Live's timeline did this phrase start? With
+                    # fixed-length calls the phrase is anchored to the nearest
+                    # bar line (a pickup counts toward the coming bar).
+                    b = clock_now()          # None when the transport is stopped
+                    if b is not None and args.call_bars:
+                        b = round(b / 4.0) * 4.0
+                    elif b is not None and args.anchor == "beat":
+                        b = round(b)
+                    phrase_live["start"] = b
                 buf.feed(msg, time.monotonic())
             now = time.monotonic()
+            if args.bpm is None:
+                est = mclock.spb()
+                if est is not None and buf.t0 is None:
+                    adopt_tempo(est)
             n_notes = len(buf.notes)
-            # adaptive window: a phrase that stops on a whole-bar boundary of
-            # its own grid is probably finished — halve the wait
-            window = args.silence
-            if args.adaptive_silence and buf.t0 is not None and buf.last_event:
-                end_beats = (buf.last_event - buf.t0) / spb
-                if abs(end_beats - round(end_beats / 4.0) * 4.0) < 0.25:
-                    window = args.silence * 0.5
-            quiet_for = (now - buf.last_event) if buf.last_event else 0.0
-            silent = (buf.last_event is not None and quiet_for >= window
-                      and not buf.open)
-            # speculation: after a short beat of quiet, generate the answer in
-            # the background; discarded automatically if more notes arrive
-            if (args.speculate and not buf.open and n_notes >= args.min_notes
-                    and 0.15 <= quiet_for and not spec["busy"]
-                    and spec["key"] != buffer_key()):
-                spec["busy"] = True
-                threading.Thread(target=spec_worker,
-                                 args=(list(buf.notes), buffer_key()),
-                                 daemon=True).start()
-            if (silent and n_notes >= args.min_notes) or n_notes >= args.max_notes:
+            trigger = False
+            if args.call_bars and buf.t0 is not None and phrase_live["start"] is not None:
+                # fixed-length call: everything is decided by the bar line
+                call_end = phrase_live["start"] + args.call_bars * 4.0
+                beat = clock_now()
+                if beat is None:
+                    beat = phrase_live["start"] + (now - buf.t0) / spb
+                if (args.speculate and beat >= call_end - args.spec_lead
+                        and buf.n_on >= args.min_notes and not spec["busy"]
+                        and spec["key"] != buffer_key()):
+                    spec["busy"] = True
+                    threading.Thread(target=spec_worker,
+                                     args=(buf.snapshot(now), buffer_key()),
+                                     daemon=True).start()
+                if beat >= call_end - 0.02:
+                    trigger = buf.n_on >= args.min_notes
+                    if not trigger:
+                        buf.flush()              # too few notes: not a call
+            else:
+                # adaptive window: a phrase that stops on a whole-bar boundary
+                # of its own grid is probably finished — halve the wait
+                window = args.silence
+                if args.adaptive_silence and buf.t0 is not None and buf.last_event:
+                    end_beats = (buf.last_event - buf.t0) / spb
+                    if abs(end_beats - round(end_beats / 4.0) * 4.0) < 0.25:
+                        window = args.silence * 0.5
+                quiet_for = (now - buf.last_event) if buf.last_event else 0.0
+                silent = (buf.last_event is not None and quiet_for >= window
+                          and not buf.open)
+                # speculation: after a short beat of quiet, generate the answer
+                # in the background; discarded automatically if more notes arrive
+                if (args.speculate and not buf.open and n_notes >= args.min_notes
+                        and 0.15 <= quiet_for and not spec["busy"]
+                        and spec["key"] != buffer_key()):
+                    spec["busy"] = True
+                    threading.Thread(target=spec_worker,
+                                     args=(list(buf.notes), buffer_key()),
+                                     daemon=True).start()
+                if silent and n_notes >= args.min_notes:
+                    trigger = True
+                elif silent and n_notes < args.min_notes:
+                    buf.flush()  # discard stray taps
+            if trigger or n_notes >= args.max_notes:
                 key = buffer_key()
                 spec["trigger"] = key  # let an in-flight speculation land post-flush
                 phrase_t0 = buf.t0
@@ -708,11 +1055,9 @@ def main():
                                  for n in notes)[:12]
                 print(f"phrase captured: {len(notes)} notes | onsets(beats): "
                       f"{[round(o, 2) for o in _onsets]}", flush=True)
-                answer(to_beats(notes), key, phrase_t0)
+                answer(to_beats(notes), key, phrase_t0, phrase_live["start"])
                 spec["trigger"] = None
-            elif silent and n_notes < args.min_notes:
-                buf.flush()  # discard stray taps
-            time.sleep(0.01)
+            time.sleep(0.005)
     except KeyboardInterrupt:
         print("jam over.")
 
