@@ -9,3 +9,5 @@ mlx; sys_platform == 'darwin'   # Apple-silicon GPU inference backend (used by d
 flask-cors         # web_server
 modal              # web_server -> Modal inference
 gunicorn           # production WSGI server
+mido               # arrange_trio / hiphop_flip: write arranged MIDI
+scipy              # hiphop_flip: filters, wav io

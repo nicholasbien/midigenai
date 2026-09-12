@@ -43,6 +43,15 @@ whole session so far. Requires Live with the
 Tip: set Live's launch quantization (the Q dropdown) to 1/4 so answers start
 on the next quarter note.
 
+## Rendering songs
+
+Three CLIs turn a hand-written seed into finished audio: `render_piece`
+(model continuation over several seeds, picks the healthiest take),
+`arrange_trio` (adds bass and drums under the piano) and `hiphop_flip`
+(chops the take into a beat with synthesized 808, tape/vinyl/reverb effects).
+Step-by-step, with the exact parameters behind
+`generated/midigenai_ambient_jazz*.mp3`, in [docs/SONG_RECIPES.md](docs/SONG_RECIPES.md).
+
 ## Model
 
 | | |
@@ -91,6 +100,9 @@ midigenai/
 ├─ tokenizer.py       # MidiTok MIDILike wrapper
 ├─ generate.py        # Generator: streaming inference, KV cache, tempo plumbing
 ├─ live_session.py    # interactive Ableton call-and-response
+├─ render_piece.py    # seed-prompted composition: N seeds -> health checks -> best take as mid/mp3
+├─ arrange_trio.py    # add upright bass + brushed kit under a solo-piano take
+├─ hiphop_flip.py     # chop a piano take into a lo-fi boom-bap beat (drums, 808 sub, fx)
 ├─ hub.py             # HuggingFace checkpoint download / load_from_hub
 ├─ train.py           # training loop (sliding-window, AdamW, cosine LR, bf16)
 ├─ modal_train.py     # Modal H100/A100 training entrypoint
