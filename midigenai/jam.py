@@ -406,7 +406,7 @@ def main():
 
     cal = {"track": None}
 
-    def _ableton(cmd, params=None, timeout=1.0):
+    def _ableton(cmd, params=None, timeout=5.0):
         import json as _json
         import socket as _socket
         sk = _socket.socket()
@@ -693,6 +693,8 @@ def main():
             if clip_state["track"] is None:
                 clip_state["track"] = _find_model_track()
             if clip_state["track"] is None:
+                print("WARNING: no track named 'model' in the Live set — "
+                      "run setup_jam_set", flush=True)
                 return
             tr = clip_state["track"]
             if mode == "arrange":
@@ -709,8 +711,10 @@ def main():
             print(f"model track -> "
                   f"{'Monitor Auto, disarmed' if mode == 'arrange' else 'Monitor In, armed'}",
                   flush=True)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"WARNING: could not set the model track's state ({e}); "
+                  f"set it by hand: {'Monitor Auto, disarmed' if mode == 'arrange' else 'Monitor In, armed'}",
+                  flush=True)
 
     if args.output == "stream":
         threading.Thread(target=_model_monitor, args=("stream",),
@@ -1018,7 +1022,10 @@ def main():
                     threading.Thread(target=spec_worker,
                                      args=(buf.snapshot(now), buffer_key()),
                                      daemon=True).start()
-                if beat >= call_end - 0.02:
+                # fire a hair early so the answer's downbeat note is scheduled
+                # in the future instead of played late (measured ~50ms late
+                # when triggered exactly at the bar line)
+                if beat >= call_end - 0.1:
                     trigger = buf.n_on >= args.min_notes
                     if not trigger:
                         buf.flush()              # too few notes: not a call

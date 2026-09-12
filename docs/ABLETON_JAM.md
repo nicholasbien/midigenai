@@ -93,6 +93,28 @@ Tuning flags: `--silence 0.8` (pause that triggers), `--min-notes 4`
 following MIDI clock — must match Live!), `--latency-comp`, `--temperature`,
 `--in-port/--out-port`.
 
+### Measured (2026-09-11, Live 12, M-series Mac, MLX)
+Full autonomous take (`demo_song.py --record`, six 4-bar calls, six 4-bar
+answers, every answer speculated ahead of its bar line, generation
+0.13-0.36 s): recorded answer notes within **±8 ms** of their intended
+positions; the MIDI clock and the socket clock agreed within 0.02-0.05
+beats throughout. The downbeat note of each answer was ~50 ms late when
+the trigger fired exactly at the bar line, hence the 0.1-beat early
+trigger. Before the MIDI clock (socket-polled position) answers were
+5-17 ms early and, while Live recorded, could slide whole bars.
+
+### Autonomous demo (`midigenai/demo_song.py`)
+Open a blank set (File → New), then:
+```bash
+env/bin/python -m midigenai.demo_song                  # backing + jam tracks + 6 calls
+env/bin/python -m midigenai.jam --call-bars 4          # in another terminal, wait for "model track -> Monitor In, armed"
+env/bin/python -m midigenai.demo_song --record --skip-build   # 56-bar recorded pass
+```
+The calls sit on the `you` lane and play out over IAC Bus 1 like your own
+playing would; the answers are recorded onto the `model` lane. Save the set
+afterwards (there is no save command over the socket). Then arm `you`,
+press Record and play your own calls over the same backing.
+
 ## The clip watcher (midigenai/live_session.py)
 
 Needs Live running with the AbletonMCP control surface (ableton-mcp-pro).
