@@ -62,7 +62,7 @@ def default_config() -> TokenizerConfig:
 
 def v4_config(res: int = 8) -> TokenizerConfig:
     """`res`: positions per beat. 8 = 32nd-note grid (v2/v3 parity);
-    12 = 16ths + triplets (pilot arm C)."""
+    24 = 16ths + triplets + 32nds (pilot arm C; the likely v4 default)."""
     from .attributes import header_vocab
     return TokenizerConfig(
         pitch_range=(0, 127),
@@ -89,8 +89,10 @@ def build_tokenizer(config: TokenizerConfig | None = None,
         return MIDILike(config)
     if scheme == "v4":
         return REMI(v4_config())
-    if scheme == "v4-12":
-        return REMI(v4_config(res=12))
+    if scheme == "v4-24":
+        # 16ths + triplets + 32nds; performed sources sit within ~5 ms of
+        # this grid vs ~15-23 ms at 8/beat (measured 2026-09-13)
+        return REMI(v4_config(res=24))
     if scheme == "midilike":
         return MIDILike(default_config())
     raise ValueError(f"unknown tokenizer scheme {scheme!r}")

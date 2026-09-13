@@ -11,7 +11,7 @@
   training, generator accompany/infill/bar-stop, structure + accompaniment
   evals, 21 tests). Pilot corpora building locally: `corpus_pilot_v4`
   (full mix), then `corpus_pilot_v4_cont` (continuation-only, arms B/D) and
-  `corpus_pilot_v4_12` (12 positions/beat, arm C). Quality-labeling app +
+  `corpus_pilot_v4_24` (24 positions/beat, arm C). Quality-labeling app +
   predictor in progress on branch `quality-labeling` (separate PR).
   Decisions made while implementing, all reflected in the code:
   - **Rests off** in v4: REMI with rests collapses empty bars into `Rest`
@@ -34,7 +34,13 @@
     also splits train shards per bucket so `--mixture` can weight them.
   - **Arm B = arm D's corpus trained with `--header-drop-all 1.0`** (no
     separate no-header corpus needed).
-  - Vocab: 588 tokens (v4), 644 (v4-12).
+  - Vocab: 588 tokens (v4), ~790 (v4-24).
+  - **Arm C is 24/beat, not 12**: measured off-grid share and error per
+    source (Lakh/LAMD ~3 ms median error at 1/8 beat; Aria/MAESTRO/POP909
+    15-23 ms, i.e. nearly every onset off-grid). At 1/24 beat the performed
+    sources are within 5-7 ms, below the perceptual threshold, for ~200
+    extra Position/Duration tokens. 24 becomes the default unless the pilot
+    shows a clear loss.
 
 ## Why
 
@@ -92,7 +98,7 @@ modal run midigenai/modal_train.py --size pilot --compile --block-size 2048 \
     --lr 6e-4 --max-steps 2500 --corpus corpus_pilot_v4 --run-name v4_pilot_E
 # arm B: --corpus corpus_pilot_v4_cont --header-drop-all 1.0
 # arm D: --corpus corpus_pilot_v4_cont
-# arm C: --corpus corpus_pilot_v4_12
+# arm C: --corpus corpus_pilot_v4_24
 # arm F: --resume-from v4_pilot_E/ckpt_final.pt --block-size 4096 --rope-base 50000 --max-steps 250
 ```
 Score each with `eval_checkpoint.py` (continue mode) and `--mode accompany`.
@@ -172,7 +178,7 @@ boundary. Vocab impact: +1.
 |---|---|---|---|---|
 | A | MIDILike (current) | no | continuation | baseline, re-run for parity |
 | B | REMI 8/beat | no | continuation | isolates 1a |
-| C | REMI 12/beat | no | continuation | triplet rider |
+| C | REMI 24/beat | yes | 60/25/15 | fine grid (triplets + performed timing) |
 | D | REMI 8/beat | yes | continuation | isolates 1b |
 | E | REMI 8/beat | yes | 60/25/15 | full v4 |
 | F | REMI 8/beat | yes | 60/25/15, +4096 tail | full v4 + 1d |

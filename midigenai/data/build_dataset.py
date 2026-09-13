@@ -340,7 +340,7 @@ if __name__ == "__main__":
                              "fragments, not endings); see build_dataset docstring")
     parser.add_argument("--tag", default="",
                         help="source tag baked into shard names for mixture weighting")
-    parser.add_argument("--scheme", choices=["midilike", "v4", "v4-12"], default="v4",
+    parser.add_argument("--scheme", choices=["midilike", "v4", "v4-24"], default="v4",
                         help="tokenizer scheme: v4 (REMI + header + accompaniment/"
                              "infill docs) or midilike (v2/v3 legacy)")
     parser.add_argument("--accomp-windows", type=int, default=6,
