@@ -86,6 +86,16 @@
     task tokens, <30 s = fragment), 113M medium, batch 64, block 2048,
     180k steps, lr 4e-4, WSD, compile, stage-local, `--mixture aria:0.5`,
     header dropout 0.3/0.1, via modal_launch deploy+spawn.
+- 2026-09-13 18:22: **PRODUCTION RUN LAUNCHED** — `v4_full`, call id
+  fc-01M2EDVG38CS61VYKVXS1Z4SPW. corpus_full_v4: 392 shards / ~19.6B tokens
+  (lakh 77, gigamidi 36, lamd 143, aria ~130, curated 3 shards), uploaded as
+  gzip (-1, 4x smaller; `modal_train` inflates at staging) after a 1 MB/s
+  link made the raw 36 GB impractical. Step 2000 at 18:38, 374k tok/s, loss
+  0.96; ETA ~12:00 on 09-14. Day's lessons, all fixed in code/scripts:
+  Pool.imap hangs forever when a worker dies (per-file SIGALRM + stall guard
+  in build_dataset); a restart script must regenerate its inputs; one big
+  `modal volume put` wedges after a sleep/network change (per-file resumable
+  puts); macOS xargs -I has a 255-byte replacement limit (helper script).
   - **Arm C is 24/beat, not 12**: measured off-grid share and error per
     source (Lakh/LAMD ~3 ms median error at 1/8 beat; Aria/MAESTRO/POP909
     15-23 ms, i.e. nearly every onset off-grid). At 1/24 beat the performed
