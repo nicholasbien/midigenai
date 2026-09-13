@@ -44,7 +44,7 @@
   <h1>midigenai — corpus quality rating</h1>
   <div class="sub">Rate the <b>craft</b> of the excerpt, not whether you like the genre.
     <kbd>5</kbd> excellent &nbsp;<kbd>4</kbd> good &nbsp;<kbd>3</kbd> okay &nbsp;<kbd>2</kbd> poor &nbsp;<kbd>1</kbd> junk
-    &nbsp;·&nbsp; <kbd>j</kbd> broken/junk &nbsp;<kbd>s</kbd> skip &nbsp;<kbd>r</kbd> replay &nbsp;<kbd>space</kbd> play/pause &nbsp;<kbd>d</kbd> flag: drums rendered as piano (then rate)
+    &nbsp;·&nbsp; <kbd>j</kbd> broken/junk &nbsp;<kbd>s</kbd> skip &nbsp;<kbd>r</kbd> replay &nbsp;<kbd>space</kbd> play/pause &nbsp;<kbd>d</kbd> flag: drums rendered as piano &nbsp;<kbd>i</kbd> flag: missing instruments (flags stack; then rate the music itself)
     &nbsp;·&nbsp; <a href="/stats" target="_blank">stats</a></div>
   <div class="statusbar"><span id="count">0 rated this session</span><span id="queue"></span></div>
   <div class="layout">
@@ -242,6 +242,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'r') { e.preventDefault(); replay(); return; }
   if (e.key === 'o') { e.preventDefault(); toggleOriginal(); return; }
   if (e.key === 'd') { e.preventDefault(); toggleFlag('drums_as_piano'); return; }
+  if (e.key === 'i') { e.preventDefault(); toggleFlag('missing_instruments'); return; }
   if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
 });
 document.addEventListener('pointerdown', () => { userHasInteracted = true; });

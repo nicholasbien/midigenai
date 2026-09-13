@@ -55,7 +55,10 @@ MIN_EXCERPT_NOTES = 8       # windows with fewer notes are silence/tails: retry
 WINDOW_TRIES = 4
 
 
-RATER_FLAGS = {"drums_as_piano"}   # 'd' key: a drum part playing as pitched piano
+# data-issue flags (keys d / i): metadata defects, rated separately from the
+# music itself so the quality predictor learns craft, not tagging accidents
+RATER_FLAGS = {"drums_as_piano",      # 'd': a drum part playing as pitched piano
+               "missing_instruments"} # 'i': everything on program 0 / clearly untagged
 
 
 def utcnow() -> str:

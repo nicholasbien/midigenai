@@ -75,6 +75,21 @@ transcription of a song you love should score low.
 Skip (`s`) when you cannot judge (player failed, excerpt is silence, you got
 distracted) rather than guessing.
 
+### Data-issue flags (not ratings)
+
+Some files are fine music with broken metadata. Flag those and still rate
+the music on its own merits — the flag, not the rating, drives the pipeline
+fix, and a "junk" rating would teach the quality predictor to punish a
+tagging accident it can already see in the instrument-count feature.
+
+- `d` — **drums rendered as piano**: a drum part on a pitched channel.
+  Feeds a pitch/rhythm-based drum detector for `normalize_drums`.
+- `i` — **missing instruments**: an arrangement with every part on program 0
+  (about 8% of multi-track Lakh/LAMD files). Candidate treatment at build
+  time: keep the notes, drop the unreliable `Inst_*` header tokens.
+
+Flags stack and are cleared after each rating.
+
 ### Self-consistency check
 
 10% of served items (`--repeat-rate`) are blind repeats of excerpts already
