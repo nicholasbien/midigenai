@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>midigenai — corpus quality rating</title>
+<script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js,npm/focus-visible@5,npm/html-midi-player@1.5.0"></script>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 720px; margin: 32px auto; padding: 0 16px; color: #222; }
+  h1 { font-size: 20px; margin-bottom: 2px; }
+  .sub { color: #666; font-size: 13px; margin-bottom: 16px; line-height: 1.7; }
+  .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; background: #fafafa; }
+  midi-player { width: 100%; display: block; }
+  .buttons { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+  button { padding: 10px 14px; border: 1px solid #ccc; background: white; border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #f0f0f0; }
+  button.rate { min-width: 96px; font-weight: 600; }
+  button.junk { border-color: #dc2626; color: #dc2626; }
+  kbd { background: #eee; border-radius: 3px; padding: 1px 5px; font-size: 11px; margin-left: 6px; }
+  .statusbar { display: flex; justify-content: space-between; font-size: 13px; color: #444; margin: 10px 0; }
+  .waiting { text-align: center; color: #888; padding: 40px 0; font-size: 14px; }
+  .flash { animation: flash 0.4s; }
+  .hint { font-size: 12px; color: #888; margin-top: 10px; }
+  @keyframes flash { 0% { background: #ecfdf5; } 100% { background: #fafafa; } }
+</style>
+</head>
+<body>
+  <h1>midigenai — corpus quality rating</h1>
+  <div class="sub">Rate the <b>craft</b> of the excerpt, not whether you like the genre.
+    <kbd>5</kbd> excellent &nbsp;<kbd>4</kbd> good &nbsp;<kbd>3</kbd> okay &nbsp;<kbd>2</kbd> poor &nbsp;<kbd>1</kbd> junk
+    &nbsp;·&nbsp; <kbd>j</kbd> broken/junk &nbsp;<kbd>s</kbd> skip &nbsp;<kbd>r</kbd> replay &nbsp;<kbd>space</kbd> play/pause
+    &nbsp;·&nbsp; <a href="/stats" target="_blank">stats</a></div>
+  <div class="statusbar"><span id="count">0 rated this session</span><span id="queue"></span></div>
+  <div id="stage" class="card"><div class="waiting">preparing excerpts…</div></div>
+  <div class="hint">Excerpts are ~30 s, bar-aligned, sampled evenly across sources. Some are blind repeats (for self-consistency). Nothing identifying is shown on purpose.</div>
+
+<script>
+const SESSION_ID = crypto.randomUUID();
+let current = null;          // {item_id, url}
+let sessionCount = 0;
+let totalCount = 0;
+let shownAt = 0;
+let userHasInteracted = false;
+let busy = false;
+
+async function fetchStats() {
+  try {
+    const s = await (await fetch('/api/stats')).json();
+    totalCount = s.rated;
+    updateCount();
+  } catch (e) {}
+}
+
+function updateCount() {
+  document.getElementById('count').textContent =
+    `${sessionCount} rated this session · ${totalCount} total on disk`;
+}
+
+function player() { return document.getElementById('player'); }
+
+async function loadNext() {
+  current = null;
+  const stage = document.getElementById('stage');
+  stage.innerHTML = '<div class="waiting">preparing next excerpt…</div>';
+  while (true) {
+    let res;
+    try { res = await fetch('/api/next'); }
+    catch (e) { await new Promise(r => setTimeout(r, 1500)); continue; }
+    if (res.status === 202) continue;   // server long-polls while the queue fills
+    const data = await res.json();
+    if (data.status === 'ok') {
+      current = data.item;
+      document.getElementById('queue').textContent = `${data.queued} ready`;
+      render();
+      return;
+    }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+
+function render() {
+  const stage = document.getElementById('stage');
+  stage.classList.add('flash');
+  setTimeout(() => stage.classList.remove('flash'), 400);
+  stage.innerHTML = `
+    <midi-player id="player" src="${current.url}" sound-font></midi-player>
+    <div class="buttons">
+      <button class="rate" onclick="rate(5)">5 excellent<kbd>5</kbd></button>
+      <button class="rate" onclick="rate(4)">4 good<kbd>4</kbd></button>
+      <button class="rate" onclick="rate(3)">3 okay<kbd>3</kbd></button>
+      <button class="rate" onclick="rate(2)">2 poor<kbd>2</kbd></button>
+      <button class="rate" onclick="rate(1)">1 junk<kbd>1</kbd></button>
+      <button class="junk" onclick="act('junk')">broken / junk<kbd>j</kbd></button>
+      <button onclick="act('skip')">skip<kbd>s</kbd></button>
+      <button onclick="replay()">replay<kbd>r</kbd></button>
+    </div>`;
+  shownAt = Date.now();
+  const p = player();
+  // Browsers only allow audio after a user gesture; from the second item on
+  // playback starts automatically so rating is hands-on-keyboard.
+  p.addEventListener('load', () => { if (userHasInteracted) { try { p.start(); } catch (e) {} } });
+}
+
+function replay() {
+  const p = player();
+  if (!p) return;
+  try { p.stop(); p.currentTime = 0; p.start(); } catch (e) {}
+}
+
+function togglePlay() {
+  const p = player();
+  if (!p) return;
+  try { if (p.playing) p.stop(); else p.start(); } catch (e) {}
+}
+
+async function act(action, rating) {
+  if (!current || busy) return;
+  busy = true;
+  const body = {
+    session_id: SESSION_ID,
+    item_id: current.item_id,
+    action, rating,
+    listen_seconds: Math.round((Date.now() - shownAt) / 100) / 10,
+  };
+  try { const p = player(); if (p && p.playing) p.stop(); } catch (e) {}
+  try {
+    const res = await fetch('/api/rate', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body) });
+    if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+    if (action !== 'skip') { sessionCount++; totalCount++; updateCount(); }
+  } catch (e) {
+    alert('failed to record rating: ' + e.message);
+    busy = false;
+    return;
+  }
+  busy = false;
+  loadNext();
+}
+
+function rate(n) { act('rate', n); }
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.metaKey || e.ctrlKey || e.altKey) return;
+  userHasInteracted = true;
+  if (e.key >= '1' && e.key <= '5') { e.preventDefault(); rate(parseInt(e.key, 10)); return; }
+  if (e.key === 'j') { e.preventDefault(); act('junk'); return; }
+  if (e.key === 's') { e.preventDefault(); act('skip'); return; }
+  if (e.key === 'r') { e.preventDefault(); replay(); return; }
+  if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
+});
+document.addEventListener('pointerdown', () => { userHasInteracted = true; });
+
+fetchStats();
+loadNext();
+</script>
+</body>
+</html>
