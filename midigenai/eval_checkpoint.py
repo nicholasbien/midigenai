@@ -50,7 +50,8 @@ DIRECTION = {"eos_rate": +1, "repetition_rate": -1, "repetition_drift": -1,
 def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Path,
                         n_prompts: int, gens_per_prompt: int, prompt_tokens: int,
                         max_new_tokens: int, temperature: float, top_k: int,
-                        seed: int, mode: str = "continue", bars: int = 8) -> dict:
+                        seed: int, mode: str = "continue", bars: int = 8,
+                        pad_to_bar: bool = False) -> dict:
     """`mode`: "continue" (default) or "accompany" (v4 only: the prompt file's
     largest track is the condition over `bars` bars, the model writes the
     rest, and the generated parts are scored against the real other parts
@@ -101,6 +102,9 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
             ids = ids[:prompt_tokens]
         # v4: the prompt gets the header the builder would have given this file
         header = gen.make_header(f) if gen.v4 else []
+        if pad_to_bar and gen.v4:
+            # end the prompt on a bar line so the answer should start on "1"
+            ids = gen.pad_to_bars(ids, gen.count_bars(ids))
         prompt = [*header, *ids] if header else ids
         prompt_score = gen.tokenizer.decode(list(ids))
         prompt_hist = pitch_class_histogram(prompt_score)
@@ -283,6 +287,8 @@ def main():
     p.add_argument("--mode", choices=["continue", "accompany"], default="continue",
                    help="accompany: v4 accompaniment scorecard (see _evaluate_accompany)")
     p.add_argument("--bars", type=int, default=8, help="accompany: window length")
+    p.add_argument("--pad-to-bar", action="store_true",
+                   help="continue (v4): pad the prompt to its bar line first")
     args = p.parse_args()
 
     if args.compare:
@@ -294,8 +300,11 @@ def main():
                                args.n_prompts, args.gens_per_prompt,
                                args.prompt_tokens, args.max_new_tokens,
                                args.temperature, args.top_k, args.seed,
-                               mode=args.mode, bars=args.bars)
+                               mode=args.mode, bars=args.bars,
+                               pad_to_bar=args.pad_to_bar)
     suffix = "" if args.mode == "continue" else f"_{args.mode}"
+    if args.pad_to_bar:
+        suffix += "_padbar"
     out = args.out or Path(f"evals/scorecards/{Path(args.checkpoint).parent.name}{suffix}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(card, indent=2))
