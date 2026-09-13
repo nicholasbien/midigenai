@@ -76,6 +76,16 @@
     capacity effect. Also: with the ban, E' early stopping is 13% (=
     baseline) and repetition/coherence are at or above baseline, so the
     launch gate's stopping criterion is met before E''.
+  - **Arm E'' (task tokens, 4 windows): gate met.** Early stop 18% / 23%
+    closed-bar, coherence 0.62 (baseline 0.63), scale consistency 0.90,
+    downbeat delta -0.03 / -0.01, bar offset 0.60 / 0.30. Accompaniment
+    unchanged (52% exact bars, overlap 0.22). Watch item: corpora with
+    segment docs run ~0.05-0.10 higher on 4-gram repetition than
+    continuation-only (D 0.165 vs E/E'/E'' 0.21-0.27). **Production launch
+    armed** (`~/midigenai_data/launch_v4_full.sh`): corpus_full_v4 (8/beat,
+    task tokens, <30 s = fragment), 113M medium, batch 64, block 2048,
+    180k steps, lr 4e-4, WSD, compile, stage-local, `--mixture aria:0.5`,
+    header dropout 0.3/0.1, via modal_launch deploy+spawn.
   - **Arm C is 24/beat, not 12**: measured off-grid share and error per
     source (Lakh/LAMD ~3 ms median error at 1/8 beat; Aria/MAESTRO/POP909
     15-23 ms, i.e. nearly every onset off-grid). At 1/24 beat the performed
