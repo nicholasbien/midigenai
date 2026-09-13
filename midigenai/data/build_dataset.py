@@ -29,7 +29,7 @@ from pathlib import Path
 import numpy as np
 from tqdm import tqdm
 
-from midigenai.tokenizer import build_tokenizer, encode_midi, save_tokenizer
+from midigenai.tokenizer import build_tokenizer, save_tokenizer
 
 
 SHARD_TOKENS = 50_000_000  # 100 MB per shard at uint16
@@ -41,12 +41,26 @@ MIN_VIEW_NOTES = 64        # a solo view must have this many notes to count
 # config is deterministic so vocab IDs are identical across workers + main.
 _TOKENIZER = None
 _TRACK_VIEWS = TRACK_VIEWS
+_V4 = None
 
 
-def _worker_init(track_views: int = TRACK_VIEWS):
-    global _TOKENIZER, _TRACK_VIEWS
-    _TOKENIZER = build_tokenizer()
+def _worker_init(track_views: int = TRACK_VIEWS, scheme: str = "midilike",
+                 v4_opts: dict | None = None):
+    global _TOKENIZER, _TRACK_VIEWS, _V4
+    _TOKENIZER = build_tokenizer(scheme=scheme)
     _TRACK_VIEWS = track_views
+    if scheme == "v4":
+        from midigenai.data.v4_docs import DocBuilder
+        _V4 = DocBuilder(_TOKENIZER, track_views=track_views, **(v4_opts or {}))
+
+
+def _worker_encode_v4(path: str) -> tuple[str, dict | str]:
+    """v4: documents already carry BOS/header/EOS (see v4_docs.py). Returns
+    a skip-reason string instead of docs when the file is unusable."""
+    try:
+        return path, _V4.build(path)
+    except Exception:
+        return path, "error"
 
 
 def _worker_encode(path: str) -> tuple[str, list[list[int]] | None]:
@@ -236,6 +250,7 @@ def build(
         "vocab_size": len(tokenizer),
         "n_files_kept": n_files,
         "n_files_failed": n_failed,
+        "skip_reasons": skip_reasons,
         "n_train_tokens": n_train_tokens,
         "n_val_tokens": n_val_tokens,
         "fragment_under_seconds": fragment_under_seconds,
@@ -246,6 +261,12 @@ def build(
         "track_views_per_file": track_views,
         "n_view_docs": n_view_docs,
         "n_view_tokens": n_view_tokens,
+        "scheme": scheme,
+        "v4_opts": v4_opts or {},
+        "kind_docs": kind_docs,
+        "kind_tokens": kind_tokens,
+        "kind_share": {k: round(v / max(1, sum(kind_tokens.values())), 3)
+                       for k, v in kind_tokens.items()},
     }
     with (out_dir / "manifest.json").open("w") as f:
         json.dump(summary, f, indent=2)
@@ -273,7 +294,27 @@ if __name__ == "__main__":
                              "fragments, not endings); see build_dataset docstring")
     parser.add_argument("--tag", default="",
                         help="source tag baked into shard names for mixture weighting")
+    parser.add_argument("--scheme", choices=["midilike", "v4"], default="v4",
+                        help="tokenizer scheme: v4 (REMI + header + accompaniment/"
+                             "infill docs) or midilike (v2/v3 legacy)")
+    parser.add_argument("--accomp-windows", type=int, default=6,
+                        help="v4: accompaniment docs per multi-track file")
+    parser.add_argument("--infill-windows", type=int, default=2,
+                        help="v4: span-infill docs per file")
+    parser.add_argument("--window-bars", type=int, default=16,
+                        help="v4: bars per accompaniment window")
+    parser.add_argument("--context-bars", type=int, default=16,
+                        help="v4: bars of context per infill doc")
+    parser.add_argument("--max-span-bars", type=int, default=4,
+                        help="v4: longest infilled span")
+    parser.add_argument("--genres", type=Path, default=None,
+                        help="v4: optional JSON {path: [genre,...]} for Genre_ tokens")
     args = parser.parse_args()
+    v4_opts = dict(accomp_windows=args.accomp_windows, infill_windows=args.infill_windows,
+                   window_bars=args.window_bars, context_bars=args.context_bars,
+                   max_span_bars=args.max_span_bars)
+    if args.genres:
+        v4_opts["genres"] = json.loads(args.genres.read_text())
     build(
         manifest_path=args.manifest,
         out_dir=args.out,

@@ -70,9 +70,15 @@ class TrainConfig:
     aug_velocity: int = 1          # max velocity jitter (bins); 0 disables
     mixture: str = ""              # per-source weights, e.g. "lakh:1,aria:2"
     resume: Path | None = None     # checkpoint to resume from
+    header_dropout: float = 0.3    # v4: per-family header dropout prob
+    header_drop_all: float = 0.1   # v4: prob of dropping the whole header
+    rope_base: float = 0.0         # 0 -> model default; raise for length extension
 
 
 # ----------------------------- data --------------------------------------- #
+
+MAX_HEADER = 16   # longest v4 header we bother to look for after a BOS
+
 
 class ShardedTokenStream:
     """
@@ -80,14 +86,30 @@ class ShardedTokenStream:
     windows from a uniformly random shard. Shards are concatenations of
     BOS-separated documents — windowing across BOS boundaries is fine
     (it teaches the model to handle context resets).
+
+    v4 (`specials` given): every window is re-headed. A window that starts
+    mid-document would otherwise never see its document's attribute header
+    (documents run to ~20k tokens, windows are 2k), so the header is copied
+    from the document start and the window becomes `BOS header body...`.
+    Header families are dropped at random (`header_dropout`, `header_drop_all`)
+    so the unconditional model and any partial header stay in-distribution.
     """
 
     def __init__(self, shard_paths: list[Path], block_size: int,
                  bos_id: int | None = None, doc_start_frac: float = 0.0,
-                 mixture: dict[str, float] | None = None):
+                 mixture: dict[str, float] | None = None,
+                 specials=None, header_dropout: float = 0.0,
+                 header_drop_all: float = 0.0):
         if not shard_paths:
             raise ValueError("no shards provided")
         self.block_size = block_size
+        self.specials = specials
+        self.header_dropout = header_dropout
+        self.header_drop_all = header_drop_all
+        if specials is not None:
+            bos_id = specials.bos
+            self._header_lut = np.zeros(65536, dtype=bool)
+            self._header_lut[list(specials.header_ids)] = True
         self.shards = [np.load(p, mmap_mode="r") for p in shard_paths]
         # weight sampling by shard length so all tokens are equally likely,
         # scaled by any per-source mixture weight matched on the filename
@@ -111,14 +133,44 @@ class ShardedTokenStream:
         # never begin at a piece opening and rarely contain an ending, so a
         # doc_start_frac of the windows are anchored at a BOS instead.
         self.doc_start_frac = doc_start_frac
+        # all_starts: every BOS (needed to find a window's header);
+        # doc_starts: the ones a full window fits after (for anchoring)
+        self.all_starts: list[np.ndarray] = []
         self.doc_starts: list[np.ndarray] = []
-        if bos_id is not None and doc_start_frac > 0:
+        if bos_id is not None and (doc_start_frac > 0 or specials is not None):
             for shard in self.shards:
                 pos = np.flatnonzero(np.asarray(shard) == bos_id)
-                pos = pos[pos <= len(shard) - block_size - 1]
-                self.doc_starts.append(pos)
+                self.all_starts.append(pos)
+                self.doc_starts.append(pos[pos <= len(shard) - block_size - 1])
         else:
+            self.all_starts = [np.empty(0, dtype=np.int64) for _ in self.shards]
             self.doc_starts = [np.empty(0, dtype=np.int64) for _ in self.shards]
+
+    def _header_at(self, shard, doc_start: int) -> np.ndarray:
+        seg = np.asarray(shard[doc_start + 1 : doc_start + 1 + MAX_HEADER])
+        n = int(np.argmin(self._header_lut[seg])) if not self._header_lut[seg].all() else len(seg)
+        return seg[:n].astype(np.int64)
+
+    def _window_v4(self, shard, starts: np.ndarray, start: int,
+                   rng: np.random.Generator) -> np.ndarray:
+        """`BOS header body` of length block_size+1 for a window at `start`."""
+        from midigenai.sequence_format import drop_header_families
+        need = self.block_size + 1
+        k = int(np.searchsorted(starts, start, side="right")) - 1
+        if k < 0:                      # before the first BOS: no header known
+            return shard[start : start + need].astype(np.int64)
+        doc_start = int(starts[k])
+        header = self._header_at(shard, doc_start)
+        kept = drop_header_families(self.specials, [int(t) for t in header], rng,
+                                    self.header_dropout, self.header_drop_all)
+        body_start = doc_start + 1 + len(header) if start == doc_start else start
+        body_len = need - 1 - len(kept)
+        body = shard[body_start : body_start + body_len].astype(np.int64)
+        out = np.concatenate([[self.specials.bos], kept, body])
+        if len(out) < need:            # ran off the shard end: pad from the front
+            pad = shard[max(0, body_start - (need - len(out))) : body_start].astype(np.int64)
+            out = np.concatenate([out, pad])[:need]
+        return out
 
     def sample_batch(self, batch_size: int, rng: np.random.Generator,
                      augmenter=None):
@@ -132,7 +184,10 @@ class ShardedTokenStream:
                 start = int(starts[rng.integers(0, len(starts))])
             else:
                 start = int(rng.integers(0, len(shard) - self.block_size - 1))
-            chunk = shard[start : start + self.block_size + 1].astype(np.int64)
+            if self.specials is not None:
+                chunk = self._window_v4(shard, self.all_starts[si], start, rng)
+            else:
+                chunk = shard[start : start + self.block_size + 1].astype(np.int64)
             if augmenter is not None:
                 # augment the full window so input and target stay consistent
                 chunk = augmenter(chunk, rng)
@@ -254,6 +309,13 @@ def train(cfg: TrainConfig) -> None:
     tok_path = cfg.data_dir / "tokenizer.json"
     _tok = _lt(tok_path) if tok_path.exists() else _bt()
     bos_id = _tok.vocab.get("BOS_None", _tok.vocab.get("BOS", 1))
+    specials = None
+    from midigenai.tokenizer import is_v4
+    if is_v4(_tok):
+        from midigenai.sequence_format import Specials
+        specials = Specials.from_tokenizer(_tok)
+        print(f"[train] v4 tokenizer: header re-injection on, dropout "
+              f"family={cfg.header_dropout} all={cfg.header_drop_all}")
     mixture = None
     if cfg.mixture:
         mixture = {k: float(v) for k, v in
@@ -261,9 +323,12 @@ def train(cfg: TrainConfig) -> None:
         print(f"[train] mixture weights: {mixture}")
     train_stream = ShardedTokenStream(train_shards, cfg.block_size, bos_id=bos_id,
                                       doc_start_frac=cfg.doc_start_frac,
-                                      mixture=mixture)
+                                      mixture=mixture, specials=specials,
+                                      header_dropout=cfg.header_dropout,
+                                      header_drop_all=cfg.header_drop_all)
+    # val: headers injected, never dropped (measures the conditional loss)
     val_stream = ShardedTokenStream(val_shards, cfg.block_size, bos_id=bos_id,
-                                    mixture=mixture) if val_shards else None
+                                    mixture=mixture, specials=specials) if val_shards else None
     print(f"[train] train_shards={len(train_shards)}  val_shards={len(val_shards)}")
 
     # ---- tokenizer (just to pull vocab size)
@@ -279,6 +344,9 @@ def train(cfg: TrainConfig) -> None:
     else:
         raise ValueError(f"unknown size: {cfg.size}")
     model_cfg.max_seq_len = max(model_cfg.max_seq_len, cfg.block_size)
+    if cfg.rope_base:
+        # length-extension tail: resume at a longer block with a larger base
+        model_cfg.rope_base = cfg.rope_base
     model = MusicTransformer(model_cfg).to(device)
     print(f"[train] params={model.num_params()/1e6:.1f}M  vocab={vocab_size}")
     if cfg.compile and device.type == "cuda":
@@ -431,6 +499,12 @@ def parse_args() -> TrainConfig:
                    help='per-source shard weights, e.g. "lakh:1,aria:2" (matches shard names)')
     p.add_argument("--augment", action=argparse.BooleanOptionalAction, default=True,
                    help="on-the-fly pitch shift ±6 / velocity jitter ±1 bin")
+    p.add_argument("--header-dropout", type=float, default=0.3,
+                   help="v4: per-family attribute-header dropout probability")
+    p.add_argument("--header-drop-all", type=float, default=0.1,
+                   help="v4: probability of dropping the whole header")
+    p.add_argument("--rope-base", type=float, default=0.0,
+                   help="override RoPE base (length-extension tail on resume)")
     p.add_argument("--resume", type=Path, default=None,
                    help="checkpoint to resume from (restores optimizer + step)")
     args = p.parse_args()

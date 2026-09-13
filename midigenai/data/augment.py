@@ -4,7 +4,8 @@ Token-level augmentation for MIDI training data.
 Augmentations operate on already-tokenized sequences so they're cheap to apply
 on the fly during training (or precomputed into shards if we have disk to spare):
 
-- pitch_shift: shift all NoteOn/NoteOff tokens by ±n semitones
+- pitch_shift: shift all pitched note tokens (NoteOn/NoteOff for MIDILike,
+  Pitch_ for v4 REMI; drum tokens are never shifted) by ±n semitones
 - velocity_jitter: nudge Velocity tokens by ±k bins
 - (tempo stretch is handled at the symusic level before tokenization, not here)
 """
@@ -18,6 +19,10 @@ import numpy as np
 from miditok import MIDILike
 
 _NOT_A_PROGRAM = np.iinfo(np.int64).min
+# MIDILike (v2/v3) and REMI (v4) pitched-note prefixes. REMI drums are
+# PitchDrum_*, so they are excluded by name; MIDILike drums share NoteOn_*
+# and are excluded by the Program_-1 forward-fill below.
+PITCH_PREFIXES = ("NoteOn_", "NoteOff_", "Pitch_")
 
 
 class TokenAugmenter:
@@ -50,7 +55,7 @@ class TokenAugmenter:
             table = np.arange(vocab_size, dtype=np.int64)
             clips = np.zeros(vocab_size, dtype=bool)
             for name, tid in vocab.items():
-                for prefix in ("NoteOn_", "NoteOff_"):
+                for prefix in PITCH_PREFIXES:
                     if name.startswith(prefix):
                         shifted = f"{prefix}{int(name[len(prefix):]) + s}"
                         if shifted in vocab:
@@ -123,7 +128,7 @@ def pitch_shift(
         name = inv.get(tok_id)
         if name is None:
             return tok_id
-        for prefix in ("NoteOn_", "NoteOff_"):
+        for prefix in PITCH_PREFIXES:
             if name.startswith(prefix):
                 pitch = int(name[len(prefix):])
                 new_pitch = pitch + semitones
