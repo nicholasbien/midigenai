@@ -1,6 +1,6 @@
 # Proposal: bar-aware tokenizer (next training round)
 
-**Status**: proposed — for the run after `medium_full_v1`.
+**Status**: folded into [v4-structure-and-control.md](v4-structure-and-control.md) (2026-09-13); kept for the original rationale.
 **Owner**: next model-improvement cycle.
 
 ## Problem
