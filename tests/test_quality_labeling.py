@@ -239,7 +239,7 @@ def test_app_is_blind_and_logs_features(tmp_path):
     r = client.get("/api/next").get_json()
     assert r["status"] == "ok"
     item = r["item"]
-    assert set(item) == {"item_id", "url"}            # nothing identifying
+    assert set(item) == {"item_id", "url", "eid"}            # nothing identifying
     assert "raw" not in item["url"] and item["url"].endswith(".mid")
     assert client.get(item["url"]).status_code == 200
 
