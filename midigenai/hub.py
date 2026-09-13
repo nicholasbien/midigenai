@@ -26,7 +26,7 @@ from midigenai import load_from_hub, list_hub_versions
 gen = load_from_hub()
 
 # explicit version
-gen = load_from_hub(version="v2")
+gen = load_from_hub(version="v2-100m")   # pin an older checkpoint; default is v3
 
 # discover what's available on the hub
 print(list_hub_versions())   # ["v2-pilot", "v2", ...]
