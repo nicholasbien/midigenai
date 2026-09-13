@@ -1,3 +1,6 @@
+> **Superseded.** This flow moved into fluidclaude (`listen` / `gen`, see its README); the scripts
+> named below were removed from midigenai in 2026-09. Kept for the setup notes and measurements.
+
 # Interactive Ableton jamming — setup guide
 
 Two ways to play live with the model. **The MIDI-bus jam (`jam.py`) is the
