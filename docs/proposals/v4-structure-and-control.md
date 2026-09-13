@@ -65,6 +65,17 @@
     targets stay EOS-free (harmless; BOS is a fine terminator). Arm E'' on a
     rebuilt corpus validates; arm C (24/beat, pre-task-token corpus) is
     still a fair grid comparison against E'.
+  - **Grid decision: 8/beat for v4.** Fair comparison (both scored with the
+    sampling ban; paired per prompt, n=60): C (24/beat) vs E' (8/beat):
+    prompt coherence -0.07 (plain) / -0.12 (closed bar, significant),
+    repetition -0.07 / -0.09 (significant, but n-gram repetition on a finer
+    grid is partly a metric artifact), scale consistency and bar offset
+    equal. Per the rule "24 unless a clear loss", production is 8/beat.
+    24/beat stays the first thing to retest at medium scale (a ~2B-token
+    medium pair, ~$7 each), since the coherence gap may be a 25M/330M-token
+    capacity effect. Also: with the ban, E' early stopping is 13% (=
+    baseline) and repetition/coherence are at or above baseline, so the
+    launch gate's stopping criterion is met before E''.
   - **Arm C is 24/beat, not 12**: measured off-grid share and error per
     source (Lakh/LAMD ~3 ms median error at 1/8 beat; Aria/MAESTRO/POP909
     15-23 ms, i.e. nearly every onset off-grid). At 1/24 beat the performed
