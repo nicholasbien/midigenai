@@ -127,16 +127,36 @@ def train(
                 data_dir = Path(fallback)
                 break
 
-    if stage_local:
+    compressed = any((data_dir / "shards").glob("*.npy.gz"))
+    if stage_local or compressed:
         # Random mmap reads over the volume FUSE mount thrash once the corpus
         # outgrows the page cache; a sequential copy to container-local disk up
-        # front makes every training read local.
+        # front makes every training read local. Shards may be uploaded as
+        # .npy.gz (gzip -1 shrinks token shards ~4.7x; the 2026-09-13 full
+        # v4 corpus went up over a 1 MB/s link) and are inflated here.
+        import gzip
         import shutil
         import time as _time
+        from concurrent.futures import ThreadPoolExecutor
         staged = Path("/tmp/corpus")
+        (staged / "shards").mkdir(parents=True, exist_ok=True)
         t0 = _time.time()
-        shutil.copytree(data_dir, staged)
-        print(f"[modal-train] staged corpus to {staged} in {_time.time()-t0:.0f}s")
+        for f in data_dir.iterdir():
+            if f.is_file():
+                shutil.copy(f, staged / f.name)
+
+        def stage_one(src: Path) -> None:
+            if src.suffix == ".gz":
+                with gzip.open(src, "rb") as fin, open(staged / "shards" / src.name[:-3], "wb") as fout:
+                    shutil.copyfileobj(fin, fout, 16 << 20)
+            else:
+                shutil.copy(src, staged / "shards" / src.name)
+        files = sorted((data_dir / "shards").iterdir())
+        with ThreadPoolExecutor(8) as ex:
+            list(ex.map(stage_one, files))
+        n = len(list((staged / "shards").glob("*.npy")))
+        print(f"[modal-train] staged {n} shards to {staged} "
+              f"({'inflated' if compressed else 'copied'}) in {_time.time()-t0:.0f}s")
         data_dir = staged
 
     cfg = TrainConfig(
