@@ -123,15 +123,27 @@ class PairFactory:
         prompt_score = self.gen_a.tokenizer.decode(list(prompt_ids))
         prompt_score.tempos = [Tempo(time=0, qpm=tempo)]
         prompt_score.dump_midi(prompt_path)
-        cut_tick = prompt_score.end()
 
+        # Cross-vocabulary pairs (e.g. v3 MIDILike vs a v4 REMI checkpoint):
+        # each side re-tokenizes the SAME prompt score with its own tokenizer.
+        # A v4 side also gets the prompt's attribute header and a closed bar,
+        # which is how it is prompted in production.
+        side_prompt_ids = {}
         conts = {}
         for name, gen in (("a", self.gen_a), ("b", self.gen_b)):
-            new_ids = list(gen.generate_ids(prompt_ids, **kwargs_by_side[name]))
+            if gen is self.gen_a and not getattr(gen, "v4", False):
+                ids = list(prompt_ids)
+            else:
+                ids = gen.tokenizer(Score(str(prompt_path))).ids
+                if getattr(gen, "v4", False):
+                    ids = [*gen.make_header(prompt_path), *gen.close_bar(ids)]
+            side_prompt_ids[name] = ids
+            cut_tick = gen.tokenizer.decode(list(ids)).end()
+            new_ids = list(gen.generate_ids(ids, **kwargs_by_side[name]))
             conts[name] = new_ids
             # Decode with full prompt context (programs, ringing notes), then
             # trim to the continuation only: shorter files review much faster.
-            full = gen.tokenizer.decode(list(prompt_ids) + new_ids)
+            full = gen.tokenizer.decode(list(ids) + new_ids)
             for track in full.tracks:
                 kept = [n for n in track.notes if n.start >= cut_tick]
                 for n in kept:
@@ -145,6 +157,8 @@ class PairFactory:
             "created": utcnow(),
             "prompt_file": str(prompt_file),
             "prompt_ids": prompt_ids,
+            "prompt_ids_a": side_prompt_ids["a"],
+            "prompt_ids_b": side_prompt_ids["b"],
             "cont_a_ids": conts["a"],
             "cont_b_ids": conts["b"],
             "model_a": self.label_a,
