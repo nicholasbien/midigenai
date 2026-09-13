@@ -5,7 +5,20 @@
 <title>midigenai — corpus quality rating</title>
 <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js,npm/focus-visible@5,npm/html-midi-player@1.5.0"></script>
 <style>
-  body { font-family: -apple-system, system-ui, sans-serif; max-width: 720px; margin: 32px auto; padding: 0 16px; color: #222; }
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 1040px; margin: 32px auto; padding: 0 16px; color: #222; }
+  .layout { display: flex; gap: 20px; align-items: flex-start; }
+  .main { flex: 1; min-width: 0; }
+  .side { width: 280px; flex: none; border: 1px solid #ddd; border-radius: 8px; background: #fff; padding: 10px; font-size: 12px; max-height: 80vh; overflow: auto; }
+  .side h3 { margin: 0 0 6px; font-size: 13px; }
+  .side .row { display: flex; gap: 8px; padding: 4px 6px; border-radius: 4px; cursor: pointer; align-items: center; }
+  .side .row:hover { background: #f0f0f0; }
+  .side .row.cur { background: #ecfdf5; outline: 1px solid #a7f3d0; }
+  .side .id { font-family: ui-monospace, monospace; color: #555; width: 64px; }
+  .side .n { color: #999; width: 26px; text-align: right; }
+  .side .r { font-weight: 600; width: 22px; }
+  .side .fl { color: #b45309; }
+  .eid { font-family: ui-monospace, monospace; font-size: 12px; color: #666; margin-bottom: 6px; }
+  .notice { font-size: 12px; color: #b45309; margin: 6px 0; min-height: 16px; }
   h1 { font-size: 20px; margin-bottom: 2px; }
   .sub { color: #666; font-size: 13px; margin-bottom: 16px; line-height: 1.7; }
   .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; background: #fafafa; }
@@ -34,7 +47,13 @@
     &nbsp;·&nbsp; <kbd>j</kbd> broken/junk &nbsp;<kbd>s</kbd> skip &nbsp;<kbd>r</kbd> replay &nbsp;<kbd>space</kbd> play/pause &nbsp;<kbd>d</kbd> flag: drums rendered as piano (then rate)
     &nbsp;·&nbsp; <a href="/stats" target="_blank">stats</a></div>
   <div class="statusbar"><span id="count">0 rated this session</span><span id="queue"></span></div>
+  <div class="layout">
+  <div class="main">
+  <div id="notice" class="notice"></div>
   <div id="stage" class="card"><div class="waiting">preparing excerpts…</div></div>
+  </div>
+  <div class="side"><h3>this session</h3><div class="hint" style="margin:0 0 6px">click an item to re-listen / re-rate</div><div id="history"></div></div>
+  </div>
   <div class="hint">Excerpts are ~30 s, bar-aligned, sampled evenly across sources. Some are blind repeats (for self-consistency). Nothing identifying is shown on purpose.</div>
 
 <script>
@@ -42,6 +61,30 @@ const SESSION_ID = crypto.randomUUID();
 let current = null;          // {item_id, url, model_url?, tokens?}
 let showOriginal = false;    // as-model mode: 'o' toggles original vs model view
 let pendingFlags = new Set(); // data-issue flags attached to the next rating ('d')
+let history = [];             // [{n, eid, rating, flags, action}] this session
+let seq = 0;
+
+function note(msg) { const el = document.getElementById('notice'); el.textContent = msg; if (msg) setTimeout(() => { if (el.textContent === msg) el.textContent = ''; }, 4000); }
+
+function renderHistory() {
+  const el = document.getElementById('history');
+  el.innerHTML = history.slice().reverse().map(h => `
+    <div class="row ${current && current.eid === h.eid ? 'cur' : ''}" onclick="loadItem('${h.eid}')">
+      <span class="n">${h.n}</span><span class="id">#${h.eid}</span>
+      <span class="r">${h.rating ?? (h.action === 'skip' ? 'skip' : '·')}</span>
+      <span class="fl">${(h.flags || []).map(f => f.replace(/_/g, ' ')).join(', ')}</span>
+    </div>`).join('');
+}
+
+async function loadItem(eid) {
+  if (busy) return;
+  const res = await fetch('/api/item/' + eid);
+  if (!res.ok) { note('cannot reload #' + eid); return; }
+  const data = await res.json();
+  current = data.item;
+  render();
+  renderHistory();
+}
 
 function toggleFlag(f) {
   if (pendingFlags.has(f)) pendingFlags.delete(f); else pendingFlags.add(f);
@@ -101,11 +144,15 @@ function render() {
   setTimeout(() => stage.classList.remove('flash'), 400);
   const asModel = !!current.model_url;
   showOriginal = false;
+  if (!history.some(h => h.eid === current.eid)) history.push({ n: ++seq, eid: current.eid, rating: null, flags: [] });
+  const prev = history.find(h => h.eid === current.eid);
+  const revisit = prev && (prev.rating !== null || prev.action) ? ` · previously ${prev.rating ?? prev.action} — rate again to revise` : '';
   const src = asModel ? current.model_url : current.url;
   const tokenPanel = asModel ? `
     <div class="modelbar"><b id="viewlabel">model view</b> — tokenized &amp; decoded (1/8-beat grid, 32 velocity bins, tempo re-applied) · ${current.n_tokens} tokens · <kbd>o</kbd> toggle original</div>
     <details class="tokens" open><summary>token stream (what the transformer reads)</summary><pre>${current.tokens.slice(0, 20000)}</pre></details>` : '';
   stage.innerHTML = `
+    <div class="eid">#${current.eid}${revisit}</div>
     <midi-player id="player" src="${src}" sound-font></midi-player>
     ${tokenPanel}
     <div id="flags" class="flags"></div>
@@ -120,6 +167,7 @@ function render() {
       <button onclick="replay()">replay<kbd>r</kbd></button>
     </div>`;
   shownAt = Date.now();
+  renderHistory();
   const p = player();
   // Browsers only allow audio after a user gesture; from the second item on
   // playback starts automatically so rating is hands-on-keyboard.
@@ -163,10 +211,19 @@ async function act(action, rating) {
     const res = await fetch('/api/rate', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) });
+    if (res.status === 400) {
+      // the server no longer knows this item (app restarted): move on
+      note('that item expired (app restarted) — skipping to the next one');
+      busy = false;
+      loadNext();
+      return;
+    }
     if (!res.ok) throw new Error((await res.json()).error || res.statusText);
+    const h = history.find(x => x.eid === current.eid);
+    if (h) { h.rating = action === 'skip' ? null : (action === 'junk' ? 1 : rating); h.action = action; h.flags = body.flags; }
     if (action !== 'skip') { sessionCount++; totalCount++; updateCount(); }
   } catch (e) {
-    alert('failed to record rating: ' + e.message);
+    note('failed to record rating: ' + e.message);
     busy = false;
     return;
   }

@@ -50,7 +50,8 @@ ALPHA_GRID = (0.1, 1.0, 10.0, 100.0)
 # --------------------------------- data ------------------------------------ #
 
 def aggregate_ratings(records: list[dict]) -> list[dict]:
-    """One row per excerpt: skips dropped, repeated ratings averaged."""
+    """One row per excerpt: skips dropped, blind repeats averaged, an explicit
+    revision (re-rated from the session list) replaces earlier ratings."""
     by_id: dict[str, dict] = {}
     for r in records:
         if r.get("rating") is None or not r.get("excerpt_id"):
@@ -59,6 +60,9 @@ def aggregate_ratings(records: list[dict]) -> list[dict]:
             "excerpt_id": r["excerpt_id"], "path": r.get("path", ""),
             "source": r.get("source") or source_of(r.get("path", "")),
             "features": r.get("features") or {}, "ratings": []})
+        if r.get("revision"):
+            # a deliberate re-rate supersedes everything before it
+            row["ratings"] = []
         row["ratings"].append(float(r["rating"]))
         if not row["features"] and r.get("features"):
             row["features"] = r["features"]

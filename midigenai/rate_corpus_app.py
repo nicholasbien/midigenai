@@ -568,7 +568,8 @@ def build_app(args):
         # BLIND: the browser only ever sees an opaque id and the audio url
         # (plus, in --as-model mode, the tokenizer roundtrip and its tokens,
         # which carry no identifying information either)
-        out = {"item_id": item["item_id"], "url": f"/midi/{item['excerpt_id']}.mid"}
+        out = {"item_id": item["item_id"], "url": f"/midi/{item['excerpt_id']}.mid",
+               "eid": item["excerpt_id"][:8]}
         if item.get("as_model"):
             out["model_url"] = f"/midi/{item['excerpt_id']}.model.mid"
             out["tokens"] = " ".join(item.get("tokens") or [])
@@ -591,11 +592,30 @@ def build_app(args):
                 return jsonify({"status": "preparing"}), 202
         with lock:
             pending[item["item_id"]] = item
+            served[item["excerpt_id"][:8]] = item
             if len(pending) > 200:       # forget stale unrated items
                 for k in list(pending)[:-100]:
                     pending.pop(k, None)
         return jsonify({"status": "ok", "item": public(item),
                         "queued": factory.queue.qsize()})
+
+    # excerpts served this process, by short id, so the rater can revisit one
+    served: dict[str, dict] = {}
+
+    @app.route("/api/item/<eid>")
+    def get_item(eid):
+        with lock:
+            base = served.get(eid)
+        if base is None:
+            rec = next((r for e, r in rated.items() if e.startswith(eid)), None)
+            base = factory.reextract(rec) if rec else None
+            if base is None:
+                return jsonify({"error": "unknown item"}), 404
+        item = {**base, "item_id": uuid.uuid4().hex[:12], "is_repeat": False,
+                "revision": True}
+        with lock:
+            pending[item["item_id"]] = item
+        return jsonify({"status": "ok", "item": public(item)})
 
     @app.route("/api/rate", methods=["POST"])
     def rate():
@@ -632,6 +652,7 @@ def build_app(args):
             "flags": flags,
             "is_repeat": bool(item.get("is_repeat")),
             "as_model": bool(item.get("as_model")),
+            "revision": bool(item.get("revision")),
             "skipped": rating is None,
             "listen_seconds": data.get("listen_seconds"),
             "features": item["features"],
