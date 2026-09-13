@@ -35,6 +35,12 @@
   - **Arm B = arm D's corpus trained with `--header-drop-all 1.0`** (no
     separate no-header corpus needed).
   - Vocab: 588 tokens (v4), 908 (v4-24: Position and Duration both grow).
+  - **Arm A baseline measured** (`pilot_best`, MIDILike 25M, same recipe the
+    v4 arms use; `evals/scorecards/pilot_best_v4metrics.json`): downbeat
+    alignment of continuations 0.20 vs 0.31 for their prompts (delta -0.12),
+    first-onset bar offset 0.76 beats, EOS rate 0.07, prompt coherence 0.65.
+    That is the off-the-downbeat symptom quantified; v4 arms must move the
+    delta toward 0 and the bar offset toward 0.
   - **Arm C is 24/beat, not 12**: measured off-grid share and error per
     source (Lakh/LAMD ~3 ms median error at 1/8 beat; Aria/MAESTRO/POP909
     15-23 ms, i.e. nearly every onset off-grid). At 1/24 beat the performed
