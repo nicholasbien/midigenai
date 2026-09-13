@@ -259,7 +259,9 @@ def build(
         cleanly so the shards written so far are flushed and reported."""
         import multiprocessing as mp
         nonlocal stalled
-        it = pool.imap_unordered(encode, paths, chunksize=4)
+        # chunksize must be 1: with a larger chunk Pool.imap_unordered wraps
+        # the iterator in a generator that has no next(timeout)
+        it = pool.imap_unordered(encode, paths, chunksize=1)
         while True:
             try:
                 yield it.next(timeout=STALL_TIMEOUT_S)
