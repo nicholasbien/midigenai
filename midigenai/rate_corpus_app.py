@@ -529,7 +529,8 @@ def build_app(args):
     weights = parse_source_weights(args.source_weights, sorted(pools))
     print(f"[rate] source weights: {weights}")
     factory = ExcerptFactory(pools, weights, excerpts_dir, args.seed,
-                             queue_size=args.queue_size, as_model=args.as_model)
+                             queue_size=args.queue_size,
+                             as_model=getattr(args, "as_model", False))
 
     app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
     pending: dict[str, dict] = {}           # item_id -> full item (server-side only)
