@@ -1,3 +1,6 @@
+> **Historical.** The jam.py described here was replaced by fluidclaude's `listen` (2026-09); the
+> findings still apply to anything that drives Live over the remote-script socket.
+
 # Live jam: engineering notes (session of 2026-09-11)
 
 How the bar-based call-and-response jam (`midigenai/jam.py`) was brought
