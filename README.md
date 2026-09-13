@@ -68,7 +68,7 @@ Select with `load_from_hub(version=...)` or `MIDIGENAI_VERSION`.
 ## Performance
 
 Inference is fast enough that playback, not generation, is the bottleneck
-(v2-100m on an M3 Max, fp16):
+(113M model on an M3 Max, fp16; measured on v2-100m, and v3 is the same architecture):
 
 | | decode | TTFT @ 2048-token prompt |
 |---|---|---|
