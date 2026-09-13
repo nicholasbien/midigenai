@@ -54,6 +54,17 @@
     stop set. Accompaniment mode on E: exactly-N-bars 58%, pitch-class
     overlap with the condition 0.23 vs 0.46 for the real parts. D (header)
     vs B (no header), same corpus: val loss 0.800 vs 0.820 at step 4500.
+  - **Correction (arm E', no segment EOS)**: the early-stop rate did not
+    move (42% / 60% closed-bar). Counting which stop token ended each
+    generation: true EOS only 6/60 (below baseline); the rest were SEP (10-15),
+    MASK, BOS. So it is task ambiguity, not EOS: a continuation prompt closed
+    to a bar line looks like an accompaniment condition. Fix: `Task_accomp` /
+    `Task_infill` header tokens open segment documents (never dropped), and
+    the generator bans SEP/MASK/BOS from sampling in continuation mode
+    (`ban_ids`, both backends). Vocab 590 (v4) / 910 (v4-24). Segment
+    targets stay EOS-free (harmless; BOS is a fine terminator). Arm E'' on a
+    rebuilt corpus validates; arm C (24/beat, pre-task-token corpus) is
+    still a fair grid comparison against E'.
   - **Arm C is 24/beat, not 12**: measured off-grid share and error per
     source (Lakh/LAMD ~3 ms median error at 1/8 beat; Aria/MAESTRO/POP909
     15-23 ms, i.e. nearly every onset off-grid). At 1/24 beat the performed
