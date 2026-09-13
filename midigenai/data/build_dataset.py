@@ -54,13 +54,35 @@ def _worker_init(track_views: int = TRACK_VIEWS, scheme: str = "midilike",
         _V4 = DocBuilder(_TOKENIZER, track_views=track_views, **(v4_opts or {}))
 
 
+FILE_TIMEOUT_S = 180     # one pathological file must not stall a worker
+STALL_TIMEOUT_S = 900    # no result from any worker for this long = pool is dead
+
+
+class _FileTimeout(Exception):
+    pass
+
+
+def _alarm(signum, frame):
+    raise _FileTimeout()
+
+
 def _worker_encode_v4(path: str) -> tuple[str, dict | str]:
     """v4: documents already carry BOS/header/EOS (see v4_docs.py). Returns
-    a skip-reason string instead of docs when the file is unusable."""
+    a skip-reason string instead of docs when the file is unusable or takes
+    longer than FILE_TIMEOUT_S (a 2026-09-13 full build hung for hours on
+    one LAMD file after a worker died: Pool.imap never returns the lost
+    task, so the main loop also has a stall timeout)."""
+    import signal
+    signal.signal(signal.SIGALRM, _alarm)
+    signal.alarm(FILE_TIMEOUT_S)
     try:
         return path, _V4.build(path)
+    except _FileTimeout:
+        return path, "timeout"
     except Exception:
         return path, "error"
+    finally:
+        signal.alarm(0)
 
 
 def _worker_encode(path: str) -> tuple[str, list[list[int]] | None]:
@@ -226,13 +248,33 @@ def build(
     # v4: token share per document kind, to tune the 60/25/15 target mix
     kind_tokens = {"continuation": 0, "accompaniment": 0, "infill": 0}
     kind_docs = {"continuation": 0, "accompaniment": 0, "infill": 0}
-    skip_reasons: dict[str, int] = {"timesig": 0, "empty": 0, "error": 0}
+    skip_reasons: dict[str, int] = {"timesig": 0, "empty": 0, "error": 0, "timeout": 0}
     is_v4_scheme = scheme.startswith("v4")
     encode = _worker_encode_v4 if is_v4_scheme else _worker_encode
+    stalled = False
+
+    def _results(pool):
+        """imap_unordered with a stall guard: if no worker returns anything
+        for STALL_TIMEOUT_S the pool has lost a task (dead worker); stop
+        cleanly so the shards written so far are flushed and reported."""
+        import multiprocessing as mp
+        nonlocal stalled
+        it = pool.imap_unordered(encode, paths, chunksize=4)
+        while True:
+            try:
+                yield it.next(timeout=STALL_TIMEOUT_S)
+            except StopIteration:
+                return
+            except mp.TimeoutError:
+                stalled = True
+                print(f"\n[tokenize] STALLED: no result for {STALL_TIMEOUT_S}s "
+                      f"(a worker died?). Stopping this source early.", flush=True)
+                return
+
     with Pool(n_workers, initializer=_worker_init,
               initargs=(track_views, scheme, v4_opts)) as pool:
         for path, docs in tqdm(
-            pool.imap_unordered(encode, paths, chunksize=16),
+            _results(pool),
             total=len(paths), desc="tokenizing",
         ):
             if docs is None or isinstance(docs, str) or (not is_v4_scheme and len(docs[0]) < 8):
@@ -296,6 +338,7 @@ def build(
         "n_files_kept": n_files,
         "n_files_failed": n_failed,
         "skip_reasons": skip_reasons,
+        "stalled": stalled,
         "n_train_tokens": n_train_tokens,
         "n_val_tokens": n_val_tokens,
         "fragment_under_seconds": fragment_under_seconds,
@@ -317,6 +360,9 @@ def build(
     with (out_dir / "manifest.json").open("w") as f:
         json.dump(summary, f, indent=2)
     print(json.dumps(summary, indent=2))
+    if stalled:
+        print("[tokenize] STALLED build: shards flushed but the source is incomplete",
+              flush=True)
     return summary
 
 
