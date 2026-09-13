@@ -90,6 +90,9 @@ def test_docbuilder_shapes(tok, sp):
             assert (doc[-1] == sp.eos) == (kind == "continuation")
             header, rest = split_header(sp, doc[1:] if kind != "continuation" else doc[1:-1])
             assert header and not any(t in sp.header_ids for t in rest)
+            # task token opens segment docs, never a continuation
+            expect = {"accompaniment": sp.task_accomp, "infill": sp.task_infill}.get(kind)
+            assert (doc[1] == expect) if expect else (doc[1] not in (sp.task_accomp, sp.task_infill))
     for doc in docs["accompaniment"]:
         _, rest = split_header(sp, doc[1:])
         i = rest.index(sp.sep)
@@ -131,9 +134,9 @@ def test_unsupported_time_signature_is_skipped(tok):
 def test_prompts_end_where_generation_starts(sp):
     h, cond = [7, 8], [50, 51, 52]
     p = accompaniment_prompt(sp, h, cond)
-    assert p[0] == sp.bos and p[-1] == sp.sep and p[1:3] == h
+    assert p[0] == sp.bos and p[1] == sp.task_accomp and p[-1] == sp.sep and p[2:4] == h
     q = infill_prompt(sp, h, [50], [51])
-    assert q[-1] == sp.sep and q[q.index(sp.mask) + 1] == 51
+    assert q[1] == sp.task_infill and q[-1] == sp.sep and q[q.index(sp.mask) + 1] == 51
 
 
 def test_augmenter_shifts_pitch_only(tok, sp):
@@ -192,3 +195,7 @@ def test_drop_header_families(sp, tok):
     assert drop_header_families(sp, header, rng, 0.0, 1.0) == []
     kept = drop_header_families(sp, header, rng, 1.0, 0.0)
     assert kept == []
+    # the task token survives every dropout setting
+    task_header = [sp.task_accomp, *header]
+    assert drop_header_families(sp, task_header, rng, 1.0, 0.0) == [sp.task_accomp]
+    assert drop_header_families(sp, task_header, rng, 0.0, 1.0) == [sp.task_accomp]

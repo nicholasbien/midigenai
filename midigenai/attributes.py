@@ -45,13 +45,20 @@ GENRES = ["rock", "pop", "jazz", "classical", "electronic", "hiphop", "rnb",
 # (quality_predictor.py); emitted only when a score file is supplied
 QUALITY_BUCKETS = 4
 
-HEADER_PREFIXES = ("Inst_", "Density_", "Poly_", "Range_", "Source_", "Genre_",
-                   "Quality_")
+# task tokens open accompaniment / infill documents (right after BOS) so a
+# plain continuation prompt can never be mistaken for a condition: pilot E'
+# (2026-09-13) emitted SEP/MASK/BOS in 40% of continuations without them
+TASKS = ["accomp", "infill"]
+
+HEADER_PREFIXES = ("Task_", "Inst_", "Density_", "Poly_", "Range_", "Source_",
+                   "Genre_", "Quality_")
+NEVER_DROP = ("Task_",)      # header dropout must leave the task token alone
 
 
 def header_vocab() -> list[str]:
     """All header token names, in a fixed order (vocab ids follow it)."""
-    names = [f"Inst_{f}" for f in INSTRUMENT_FAMILIES] + [f"Inst_{DRUMS}"]
+    names = [f"Task_{t}" for t in TASKS]
+    names += [f"Inst_{f}" for f in INSTRUMENT_FAMILIES] + [f"Inst_{DRUMS}"]
     names += [f"Density_{i}" for i in range(len(DENSITY_EDGES) + 1)]
     names += [f"Poly_{i}" for i in range(len(POLY_EDGES) + 1)]
     names += [f"Range_{i}" for i in range(len(RANGE_EDGES) + 1)]

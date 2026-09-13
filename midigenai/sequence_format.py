@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from .attributes import HEADER_PREFIXES, is_header_token
+from .attributes import HEADER_PREFIXES, NEVER_DROP, is_header_token
 from .tokenizer import special_id
 
 
@@ -30,6 +30,8 @@ class Specials:
     sep: int
     mask: int | None
     bar: int | None
+    task_accomp: int | None
+    task_infill: int | None
     header_ids: frozenset[int]          # every Inst_/Density_/... id
     header_family: dict[int, str]       # id -> prefix, for per-family dropout
 
@@ -43,6 +45,8 @@ class Specials:
             bos=special_id(tok, "BOS"), eos=special_id(tok, "EOS"),
             sep=special_id(tok, "SEP"), mask=special_id(tok, "MASK"),
             bar=tok.vocab.get("Bar_None"),
+            task_accomp=special_id(tok, "Task_accomp"),
+            task_infill=special_id(tok, "Task_infill"),
             header_ids=frozenset(fam), header_family=fam,
         )
 
@@ -62,15 +66,19 @@ def continuation_doc(sp: Specials, header: list[int], body: list[int]) -> list[i
     return [sp.bos, *header, *body, sp.eos]
 
 
+def _task(tid: int | None) -> list[int]:
+    return [tid] if tid is not None else []
+
+
 def accompaniment_doc(sp: Specials, header: list[int], cond: list[int],
                       target: list[int]) -> list[int]:
-    return [sp.bos, *header, *cond, sp.sep, *target, sp.eos]
+    return [sp.bos, *_task(sp.task_accomp), *header, *cond, sp.sep, *target, sp.eos]
 
 
 def infill_doc(sp: Specials, header: list[int], prefix: list[int],
                suffix: list[int], middle: list[int]) -> list[int]:
     assert sp.mask is not None, "infill needs a MASK token (v4 tokenizer)"
-    return [sp.bos, *header, *prefix, sp.mask, *suffix, sp.sep, *middle, sp.eos]
+    return [sp.bos, *_task(sp.task_infill), *header, *prefix, sp.mask, *suffix, sp.sep, *middle, sp.eos]
 
 
 def continuation_prompt(sp: Specials, header: list[int], body: list[int]) -> list[int]:
@@ -78,12 +86,12 @@ def continuation_prompt(sp: Specials, header: list[int], body: list[int]) -> lis
 
 
 def accompaniment_prompt(sp: Specials, header: list[int], cond: list[int]) -> list[int]:
-    return [sp.bos, *header, *cond, sp.sep]
+    return [sp.bos, *_task(sp.task_accomp), *header, *cond, sp.sep]
 
 
 def infill_prompt(sp: Specials, header: list[int], prefix: list[int],
                   suffix: list[int]) -> list[int]:
-    return [sp.bos, *header, *prefix, sp.mask, *suffix, sp.sep]
+    return [sp.bos, *_task(sp.task_infill), *header, *prefix, sp.mask, *suffix, sp.sep]
 
 
 # ---------- inspection ---------- #
@@ -110,8 +118,9 @@ def drop_header_families(sp: Specials, header: list[int], rng,
     subset of attributes is a valid prompt at inference."""
     if not header:
         return header
+    keep_always = [t for t in header if sp.header_family[t] in NEVER_DROP]
     if rng.random() < p_all:
-        return []
+        return keep_always
     fams = {sp.header_family[t] for t in header}
-    keep = {f for f in fams if rng.random() >= p_family}
+    keep = {f for f in fams if f in NEVER_DROP or rng.random() >= p_family}
     return [t for t in header if sp.header_family[t] in keep]

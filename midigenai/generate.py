@@ -323,6 +323,7 @@ class Generator:
         min_new_tokens: int = 0,
         seed: int | None = None,
         stop_after_bars: int | None = None,
+        ban_ids: list[int] | None = None,
     ) -> Iterator[int]:
         """
         `min_new_tokens`: hold EOS back for the first N tokens. Any prompt whose
@@ -339,12 +340,18 @@ class Generator:
         of the answer; otherwise the first generated Bar token does. The Bar
         token that would open bar N+1 is consumed, not yielded. SEP/MASK
         tokens end generation like EOS (they are never valid output).
+
+        `ban_ids` (v4): token ids masked out of sampling. Default for a v4
+        checkpoint is SEP / MASK / BOS, which are never valid continuation
+        output; `accompany` / `infill` pass a narrower set.
         """
+        if ban_ids is None and self.v4:
+            ban_ids = sorted(t for t in (self.sp.sep, self.sp.mask, self.bos_id) if t is not None)
         prompt_ids, max_new_tokens = self.fit_to_context(prompt_ids, max_new_tokens)
         if self._needs_bos(prompt_ids):
             prompt_ids = [self.bos_id, *prompt_ids]
         raw = self._generate_raw(prompt_ids, max_new_tokens, temperature, top_k,
-                                 min_new_tokens, seed)
+                                 min_new_tokens, seed, ban_ids)
         if not self.v4:
             yield from raw
             return
@@ -362,7 +369,7 @@ class Generator:
             yield t
 
     def _generate_raw(self, prompt_ids, max_new_tokens, temperature, top_k,
-                      min_new_tokens, seed) -> Iterator[int]:
+                      min_new_tokens, seed, ban_ids=None) -> Iterator[int]:
         if self.backend == "mlx":
             import mlx.core as mx
             if seed is not None:
@@ -374,6 +381,7 @@ class Generator:
                 top_k=top_k,
                 eos_id=self.eos_id,
                 min_new_tokens=min_new_tokens,
+                ban_ids=ban_ids or None,
             )
             return
         if seed is not None:
@@ -386,6 +394,7 @@ class Generator:
             top_k=top_k,
             eos_id=self.eos_id,
             min_new_tokens=min_new_tokens,
+            ban_ids=ban_ids or None,
         )
 
     # ---------- v4 tasks ---------- #
@@ -414,6 +423,8 @@ class Generator:
         from .sequence_format import accompaniment_prompt
         prompt = accompaniment_prompt(self.sp, list(header), self.pad_to_bars(cond_ids, bars))
         gen_kwargs.setdefault("max_new_tokens", 64 * bars + 64)
+        # a target may end with EOS or the next document's BOS; SEP/MASK never
+        gen_kwargs.setdefault("ban_ids", [self.sp.sep, self.sp.mask])
         yield from self.generate_ids(prompt, stop_after_bars=bars, **gen_kwargs)
 
     def infill(self, prefix_ids: list[int], suffix_ids: list[int], bars: int,
@@ -425,6 +436,7 @@ class Generator:
         from .sequence_format import infill_prompt
         prompt = infill_prompt(self.sp, list(header), list(prefix_ids), list(suffix_ids))
         gen_kwargs.setdefault("max_new_tokens", 64 * bars + 64)
+        gen_kwargs.setdefault("ban_ids", [self.sp.sep, self.sp.mask])
         yield from self.generate_ids(prompt, stop_after_bars=bars, **gen_kwargs)
 
     def split_bars(self, ids: list[int], at_bar: int, n_bars: int) -> tuple[list[int], list[int]]:

@@ -10,6 +10,7 @@ import torch
 from symusic import Note, Score, TimeSignature, Track
 
 from midigenai.generate import Generator
+from midigenai.sequence_format import accompaniment_prompt
 from midigenai.model import ModelConfig, MusicTransformer
 from midigenai.tokenizer import build_tokenizer, save_tokenizer
 
@@ -77,6 +78,19 @@ def test_stop_after_bars_filters_stream(gen, monkeypatch):
     assert out == fake[:4]
     monkeypatch.setattr(gen, "_generate_raw", lambda *a, **k: iter([pos, pitch, gen.sp.sep, pitch]))
     assert list(gen.generate_ids([gen.bos_id, pos], max_new_tokens=50)) == [pos, pitch]
+
+
+def test_ban_ids_never_sampled(gen):
+    """Random model, no top-k: without a ban SEP/MASK/BOS appear; with the
+    default v4 ban they never do."""
+    ids = gen.tokenizer(_phrase(2)).ids
+    banned = {gen.sp.sep, gen.sp.mask, gen.bos_id}
+    out = list(gen._generate_raw([gen.bos_id, *ids], 300, 1.0, None, 0, 0, None))
+    assert any(t in banned for t in out)             # sanity: the random model does emit them
+    out = list(gen.generate_ids(ids, max_new_tokens=300, top_k=None, seed=0))
+    assert not any(t in banned for t in out)
+    p = accompaniment_prompt(gen.sp, [], ids)
+    assert p[1] == gen.sp.task_accomp and p[-1] == gen.sp.sep
 
 
 def test_split_bars(gen):
