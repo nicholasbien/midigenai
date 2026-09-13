@@ -56,7 +56,7 @@ def test_pad_to_bars_and_bar_line(gen):
     assert gen.count_bars(ids) == 3
     assert not gen.ends_on_bar_line(ids)
     closed = gen.close_bar(ids)
-    assert gen.count_bars(closed) == 3 and gen.ends_on_bar_line(closed)
+    assert gen.count_bars(closed) == 4 and gen.ends_on_bar_line(closed)   # the Bar that opens bar 4
     assert gen.close_bar(closed) == closed
     padded = gen.pad_to_bars(ids, 4)
     assert gen.count_bars(padded) == 4 and gen.ends_on_bar_line(padded)
