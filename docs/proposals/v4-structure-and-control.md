@@ -34,7 +34,7 @@
     also splits train shards per bucket so `--mixture` can weight them.
   - **Arm B = arm D's corpus trained with `--header-drop-all 1.0`** (no
     separate no-header corpus needed).
-  - Vocab: 588 tokens (v4), ~790 (v4-24).
+  - Vocab: 588 tokens (v4), 908 (v4-24: Position and Duration both grow).
   - **Arm C is 24/beat, not 12**: measured off-grid share and error per
     source (Lakh/LAMD ~3 ms median error at 1/8 beat; Aria/MAESTRO/POP909
     15-23 ms, i.e. nearly every onset off-grid). At 1/24 beat the performed
