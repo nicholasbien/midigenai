@@ -49,7 +49,7 @@ def _worker_init(track_views: int = TRACK_VIEWS, scheme: str = "midilike",
     global _TOKENIZER, _TRACK_VIEWS, _V4
     _TOKENIZER = build_tokenizer(scheme=scheme)
     _TRACK_VIEWS = track_views
-    if scheme == "v4":
+    if scheme.startswith("v4"):
         from midigenai.data.v4_docs import DocBuilder
         _V4 = DocBuilder(_TOKENIZER, track_views=track_views, **(v4_opts or {}))
 
@@ -157,6 +157,8 @@ def build(
     track_views: int = TRACK_VIEWS,
     tag: str = "",
     fragment_under_seconds: float | None = None,
+    scheme: str = "midilike",
+    v4_opts: dict | None = None,
 ) -> dict:
     """
     `fragment_under_seconds`: source files shorter than this get BOS but **no
@@ -170,7 +172,7 @@ def build(
     corpora rebuild byte-identically.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
-    tokenizer = build_tokenizer()
+    tokenizer = build_tokenizer(scheme=scheme)
     save_tokenizer(tokenizer, out_dir / "tokenizer.json")
 
     bos_id = tokenizer["BOS_None"] if "BOS_None" in tokenizer.vocab else tokenizer.vocab.get("BOS", 1)
@@ -185,6 +187,22 @@ def build(
     val_prefix = f"val_{tag}" if tag else "val"
     train_writer = ShardWriter.create(shards_dir, train_prefix, shard_tokens)
     val_writer = ShardWriter.create(shards_dir, val_prefix, shard_tokens)
+    # quality buckets (v4, --quality): train shards are split per bucket,
+    # train_<tag>_q<k>_NNNNN.npy, so --mixture "q0:0.25,q3:1.5" can weight
+    # them; val stays in one shard per source
+    quality = (v4_opts or {}).get("quality") or {}
+    bucket_writers: dict[int, ShardWriter] = {}
+
+    def writer_for(split: str, path: str) -> ShardWriter:
+        if split == "val":
+            return val_writer
+        q = quality.get(path)
+        if q is None:
+            return train_writer
+        if q not in bucket_writers:
+            bucket_writers[q] = ShardWriter.create(
+                shards_dir, f"{train_prefix}_q{q}", shard_tokens)
+        return bucket_writers[q]
 
     n_files = 0
     n_failed = 0
@@ -205,19 +223,26 @@ def build(
     n_view_docs = 0
     n_view_tokens = 0
     n_fragment_docs = 0
+    # v4: token share per document kind, to tune the 60/25/15 target mix
+    kind_tokens = {"continuation": 0, "accompaniment": 0, "infill": 0}
+    kind_docs = {"continuation": 0, "accompaniment": 0, "infill": 0}
+    skip_reasons: dict[str, int] = {"timesig": 0, "empty": 0, "error": 0}
+    is_v4_scheme = scheme.startswith("v4")
+    encode = _worker_encode_v4 if is_v4_scheme else _worker_encode
     with Pool(n_workers, initializer=_worker_init,
-              initargs=(track_views,)) as pool:
+              initargs=(track_views, scheme, v4_opts)) as pool:
         for path, docs in tqdm(
-            pool.imap_unordered(_worker_encode, paths, chunksize=16),
+            pool.imap_unordered(encode, paths, chunksize=16),
             total=len(paths), desc="tokenizing",
         ):
-            if docs is None or len(docs[0]) < 8:
+            if docs is None or isinstance(docs, str) or (not is_v4_scheme and len(docs[0]) < 8):
                 n_failed += 1
+                skip_reasons[docs if isinstance(docs, str) else "error"] += 1
                 continue
             # solo views share the parent's path-hash split, so a song can
             # never straddle train and val through its views
             split = split_by_path(path, val_fraction)
-            writer = val_writer if split == "val" else train_writer
+            writer = writer_for(split, path)
             # solo views inherit the parent's fragment status: a 20 s loop's
             # bass line is no more "a piece that ends" than the loop itself
             dur = duration_by_path.get(path)
@@ -227,6 +252,26 @@ def build(
                 and dur < fragment_under_seconds
             )
             tail = [] if is_fragment else [eos_id]
+            if is_v4_scheme:
+                # v4 docs already carry BOS/header/EOS. The fragment rule
+                # applies to continuation docs only: an accompaniment or
+                # infill target's EOS means "segment complete", not "piece
+                # ends", so it always stays.
+                for kind, kdocs in docs.items():
+                    for ids in kdocs:
+                        if is_fragment and kind == "continuation" and ids[-1] == eos_id:
+                            ids = ids[:-1]
+                            n_fragment_docs += 1
+                        arr = np.asarray(ids, dtype=np.uint16)
+                        writer.append(arr)
+                        if split == "val":
+                            n_val_tokens += len(arr)
+                        else:
+                            n_train_tokens += len(arr)
+                        kind_tokens[kind] += len(arr)
+                        kind_docs[kind] += 1
+                n_files += 1
+                continue
             for d, ids in enumerate(docs):
                 arr = np.asarray([bos_id, *ids, *tail], dtype=np.uint16)
                 if is_fragment:
@@ -241,7 +286,7 @@ def build(
                     n_view_tokens += len(arr)
             n_files += 1
 
-    n_train_shards = train_writer.close()
+    n_train_shards = train_writer.close() + sum(w.close() for w in bucket_writers.values())
     n_val_shards = val_writer.close()
 
     summary = {
@@ -262,7 +307,8 @@ def build(
         "n_view_docs": n_view_docs,
         "n_view_tokens": n_view_tokens,
         "scheme": scheme,
-        "v4_opts": v4_opts or {},
+        "v4_opts": {k: v for k, v in (v4_opts or {}).items() if k not in ("genres", "quality")},
+        "n_quality_scored": len(quality),
         "kind_docs": kind_docs,
         "kind_tokens": kind_tokens,
         "kind_share": {k: round(v / max(1, sum(kind_tokens.values())), 3)
@@ -294,7 +340,7 @@ if __name__ == "__main__":
                              "fragments, not endings); see build_dataset docstring")
     parser.add_argument("--tag", default="",
                         help="source tag baked into shard names for mixture weighting")
-    parser.add_argument("--scheme", choices=["midilike", "v4"], default="v4",
+    parser.add_argument("--scheme", choices=["midilike", "v4", "v4-12"], default="v4",
                         help="tokenizer scheme: v4 (REMI + header + accompaniment/"
                              "infill docs) or midilike (v2/v3 legacy)")
     parser.add_argument("--accomp-windows", type=int, default=6,
@@ -309,12 +355,22 @@ if __name__ == "__main__":
                         help="v4: longest infilled span")
     parser.add_argument("--genres", type=Path, default=None,
                         help="v4: optional JSON {path: [genre,...]} for Genre_ tokens")
+    parser.add_argument("--quality", type=Path, default=None,
+                        help="v4: quality_predictor score JSONL (path, q_bucket): adds "
+                             "Quality_ header tokens and splits train shards per bucket")
     args = parser.parse_args()
     v4_opts = dict(accomp_windows=args.accomp_windows, infill_windows=args.infill_windows,
                    window_bars=args.window_bars, context_bars=args.context_bars,
                    max_span_bars=args.max_span_bars)
     if args.genres:
         v4_opts["genres"] = json.loads(args.genres.read_text())
+    if args.quality:
+        v4_opts["quality"] = {}
+        with args.quality.open() as f:
+            for line in f:
+                if line.strip():
+                    row = json.loads(line)
+                    v4_opts["quality"][row["path"]] = int(row["q_bucket"])
     build(
         manifest_path=args.manifest,
         out_dir=args.out,
@@ -325,4 +381,6 @@ if __name__ == "__main__":
         track_views=args.track_views,
         tag=args.tag,
         fragment_under_seconds=args.fragment_under_seconds,
+        scheme=args.scheme,
+        v4_opts=v4_opts,
     )

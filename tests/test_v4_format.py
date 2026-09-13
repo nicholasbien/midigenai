@@ -121,7 +121,8 @@ def test_single_track_file_has_no_accompaniment(tok):
 
 
 def test_unsupported_time_signature_is_skipped(tok):
-    assert DocBuilder(tok).build(_write(_song(8, ts=(5, 4)))) == SKIP_TIMESIG
+    assert DocBuilder(tok).build(_write(_song(8, ts=(13, 16)))) == SKIP_TIMESIG
+    assert isinstance(DocBuilder(tok).build(_write(_song(8, ts=(5, 4)))), dict)
 
 
 def test_prompts_end_where_generation_starts(sp):

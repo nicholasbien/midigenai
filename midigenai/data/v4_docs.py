@@ -23,14 +23,13 @@ from __future__ import annotations
 
 import random
 
-from symusic import Score
+from symusic import Score, TimeSignature
 
 from midigenai.attributes import header_for_score, source_from_path
 from midigenai.sequence_format import (
     Specials, accompaniment_doc, continuation_doc, infill_doc,
 )
 from midigenai.tokenizer import normalize_drums, supported_time_signatures
-from midigenai.attributes import ticks_per_bar
 
 MIN_VIEW_NOTES = 64       # a solo view / condition track needs this many notes
 MIN_SEGMENT_NOTES = 4     # each side of SEP needs some content
@@ -57,18 +56,48 @@ def _subscore(sc: Score, track_idxs) -> Score:
 
 
 def _window(sc: Score, start_tick: int, end_tick: int) -> Score:
-    """Bar-aligned clip, re-based to tick 0. Notes crossing the end are cut."""
-    w = sc.clip(start_tick, end_tick, clip_end=True)
+    """Bar-aligned clip, re-based to tick 0. Notes crossing the end are cut.
+
+    MidiTok quantizes onsets to a 1/8-beat grid, so an onset inside the last
+    half-position of the window would round up onto the next bar line and
+    give the segment one Bar token too many; the clip end is pulled in by
+    half a position to keep the bar count exact."""
+    guard = max(1, sc.tpq // 16)
+    w = sc.clip(start_tick, end_tick - guard, clip_end=True)
     if start_tick:
         w = w.shift_time(-start_tick)
-    if not len(w.time_signatures):
-        for ts in sc.time_signatures:
-            w.time_signatures.append(ts)
+    # the meter in force at the window start must be restated at tick 0:
+    # clip keeps only events inside the window, and MidiTok would bar the
+    # opening under 4/4 until the next change
+    active = None
+    for ts in sc.time_signatures:
+        if ts.time <= start_tick and (active is None or ts.time >= active.time):
+            active = ts
+    inside = [ts for ts in w.time_signatures if ts.time > 0]
+    w.time_signatures.clear()
+    if active is not None:
+        w.time_signatures.append(TimeSignature(0, active.numerator, active.denominator))
+    for ts in inside:
+        w.time_signatures.append(ts)
     return w
 
 
 def _n_notes(sc: Score) -> int:
     return sum(len(t.notes) for t in sc.tracks)
+
+
+def bar_edges(sc: Score) -> list[int]:
+    """Tick of every bar line from 0 through the end of the last bar, from the
+    file's own time-signature map (bars change length mid-song in ~5% of
+    multi-track files, so a fixed ticks-per-bar would drift)."""
+    db = [int(x) for x in sc.get_downbeats()]
+    if not db:
+        db = [0]
+    last = db[-1] - db[-2] if len(db) > 1 else sc.tpq * 4
+    end = sc.end()
+    while db[-1] <= end:
+        db.append(db[-1] + last)
+    return db
 
 
 def _tracks_in_window(sc: Score, start: int, end: int, min_notes: int) -> list[int]:
@@ -87,7 +116,8 @@ class DocBuilder:
     def __init__(self, tokenizer, track_views: int = 2, accomp_windows: int = 6,
                  infill_windows: int = 2, window_bars: int = 16,
                  context_bars: int = 16, max_span_bars: int = 4,
-                 genres: dict[str, list[str]] | None = None):
+                 genres: dict[str, list[str]] | None = None,
+                 quality: dict[str, int] | None = None):
         self.tok = tokenizer
         self.sp = Specials.from_tokenizer(tokenizer)
         self.bar_id = tokenizer.vocab["Bar_None"]
@@ -99,15 +129,21 @@ class DocBuilder:
         self.context_bars = context_bars
         self.max_span_bars = max_span_bars
         self.genres = genres or {}
+        self.quality = quality or {}      # path -> q_bucket (quality_predictor)
 
     # -- helpers -- #
     def _ids(self, sc: Score) -> list[int]:
         return self.tok(sc).ids
 
-    def _segment(self, sc: Score, n_bars: int) -> list[int]:
-        """Tokenize a re-based segment and pad to exactly `n_bars` Bar tokens."""
+    def _segment(self, sc: Score, n_bars: int) -> list[int] | None:
+        """Tokenize a re-based segment and pad to exactly `n_bars` Bar tokens.
+        None when the tokenizer barred it differently than the file's
+        downbeats say (meter change on an off-bar tick): the window is
+        dropped rather than teach a wrong bar count."""
         ids = self._ids(sc)
         have = sum(1 for t in ids if t == self.bar_id)
+        if have > n_bars:
+            return None
         if have < n_bars:
             ts = next((t for t in ids if t in self.timesig_ids), None)
             if ts is None:            # empty segment: derive from the score
@@ -118,7 +154,8 @@ class DocBuilder:
         return ids
 
     def _header(self, sc: Score, source: str | None, path: str) -> list[int]:
-        names = header_for_score(sc, source=source, genres=self.genres.get(path))
+        names = header_for_score(sc, source=source, genres=self.genres.get(path),
+                                 quality=self.quality.get(path))
         return self.sp.header_ids_for(self.tok, names)
 
     # -- entry point -- #
@@ -157,14 +194,14 @@ class DocBuilder:
                     out["continuation"].append(
                         continuation_doc(sp, self._header(solo, source, path), ids))
 
-        tpb = ticks_per_bar(score)
-        n_bars = int(score.end() // tpb) + 1
+        edges = bar_edges(score)
+        n_bars = len(edges) - 1
 
         # 2. accompaniment windows (multi-track files only)
         if len(candidates) >= 2 and n_bars >= self.window_bars:
             for _ in range(self.accomp_windows):
                 b0 = rng.randrange(0, n_bars - self.window_bars + 1)
-                s, e = b0 * tpb, (b0 + self.window_bars) * tpb
+                s, e = edges[b0], edges[b0 + self.window_bars]
                 live = _tracks_in_window(score, s, e, MIN_SEGMENT_NOTES)
                 if len(live) < 2:
                     continue
@@ -178,10 +215,12 @@ class DocBuilder:
                     continue
                 # header describes the whole window: the instruments the
                 # caller wants in the result, condition included
+                segs = (self._segment(cond, self.window_bars),
+                        self._segment(tgt, self.window_bars))
+                if None in segs:
+                    continue
                 out["accompaniment"].append(accompaniment_doc(
-                    sp, self._header(win, source, path),
-                    self._segment(cond, self.window_bars),
-                    self._segment(tgt, self.window_bars)))
+                    sp, self._header(win, source, path), *segs))
 
         # 3. span infill windows
         if n_bars >= 2 * self.max_span_bars + 2:
@@ -190,16 +229,20 @@ class DocBuilder:
                 b0 = rng.randrange(0, n_bars - ctx + 1)
                 span = rng.randint(1, self.max_span_bars)
                 i = rng.randint(1, ctx - span - 1)          # keep >=1 bar each side
-                s, e = b0 * tpb, (b0 + ctx) * tpb
+                s, e = edges[b0], edges[b0 + ctx]
                 win = _window(score, s, e)
-                prefix = _window(win, 0, i * tpb)
-                middle = _window(win, i * tpb, (i + span) * tpb)
-                suffix = _window(win, (i + span) * tpb, ctx * tpb)
+                # bar lines inside the window, re-based like the window
+                we = [x - s for x in edges[b0:b0 + ctx + 1]]
+                prefix = _window(win, 0, we[i])
+                middle = _window(win, we[i], we[i + span])
+                suffix = _window(win, we[i + span], we[ctx])
                 if _n_notes(middle) < MIN_SEGMENT_NOTES or _n_notes(prefix) + _n_notes(suffix) < MIN_SEGMENT_NOTES:
                     continue
+                segs = (self._segment(prefix, i),
+                        self._segment(suffix, ctx - i - span),
+                        self._segment(middle, span))
+                if None in segs:
+                    continue
                 out["infill"].append(infill_doc(
-                    sp, self._header(win, source, path),
-                    self._segment(prefix, i),
-                    self._segment(suffix, ctx - i - span),
-                    self._segment(middle, span)))
+                    sp, self._header(win, source, path), *segs))
         return out

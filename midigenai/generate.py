@@ -18,7 +18,7 @@ from typing import Iterator
 import torch
 
 from .model import ModelConfig, MusicTransformer
-from .tokenizer import build_tokenizer, load_tokenizer
+from .tokenizer import build_tokenizer, is_v4, load_tokenizer
 
 
 def _auto_device() -> torch.device:
@@ -154,6 +154,22 @@ class Generator:
         self.bos_id = self._special_id("BOS_None", "BOS")
         self.eos_id = self._special_id("EOS_None", "EOS")
 
+        # v4 (REMI + header + SEP/MASK): bar counting and the accompaniment /
+        # infill prompt layouts live in sequence_format.py
+        self.v4 = is_v4(self.tokenizer)
+        self.sp = None
+        self.bar_id = None
+        self.timesig_ids: set[int] = set()
+        self.stop_ids: set[int] = {self.eos_id} if self.eos_id is not None else set()
+        if self.v4:
+            from .sequence_format import Specials
+            self.sp = Specials.from_tokenizer(self.tokenizer)
+            self.bar_id = self.sp.bar
+            self.timesig_ids = {v for k, v in self.tokenizer.vocab.items()
+                                if k.startswith("TimeSig_")}
+            # a SEP or MASK mid-generation is never valid output: treat as end
+            self.stop_ids |= {self.sp.sep, self.sp.mask}
+
     def _special_id(self, *candidates: str) -> int | None:
         for c in candidates:
             if c in self.tokenizer.vocab:
@@ -211,6 +227,81 @@ class Generator:
         finally:
             Path(tmp).unlink(missing_ok=True)
 
+    # ---------- v4 header / bar helpers ---------- #
+
+    def _require_v4(self, what: str) -> None:
+        if not self.v4:
+            raise RuntimeError(f"{what} needs a v4 (REMI + header) checkpoint")
+
+    def make_header(self, midi_path: str | Path | None = None, *,
+                    instruments: list[str] | None = None,
+                    density: int | None = None, poly: int | None = None,
+                    pitch_range: int | None = None,
+                    source: str | None = None,
+                    genres: list[str] | None = None) -> list[int]:
+        """Attribute-header token ids. With `midi_path` the header describes
+        that file (instruments, density, ...) and the keyword arguments
+        override individual families; without it only the given families are
+        set. `instruments` are family names from attributes.INSTRUMENT_FAMILIES
+        (+ "Drums"): list the instruments you want IN THE RESULT — for
+        accompaniment that means the condition's instrument plus the ones to
+        add. Returns [] on a non-v4 checkpoint so callers can always prepend it."""
+        if not self.v4:
+            return []
+        from .attributes import header_for_score
+        names: list[str] = []
+        if midi_path is not None:
+            from symusic import Score
+            names = header_for_score(Score(str(midi_path)), source=source, genres=genres)
+        else:
+            if source:
+                names.append(f"Source_{source}")
+            names += [f"Genre_{g}" for g in (genres or [])]
+
+        def override(prefix: str, new: list[str]):
+            nonlocal names
+            names = [n for n in names if not n.startswith(prefix)] + new
+        if instruments is not None:
+            override("Inst_", [f"Inst_{i}" for i in instruments])
+        if density is not None:
+            override("Density_", [f"Density_{density}"])
+        if poly is not None:
+            override("Poly_", [f"Poly_{poly}"])
+        if pitch_range is not None:
+            override("Range_", [f"Range_{pitch_range}"])
+        if source is not None and midi_path is not None:
+            override("Source_", [f"Source_{source}"])
+        # canonical family order, as the builder writes it
+        from .attributes import HEADER_PREFIXES
+        rank = {p: i for i, p in enumerate(HEADER_PREFIXES)}
+        names.sort(key=lambda n: rank[next(p for p in HEADER_PREFIXES if n.startswith(p))])
+        return self.sp.header_ids_for(self.tokenizer, names)
+
+    def count_bars(self, ids) -> int:
+        return sum(1 for t in ids if t == self.bar_id) if self.v4 else 0
+
+    def pad_to_bars(self, ids: list[int], n_bars: int) -> list[int]:
+        """Append empty `Bar TimeSig` pairs so `ids` spans exactly `n_bars`
+        (a phrase that ends mid-bar is padded to its bar line, so a
+        continuation starts on the downbeat; an accompaniment condition
+        gets the full window). Raises if `ids` already has more bars."""
+        self._require_v4("pad_to_bars")
+        have = self.count_bars(ids)
+        if have > n_bars:
+            raise ValueError(f"prompt spans {have} bars > {n_bars}")
+        ts = next((t for t in ids if t in self.timesig_ids),
+                  self.tokenizer.vocab["TimeSig_4/4"])
+        return list(ids) + [self.bar_id, ts] * (n_bars - have)
+
+    def ends_on_bar_line(self, ids) -> bool:
+        """True when the last musical token is a Bar (or Bar TimeSig) pair."""
+        if not self.v4 or not ids:
+            return False
+        tail = [t for t in ids if t not in self.sp.header_ids and t != self.bos_id]
+        if tail and tail[-1] in self.timesig_ids:
+            tail = tail[:-1]
+        return bool(tail) and tail[-1] == self.bar_id
+
     # ---------- generation ---------- #
 
     def generate_ids(
@@ -221,6 +312,7 @@ class Generator:
         top_k: int = 50,
         min_new_tokens: int = 0,
         seed: int | None = None,
+        stop_after_bars: int | None = None,
     ) -> Iterator[int]:
         """
         `min_new_tokens`: hold EOS back for the first N tokens. Any prompt whose
@@ -231,10 +323,36 @@ class Generator:
         guaranteed before the model may choose to end.
 
         `seed`: seeds the backend RNG (mlx / torch) for reproducible takes.
+
+        `stop_after_bars` (v4): stop once the model has produced N bars of
+        material. If the prompt ends on a bar line that bar line opens bar 1
+        of the answer; otherwise the first generated Bar token does. The Bar
+        token that would open bar N+1 is consumed, not yielded. SEP/MASK
+        tokens end generation like EOS (they are never valid output).
         """
         prompt_ids, max_new_tokens = self.fit_to_context(prompt_ids, max_new_tokens)
         if self._needs_bos(prompt_ids):
             prompt_ids = [self.bos_id, *prompt_ids]
+        raw = self._generate_raw(prompt_ids, max_new_tokens, temperature, top_k,
+                                 min_new_tokens, seed)
+        if not self.v4:
+            yield from raw
+            return
+        bars = 1 if (stop_after_bars and self.ends_on_bar_line(prompt_ids)) else 0
+        for t in raw:
+            if t == self.eos_id:
+                yield t
+                return
+            if t in self.stop_ids:
+                return
+            if stop_after_bars and t == self.bar_id:
+                bars += 1
+                if bars > stop_after_bars:
+                    return
+            yield t
+
+    def _generate_raw(self, prompt_ids, max_new_tokens, temperature, top_k,
+                      min_new_tokens, seed) -> Iterator[int]:
         if self.backend == "mlx":
             import mlx.core as mx
             if seed is not None:
@@ -260,11 +378,64 @@ class Generator:
             min_new_tokens=min_new_tokens,
         )
 
+    # ---------- v4 tasks ---------- #
+
+    def continue_ids(self, body_ids: list[int], header: list[int] = (),
+                     bars: int | None = None, **gen_kwargs) -> Iterator[int]:
+        """Continuation with an attribute header. `bars`: pad the prompt to
+        its bar line so the answer starts on a downbeat, and stop after
+        that many bars (v4 only; ignored otherwise)."""
+        prompt = list(body_ids)
+        if self.v4:
+            from .sequence_format import continuation_prompt
+            if bars:
+                prompt = self.pad_to_bars(prompt, self.count_bars(prompt))
+            prompt = continuation_prompt(self.sp, list(header), prompt)
+            gen_kwargs.setdefault("stop_after_bars", bars)
+        yield from self.generate_ids(prompt, **gen_kwargs)
+
+    def accompany(self, cond_ids: list[int], bars: int, header: list[int] = (),
+                  **gen_kwargs) -> Iterator[int]:
+        """Write the other parts for `cond_ids` over exactly `bars` bars.
+        Yields a self-contained token segment (decode it on its own; it
+        starts at bar 0 of the window). Put the instruments you want added
+        in `header` (see make_header)."""
+        self._require_v4("accompany")
+        from .sequence_format import accompaniment_prompt
+        prompt = accompaniment_prompt(self.sp, list(header), self.pad_to_bars(cond_ids, bars))
+        gen_kwargs.setdefault("max_new_tokens", 64 * bars + 64)
+        yield from self.generate_ids(prompt, stop_after_bars=bars, **gen_kwargs)
+
+    def infill(self, prefix_ids: list[int], suffix_ids: list[int], bars: int,
+               header: list[int] = (), **gen_kwargs) -> Iterator[int]:
+        """Write the `bars` bars that belong between `prefix_ids` and
+        `suffix_ids` (each a bar-aligned segment). Yields a self-contained
+        segment starting at bar 0 of the gap."""
+        self._require_v4("infill")
+        from .sequence_format import infill_prompt
+        prompt = infill_prompt(self.sp, list(header), list(prefix_ids), list(suffix_ids))
+        gen_kwargs.setdefault("max_new_tokens", 64 * bars + 64)
+        yield from self.generate_ids(prompt, stop_after_bars=bars, **gen_kwargs)
+
+    def split_bars(self, ids: list[int], at_bar: int, n_bars: int) -> tuple[list[int], list[int]]:
+        """Cut a v4 token segment into (prefix, suffix) around bars
+        [at_bar, at_bar+n_bars): the infill inputs for "redo bars i..j".
+        Header/BOS tokens are dropped; the suffix is re-based so its first
+        Bar token is bar 0 (Bar/Position are relative, so no retiming)."""
+        self._require_v4("split_bars")
+        body = [t for t in ids if t not in self.sp.header_ids and t != self.bos_id]
+        edges = [i for i, t in enumerate(body) if t == self.bar_id]
+        if at_bar + n_bars > len(edges):
+            raise ValueError(f"segment has {len(edges)} bars")
+        end = edges[at_bar + n_bars] if at_bar + n_bars < len(edges) else len(body)
+        return body[:edges[at_bar]], body[end:]
+
     def stream_notes(
         self,
         prompt_ids: list[int],
         chunk_tokens: int = 16,
         tempo_bpm: float = 120.0,
+        decode_new_only: bool = False,
         **gen_kwargs,
     ) -> Iterator[Note]:
         """
@@ -280,7 +451,10 @@ class Generator:
         if "max_new_tokens" in gen_kwargs:
             prompt_ids, gen_kwargs["max_new_tokens"] = self.fit_to_context(
                 prompt_ids, gen_kwargs["max_new_tokens"])
-        buffer: list[int] = list(prompt_ids)
+        # decode_new_only: the generated tokens are a self-contained segment
+        # (v4 accompaniment / infill targets start at their own bar 0), so
+        # decode them without the prompt
+        buffer: list[int] = [] if decode_new_only else list(prompt_ids)
         n_in_buffer_since_decode = 0
         for tid in self.generate_ids(prompt_ids, **gen_kwargs):
             buffer.append(tid)

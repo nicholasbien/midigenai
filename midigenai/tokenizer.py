@@ -36,8 +36,11 @@ from miditok import MIDILike, REMI, TokenizerConfig
 SPECIAL_TOKENS = ["PAD", "BOS", "EOS", "SEP"]
 V4_SPECIAL_TOKENS = ["PAD", "BOS", "EOS", "SEP", "MASK"]
 # bars the v4 scheme can express; anything else is dropped at build time
-# (MidiTok would silently re-bar a 5/4 file as 4/4)
-V4_TIME_SIGNATURES = {4: [2, 3, 4], 8: [6]}
+# (MidiTok would silently re-bar an unknown meter as 4/4). The long tail
+# (1/4 pickups, cut time, 12/8...) covers ~80% of the files a 4/4-3/4-6/8
+# set would skip, for ~20 extra TimeSig/Position tokens.
+V4_TIME_SIGNATURES = {2: [2, 3, 4], 4: [1, 2, 3, 4, 5, 6, 7],
+                      8: [3, 5, 6, 7, 9, 12]}
 PathLike = Union[str, Path]
 
 
@@ -57,11 +60,13 @@ def default_config() -> TokenizerConfig:
     )
 
 
-def v4_config() -> TokenizerConfig:
+def v4_config(res: int = 8) -> TokenizerConfig:
+    """`res`: positions per beat. 8 = 32nd-note grid (v2/v3 parity);
+    12 = 16ths + triplets (pilot arm C)."""
     from .attributes import header_vocab
     return TokenizerConfig(
         pitch_range=(0, 127),
-        beat_res={(0, 4): 8, (4, 12): 4},
+        beat_res={(0, 4): res, (4, 12): max(4, res // 2)},
         num_velocities=32,
         # header tokens ride along as specials: ignored on decode, no
         # collision with musical tokens
@@ -84,6 +89,8 @@ def build_tokenizer(config: TokenizerConfig | None = None,
         return MIDILike(config)
     if scheme == "v4":
         return REMI(v4_config())
+    if scheme == "v4-12":
+        return REMI(v4_config(res=12))
     if scheme == "midilike":
         return MIDILike(default_config())
     raise ValueError(f"unknown tokenizer scheme {scheme!r}")

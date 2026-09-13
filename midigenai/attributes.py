@@ -41,7 +41,12 @@ GENRES = ["rock", "pop", "jazz", "classical", "electronic", "hiphop", "rnb",
           "country", "folk", "latin", "blues", "metal", "reggae", "soul",
           "world", "other"]
 
-HEADER_PREFIXES = ("Inst_", "Density_", "Poly_", "Range_", "Source_", "Genre_")
+# predicted quality quartile from the human-rated corpus predictor
+# (quality_predictor.py); emitted only when a score file is supplied
+QUALITY_BUCKETS = 4
+
+HEADER_PREFIXES = ("Inst_", "Density_", "Poly_", "Range_", "Source_", "Genre_",
+                   "Quality_")
 
 
 def header_vocab() -> list[str]:
@@ -52,6 +57,7 @@ def header_vocab() -> list[str]:
     names += [f"Range_{i}" for i in range(len(RANGE_EDGES) + 1)]
     names += [f"Source_{s}" for s in SOURCES]
     names += [f"Genre_{g}" for g in GENRES]
+    names += [f"Quality_{i}" for i in range(QUALITY_BUCKETS)]
     return names
 
 
@@ -112,7 +118,8 @@ def content_tokens(score) -> list[str]:
 
 
 def header_for_score(score, source: str | None = None,
-                     genres: list[str] | None = None) -> list[str]:
+                     genres: list[str] | None = None,
+                     quality: int | None = None) -> list[str]:
     """Full header (token names) for a document whose content is `score`."""
     names = instrument_tokens(score) + content_tokens(score)
     if source in SOURCES:
@@ -120,6 +127,8 @@ def header_for_score(score, source: str | None = None,
     for g in genres or []:
         if g in GENRES:
             names.append(f"Genre_{g}")
+    if quality is not None and 0 <= int(quality) < QUALITY_BUCKETS:
+        names.append(f"Quality_{int(quality)}")
     return names
 
 
