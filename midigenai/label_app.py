@@ -73,8 +73,14 @@ class PairFactory:
         self.label_b = label_b or self.label_a
         self.cross_model = gen_b is not None
 
-        self.prompt_files = sorted(Path(args.prompts).glob("*.mid")) + \
-                            sorted(Path(args.prompts).glob("*.midi"))
+        self.blacklist_path = Path(args.out).resolve() / "bad_prompts.txt"
+        blacklisted = set()
+        if self.blacklist_path.exists():
+            blacklisted = set(self.blacklist_path.read_text().split())
+        self.prompt_files = [
+            f for f in sorted(Path(args.prompts).glob("*.mid")) +
+                       sorted(Path(args.prompts).glob("*.midi"))
+            if f.name not in blacklisted]
         if not self.prompt_files:
             raise SystemExit(f"no .mid files in {args.prompts}")
         print(f"[label] {len(self.prompt_files)} prompt files; "
@@ -104,6 +110,12 @@ class PairFactory:
         pair_id = f"{datetime.datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:8]}"
         gen_kwargs = dict(max_new_tokens=args.max_new_tokens,
                           temperature=args.temperature, top_k=args.top_k)
+        # cross-model fairness: each side can run at its own best temperature
+        kwargs_by_side = {
+            "a": gen_kwargs,
+            "b": {**gen_kwargs,
+                  "temperature": args.temperature_b or args.temperature},
+        }
 
         from symusic import Tempo
 
@@ -115,7 +127,7 @@ class PairFactory:
 
         conts = {}
         for name, gen in (("a", self.gen_a), ("b", self.gen_b)):
-            new_ids = list(gen.generate_ids(prompt_ids, **gen_kwargs))
+            new_ids = list(gen.generate_ids(prompt_ids, **kwargs_by_side[name]))
             conts[name] = new_ids
             # Decode with full prompt context (programs, ringing notes), then
             # trim to the continuation only: shorter files review much faster.
@@ -139,14 +151,21 @@ class PairFactory:
             "model_b": self.label_b,
             "cross_model": self.cross_model,
             "tempo_bpm": tempo,
+            "temperature_b": kwargs_by_side["b"]["temperature"],
             **gen_kwargs,
         }
         (self.pairs_dir / f"{pair_id}.json").write_text(json.dumps(meta))
 
         # randomize which continuation shows on which side
         left, right = ("a", "b") if self.rng.random() < 0.5 else ("b", "a")
+        name = prompt_file.name
+        source = ("your upload" if name.startswith("user_")
+                  else f"held-out val ({name.split('_')[1]})" if name.startswith("val_")
+                  else "prompt set")
         return {
             "pair_id": pair_id,
+            "prompt_source": source,
+            "prompt_name": name,
             "prompt_url": f"/midi/{pair_id}_prompt.mid",
             "left_url": f"/midi/{pair_id}_{left}.mid",
             "right_url": f"/midi/{pair_id}_{right}.mid",
@@ -225,9 +244,19 @@ def build_app(args) -> Flask:
     @app.route("/api/vote", methods=["POST"])
     def vote():
         data = request.get_json(force=True)
-        choice = data.get("choice")  # left | right | tie | bad | skip
-        if choice not in ("left", "right", "tie", "bad", "skip"):
+        choice = data.get("choice")  # left | right | tie | bad | skip | bad_prompt
+        if choice not in ("left", "right", "tie", "bad", "skip", "bad_prompt"):
             return jsonify({"error": f"bad choice {choice!r}"}), 400
+        if choice == "bad_prompt" and data.get("pair_id"):
+            # the source example itself is unusable: blacklist it from future
+            # serving here, and downstream from training/eval prompt sets
+            meta_path = factory.pairs_dir / f"{data['pair_id']}.json"
+            if meta_path.exists():
+                pf = Path(json.loads(meta_path.read_text())["prompt_file"])
+                with factory.blacklist_path.open("a") as bf:
+                    bf.write(pf.name + "\n")
+                factory.prompt_files = [f for f in factory.prompt_files
+                                        if f.name != pf.name]
         record = {
             "ts": utcnow(),
             "session_id": data.get("session_id", ""),
@@ -302,6 +331,8 @@ def main():
     # ~64 notes / ~30-45s of music: enough to judge, short enough to label fast
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--temperature", type=float, default=1.2)
+    p.add_argument("--temperature-b", type=float, default=None,
+                   help="model B's temperature (cross-model fairness); defaults to --temperature")
     p.add_argument("--top-k", type=int, default=50)
     # plumbing
     p.add_argument("--queue-size", type=int, default=4)
