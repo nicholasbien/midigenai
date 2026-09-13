@@ -167,8 +167,10 @@ class Generator:
             self.bar_id = self.sp.bar
             self.timesig_ids = {v for k, v in self.tokenizer.vocab.items()
                                 if k.startswith("TimeSig_")}
-            # a SEP or MASK mid-generation is never valid output: treat as end
-            self.stop_ids |= {self.sp.sep, self.sp.mask}
+            # SEP / MASK mid-generation are never valid output, and BOS is
+            # what follows an accompaniment / infill target in training
+            # (segments carry no EOS): all three end generation
+            self.stop_ids |= {self.sp.sep, self.sp.mask, self.sp.bos}
 
     def _special_id(self, *candidates: str) -> int | None:
         for c in candidates:

@@ -343,7 +343,7 @@ if __name__ == "__main__":
     parser.add_argument("--scheme", choices=["midilike", "v4", "v4-24"], default="v4",
                         help="tokenizer scheme: v4 (REMI + header + accompaniment/"
                              "infill docs) or midilike (v2/v3 legacy)")
-    parser.add_argument("--accomp-windows", type=int, default=6,
+    parser.add_argument("--accomp-windows", type=int, default=4,
                         help="v4: accompaniment docs per multi-track file")
     parser.add_argument("--infill-windows", type=int, default=2,
                         help="v4: span-infill docs per file")
@@ -355,13 +355,16 @@ if __name__ == "__main__":
                         help="v4: longest infilled span")
     parser.add_argument("--genres", type=Path, default=None,
                         help="v4: optional JSON {path: [genre,...]} for Genre_ tokens")
+    parser.add_argument("--segment-eos", action="store_true",
+                        help="v4: also end accompaniment/infill targets with EOS "
+                             "(off by default; see v4_docs.DocBuilder)")
     parser.add_argument("--quality", type=Path, default=None,
                         help="v4: quality_predictor score JSONL (path, q_bucket): adds "
                              "Quality_ header tokens and splits train shards per bucket")
     args = parser.parse_args()
     v4_opts = dict(accomp_windows=args.accomp_windows, infill_windows=args.infill_windows,
                    window_bars=args.window_bars, context_bars=args.context_bars,
-                   max_span_bars=args.max_span_bars)
+                   max_span_bars=args.max_span_bars, segment_eos=args.segment_eos)
     if args.genres:
         v4_opts["genres"] = json.loads(args.genres.read_text())
     if args.quality:

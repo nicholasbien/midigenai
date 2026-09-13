@@ -84,16 +84,19 @@ def test_docbuilder_shapes(tok, sp):
     assert docs["continuation"] and docs["accompaniment"] and docs["infill"]
     for kind, kdocs in docs.items():
         for doc in kdocs:
-            assert doc[0] == sp.bos and doc[-1] == sp.eos
-            header, rest = split_header(sp, doc[1:-1])
+            assert doc[0] == sp.bos
+            # continuation docs end with EOS; segment targets do not (the
+            # next document's BOS terminates them at inference)
+            assert (doc[-1] == sp.eos) == (kind == "continuation")
+            header, rest = split_header(sp, doc[1:] if kind != "continuation" else doc[1:-1])
             assert header and not any(t in sp.header_ids for t in rest)
     for doc in docs["accompaniment"]:
-        _, rest = split_header(sp, doc[1:-1])
+        _, rest = split_header(sp, doc[1:])
         i = rest.index(sp.sep)
         assert count_bars(sp, rest[:i]) == count_bars(sp, rest[i + 1:]) == 8
         assert sp.mask not in rest
     for doc in docs["infill"]:
-        _, rest = split_header(sp, doc[1:-1])
+        _, rest = split_header(sp, doc[1:])
         m, i = rest.index(sp.mask), rest.index(sp.sep)
         span = count_bars(sp, rest[i + 1:])
         assert 1 <= span <= 4
@@ -108,7 +111,7 @@ def test_short_target_is_padded_to_window(tok, sp):
     docs = b.build(_write(s))
     assert docs["accompaniment"]
     for doc in docs["accompaniment"]:
-        _, rest = split_header(sp, doc[1:-1])
+        _, rest = split_header(sp, doc[1:])
         i = rest.index(sp.sep)
         assert count_bars(sp, rest[:i]) == count_bars(sp, rest[i + 1:]) == 16
 

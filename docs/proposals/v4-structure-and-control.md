@@ -41,6 +41,19 @@
     first-onset bar offset 0.76 beats, EOS rate 0.07, prompt coherence 0.65.
     That is the off-the-downbeat symptom quantified; v4 arms must move the
     delta toward 0 and the bar offset toward 0.
+  - **First pilot results** (25M, 5000 steps, block 2048, lr 6e-4; prompts
+    cut at note boundaries, `evals/scorecards/`): arms D (continuation-only
+    corpus, header) and E (full mix) both fix the structure metrics:
+    downbeat delta -0.03 vs -0.13 baseline, first-note bar offset 0.66-0.70
+    vs 0.85, and 0.30-0.37 when the prompt is closed to a bar line
+    (`Generator.close_bar`). Coherence / scale consistency level with the
+    baseline. D vs E isolated a problem: E self-terminates 47-57% of the time
+    within 1024 tokens vs 17% for D and 13% baseline, because accompaniment /
+    infill targets ended with EOS after a fixed window. Fix: segment targets
+    carry no EOS (`--segment-eos` to restore); BOS added to the generator's
+    stop set. Accompaniment mode on E: exactly-N-bars 58%, pitch-class
+    overlap with the condition 0.23 vs 0.46 for the real parts. D (header)
+    vs B (no header), same corpus: val loss 0.800 vs 0.820 at step 4500.
   - **Arm C is 24/beat, not 12**: measured off-grid share and error per
     source (Lakh/LAMD ~3 ms median error at 1/8 beat; Aria/MAESTRO/POP909
     15-23 ms, i.e. nearly every onset off-grid). At 1/24 beat the performed

@@ -110,14 +110,16 @@ def _tracks_in_window(sc: Score, start: int, end: int, min_notes: int) -> list[i
 
 
 class DocBuilder:
-    # defaults measured on lakh multi-track files: ~62/27/11 token share
-    # (continuation / accompaniment / infill); single-track sources have no
-    # accompaniment docs, so the corpus-wide share lands near 60/25/15
-    def __init__(self, tokenizer, track_views: int = 2, accomp_windows: int = 6,
+    # defaults: the first pilot corpus (6 windows) landed at 49/38/13 on
+    # Lakh; 4 windows brings multi-track sources near 55/32/13 and the
+    # corpus-wide share (single-track sources add no accompaniment) near
+    # the 60/25/15 target
+    def __init__(self, tokenizer, track_views: int = 2, accomp_windows: int = 4,
                  infill_windows: int = 2, window_bars: int = 16,
                  context_bars: int = 16, max_span_bars: int = 4,
                  genres: dict[str, list[str]] | None = None,
-                 quality: dict[str, int] | None = None):
+                 quality: dict[str, int] | None = None,
+                 segment_eos: bool = False):
         self.tok = tokenizer
         self.sp = Specials.from_tokenizer(tokenizer)
         self.bar_id = tokenizer.vocab["Bar_None"]
@@ -130,6 +132,12 @@ class DocBuilder:
         self.max_span_bars = max_span_bars
         self.genres = genres or {}
         self.quality = quality or {}      # path -> q_bucket (quality_predictor)
+        # EOS after an accompaniment / infill target? Off by default: pilot
+        # arms D vs E (2026-09-13) showed those fixed-window EOS tokens teach
+        # continuation to end early (47-57% self-termination vs 17%).
+        # Inference stops targets by bar count, and the next document's BOS
+        # is the terminator the model sees instead.
+        self.segment_eos = segment_eos
 
     # -- helpers -- #
     def _ids(self, sc: Score) -> list[int]:
@@ -219,8 +227,8 @@ class DocBuilder:
                         self._segment(tgt, self.window_bars))
                 if None in segs:
                     continue
-                out["accompaniment"].append(accompaniment_doc(
-                    sp, self._header(win, source, path), *segs))
+                doc = accompaniment_doc(sp, self._header(win, source, path), *segs)
+                out["accompaniment"].append(doc if self.segment_eos else doc[:-1])
 
         # 3. span infill windows
         if n_bars >= 2 * self.max_span_bars + 2:
@@ -243,6 +251,6 @@ class DocBuilder:
                         self._segment(middle, span))
                 if None in segs:
                     continue
-                out["infill"].append(infill_doc(
-                    sp, self._header(win, source, path), *segs))
+                doc = infill_doc(sp, self._header(win, source, path), *segs)
+                out["infill"].append(doc if self.segment_eos else doc[:-1])
         return out
