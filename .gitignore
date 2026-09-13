@@ -21,3 +21,6 @@ data/v2_corpus*/
 
 # explorer sample cache
 evals/dataset_samples/
+
+# corpus quality labeling: excerpt MIDIs are rebuilt from path+window on demand
+evals/quality/excerpts/
