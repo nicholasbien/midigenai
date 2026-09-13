@@ -85,6 +85,9 @@ class MidiGen:
         sample rides along nearly free vs. two sequential generations."""
         import torch
         gen = self.gen
+        # Long uploads: cut the prompt so prompt + continuation fits the
+        # context window (decoding past it crashes attention).
+        prompt_ids, max_new_tokens = gen.fit_to_context(prompt_ids, max_new_tokens)
         if gen.bos_id is not None and (not prompt_ids or prompt_ids[0] != gen.bos_id):
             prompt_ids = [gen.bos_id, *prompt_ids]
         model = gen.model
@@ -137,9 +140,19 @@ class MidiGen:
         tempo_bpm: float | None = None,
         n_samples: int = 1,
     ) -> dict:
-        prompt = self.gen.encode_midi_bytes(midi_bytes)
+        full_prompt = self.gen.encode_midi_bytes(midi_bytes)
         if tempo_bpm is None:
             tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+
+        # A prompt too long for the context window is cut at the end; the
+        # continuation follows the cut, so the returned MIDI is the kept
+        # prompt + continuation. `prompt_end_seconds` tells the client where
+        # the model's input ended so it can mark the cut on the original.
+        prompt, max_new_tokens = self.gen.fit_to_context(full_prompt, max_new_tokens)
+        truncated = len(prompt) < len(full_prompt)
+        prompt_score = self.gen.tokenizer.decode(list(prompt))
+        tpq = max(prompt_score.ticks_per_quarter, 1)
+        prompt_end_seconds = prompt_score.end() / tpq * 60.0 / tempo_bpm
 
         sample_ids = self._batched_generate(
             prompt, n_samples, max_new_tokens, temperature, top_k)
@@ -148,6 +161,9 @@ class MidiGen:
 
         return {
             "prompt_tokens": len(prompt),
+            "prompt_tokens_total": len(full_prompt),
+            "prompt_truncated": truncated,
+            "prompt_end_seconds": prompt_end_seconds,
             "generated_tokens": [len(ids) for ids in sample_ids],
             "tempo_bpm": tempo_bpm,
             "midi": midis[0],   # backward-compatible single-sample field

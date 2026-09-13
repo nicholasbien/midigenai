@@ -244,8 +244,14 @@ class MusicTransformer(nn.Module):
         self.eval()
         kv_caches: list | None = None
         cur = ids
+        n_ctx = 0  # tokens already in the KV cache
         for i in range(max_new_tokens):
+            # The RoPE table has max_seq_len rows; one more position would
+            # slice it empty and crash attention. Stop instead.
+            if n_ctx + cur.size(1) > self.cfg.max_seq_len:
+                return
             logits, kv_caches = self.forward(cur, kv_caches)
+            n_ctx += cur.size(1)
             # fp32 for top-k/softmax so half-precision inference samples cleanly
             logits = logits[:, -1, :].float() / max(temperature, 1e-6)
             if eos_id is not None and i < min_new_tokens:

@@ -66,7 +66,19 @@ def _generate_n(midi_bytes: bytes, temperature: float, top_k: int,
         midi_bytes, max_new_tokens=max_new_tokens,
         temperature=temperature, top_k=top_k, n_samples=n_samples,
     )
-    return result["midis"]
+    return result
+
+
+def _prompt_fields(result: dict) -> dict:
+    """Where the model's input ended, for the client's prompt display. A
+    prompt longer than the context window is cut at the end (see
+    generate.fit_to_context); the continuation follows the cut."""
+    return {
+        "promptTruncated": bool(result.get("prompt_truncated", False)),
+        "promptEndSeconds": result.get("prompt_end_seconds"),
+        "promptTokens": result.get("prompt_tokens"),
+        "promptTokensTotal": result.get("prompt_tokens_total"),
+    }
 
 
 def _save_midi(midi_bytes: bytes, base_name: str, suffix: str) -> str:
@@ -94,9 +106,10 @@ def _read_upload():
 def _two_samples_response(midi_bytes: bytes, base: str,
                           temperature: float, top_k: int, max_new_tokens: int):
     unique_str = _unique_string()
-    midis = _generate_n(midi_bytes, temperature, top_k, max_new_tokens, n_samples=2)
+    result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens, n_samples=2)
     out_paths = [
-        _save_midi(m, f"{base}_{unique_str}", str(i)) for i, m in enumerate(midis)
+        _save_midi(m, f"{base}_{unique_str}", str(i))
+        for i, m in enumerate(result["midis"])
     ]
     return jsonify({
         "message": "MIDI file generated successfully",
@@ -104,6 +117,7 @@ def _two_samples_response(midi_bytes: bytes, base: str,
                             filename=os.path.basename(out_paths[0]), _external=True),
         "midiUrl2": url_for("serve_user_midi",
                             filename=os.path.basename(out_paths[1]), _external=True),
+        **_prompt_fields(result),
     })
 
 
@@ -172,9 +186,10 @@ def upload_midi_ab():
     with open(input_path, "wb") as f:
         f.write(midi_bytes)
 
-    midis = _generate_n(midi_bytes, temperature, top_k, max_new_tokens, n_samples=2)
+    result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens, n_samples=2)
     paths = [
-        _save_midi(m, f"{base}_{unique_str}", f"ab{i}") for i, m in enumerate(midis)
+        _save_midi(m, f"{base}_{unique_str}", f"ab{i}")
+        for i, m in enumerate(result["midis"])
     ]
     if random.random() < 0.5:
         paths.reverse()
@@ -189,6 +204,7 @@ def upload_midi_ab():
                             filename=os.path.basename(paths[0]), _external=True),
         "midiUrl2": url_for("serve_user_midi",
                             filename=os.path.basename(paths[1]), _external=True),
+        **_prompt_fields(result),
     })
 
 
