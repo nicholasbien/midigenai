@@ -6,7 +6,8 @@ track outputs AUDIO, so the play-in track must carry no instrument for the
 IAC buses to appear in its output options — hence the split):
   "you"         — NO instrument, armed, Monitor Auto, MIDI To -> IAC Bus 1
   "you (sound)" — your instrument, MIDI From -> IAC Bus 1, Monitor In
-  "model"       — the model's instrument, MIDI From -> IAC Bus 2, Monitor In
+  "model"       — the model's instrument, MIDI From -> IAC Bus 2, Monitor Auto,
+                  armed (Record captures the model's streamed answers)
 
 Requires the AbletonMCP control surface WITH the routing tools
 (ableton-mcp-pro PR #6: get/set_track_input_routing, set_track_output_routing,
@@ -21,30 +22,18 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
-import socket
 
 
 class Live:
+    """Thin wrapper kept for the send() call sites; see live_client.live."""
+
     def __init__(self, port: int = 9877):
-        self.sock = socket.socket()
-        self.sock.connect(("localhost", port))
-        self.sock.settimeout(20)
+        from .live_client import live as _live
+        self._live, self.port = _live, port
+        self.send("get_session_info")           # fail fast if Live is unreachable
 
     def send(self, command_type: str, params: dict | None = None):
-        self.sock.sendall(json.dumps(
-            {"type": command_type, "params": params or {}}).encode())
-        buf = b""
-        while True:
-            buf += self.sock.recv(262144)
-            try:
-                resp = json.loads(buf)
-                break
-            except json.JSONDecodeError:
-                continue
-        if resp.get("status") == "error":
-            raise RuntimeError(f"{command_type}: {resp.get('message')}")
-        return resp.get("result", resp)
+        return self._live(command_type, params, timeout=30.0, port=self.port)
 
 
 def pick_routing(available: list[dict], *needles: str) -> str | None:
@@ -70,9 +59,8 @@ def main():
 
     try:
         live = Live(args.port)
-    except OSError:
-        raise SystemExit("Can't reach Ableton on localhost:%d — is Live running "
-                         "with the AbletonMCP control surface enabled?" % args.port)
+    except Exception as e:
+        raise SystemExit(str(e))
 
     manual: list[str] = []
 
@@ -138,7 +126,7 @@ def main():
         route(model, "input", "IAC", args.in_bus)
         live.send("set_track_monitoring", {"track_index": you, "state": 1})    # Auto
         live.send("set_track_monitoring", {"track_index": sound, "state": 0})  # In
-        live.send("set_track_monitoring", {"track_index": model, "state": 0})  # In
+        # (model's monitoring is set with its arm state below)
     else:
         manual += [
             f"'you': MIDI To -> IAC Driver ({args.out_bus}), Monitor Auto",
@@ -150,9 +138,15 @@ def main():
 
     # arm LAST: Live auto-arms newly created tracks, which would otherwise
     # steal the arm from 'you' (this burned a previous session).
-    # 'you' AND 'model' both stay armed so hitting Live's Record captures
-    # the whole jam — your part and the model's — into the arrangement.
+    # 'you' AND 'model' both stay armed (Monitor Auto) so hitting Live's
+    # Record captures the whole jam — your part and the model's streamed
+    # answers — into the arrangement, and the take plays back afterwards
+    # (Monitor In would mute the recorded clips). jam.py --output arrange flips the
+    # model track to disarmed / Monitor Auto by itself (arrangement Record
+    # would overwrite the clips it writes; Monitor In would mute them).
     live.send("set_track_arm", {"track_index": sound, "arm": False})
+    if have_routing:
+        live.send("set_track_monitoring", {"track_index": model, "state": 1})  # Auto
     live.send("set_track_arm", {"track_index": model, "arm": True})
     live.send("set_track_arm", {"track_index": you, "arm": True})
 
