@@ -81,6 +81,9 @@ def train(
     run_name: str | None = None,
     resume: bool = False,
     resume_from: str = "",
+    header_dropout: float = 0.3,
+    header_drop_all: float = 0.1,
+    rope_base: float = 0.0,
 ) -> dict:
     import os
     from datetime import datetime
@@ -158,6 +161,9 @@ def train(
         doc_start_frac=doc_start_frac,
         mixture=mixture,
         resume=resume_ckpt,
+        header_dropout=header_dropout,
+        header_drop_all=header_drop_all,
+        rope_base=rope_base,
     )
 
     # Flush checkpoints to the volume every 10 min so a preempted/crashed run
@@ -187,7 +193,9 @@ def main(size: str = "medium", max_steps: int = 15000, batch_size: int = 16,
          aug_pitch: int = 6, aug_velocity: int = 1,
          doc_start_frac: float = 0.2, mixture: str = "",
          corpus: str = "corpus_pilot", compile: bool = False,
-         stage_local: bool = False, run_name: str = "", resume: bool = False):
+         stage_local: bool = False, run_name: str = "", resume: bool = False,
+         resume_from: str = "", header_dropout: float = 0.3,
+         header_drop_all: float = 0.1, rope_base: float = 0.0):
     """Local entrypoint — invoke training and print result."""
     result = train.remote(size=size, max_steps=max_steps, batch_size=batch_size,
                           grad_accum=grad_accum, block_size=block_size, lr=lr,
@@ -197,7 +205,9 @@ def main(size: str = "medium", max_steps: int = 15000, batch_size: int = 16,
                           doc_start_frac=doc_start_frac, mixture=mixture,
                           corpus=corpus, compile=compile,
                           stage_local=stage_local, run_name=run_name or None,
-                          resume=resume)
+                          resume=resume, resume_from=resume_from,
+                          header_dropout=header_dropout,
+                          header_drop_all=header_drop_all, rope_base=rope_base)
     print(f"\n[done] {result}")
     print(f"\nRetrieve checkpoint with:")
     print(f"  modal volume get {RUNS_VOLUME_NAME} {result['run_name']}/ckpt_final.pt ./runs/")
