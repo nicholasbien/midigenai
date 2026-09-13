@@ -171,6 +171,11 @@ def test_stream_reinjects_header(tok, sp):
     none = ShardedTokenStream([d / "shards" / "train_00000.npy"], block,
                               specials=sp, header_dropout=1.0, header_drop_all=0.0)
     x, y = none.sample_batch(8, rng)
+    # the augmenter indexes remap tables with the window: must stay integer
+    raw = none._window_v4(none.shards[0], none.all_starts[0], 5, rng)
+    assert raw.dtype == np.int64 and len(raw) == block + 1
+    from midigenai.data.augment import TokenAugmenter
+    TokenAugmenter(tok, 6, 1)(raw, rng)
     for row, tgt in zip(x.numpy(), y.numpy()):
         assert row[0] == sp.bos and not any(t in sp.header_ids for t in row)
         assert (row[1:] == tgt[:-1]).all()        # x/y still shifted by one

@@ -166,7 +166,10 @@ class ShardedTokenStream:
         body_start = doc_start + 1 + len(header) if start == doc_start else start
         body_len = need - 1 - len(kept)
         body = shard[body_start : body_start + body_len].astype(np.int64)
-        out = np.concatenate([[self.specials.bos], kept, body])
+        # explicit dtype: an empty `kept` would otherwise make this float64
+        # and break integer indexing in the augmenter
+        out = np.concatenate([np.array([self.specials.bos], dtype=np.int64),
+                              np.asarray(kept, dtype=np.int64), body])
         if len(out) < need:            # ran off the shard end: pad from the front
             pad = shard[max(0, body_start - (need - len(out))) : body_start].astype(np.int64)
             out = np.concatenate([out, pad])[:need]
