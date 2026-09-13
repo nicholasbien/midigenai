@@ -48,6 +48,40 @@ class Note:
     program: int = 0
 
 
+MIN_PROMPT_TOKENS = 256  # never shrink a long prompt below this to make room for generation
+
+
+def fit_to_context(
+    prompt_ids: list[int],
+    max_new_tokens: int,
+    max_seq_len: int,
+    min_prompt_tokens: int = MIN_PROMPT_TOKENS,
+) -> tuple[list[int], int]:
+    """Make `len(prompt) + max_new_tokens <= max_seq_len`.
+
+    A too-long prompt is cut at the *end*: the model continues from wherever
+    the cut lands, and callers join `fitted_prompt + continuation` so the
+    result is one coherent piece (the dropped tail is simply gone). The head
+    is kept rather than the tail so the cut point is easy to show against the
+    original file. `max_new_tokens` is only reduced when the prompt could not
+    otherwise keep `min_prompt_tokens` of context.
+
+    Without this, a dense upload (~7.7k+ tokens at the 8192 serving context)
+    ran the KV cache past the RoPE table mid-decode and crashed attention with
+    a shape mismatch — every request for that file 500'd.
+    """
+    prompt_ids = list(prompt_ids)
+    if max_seq_len <= 0:
+        return prompt_ids, max_new_tokens
+    # (a tiny context, e.g. in tests, still leaves at least half for generation)
+    min_prompt = min(min_prompt_tokens, len(prompt_ids), max_seq_len // 2)
+    max_new_tokens = max(0, min(max_new_tokens, max_seq_len - min_prompt))
+    keep = max_seq_len - max_new_tokens
+    if len(prompt_ids) > keep:
+        prompt_ids = prompt_ids[:keep]
+    return prompt_ids, max_new_tokens
+
+
 class Generator:
     def __init__(
         self,
@@ -99,6 +133,7 @@ class Generator:
             # load_model keeps a converted .safetensors sidecar next to the
             # checkpoint, so warm loads skip torch.load (~1.3 s -> ~15 ms).
             self.model, cfg = load_model(checkpoint_path, dtype=mlx_dtype)
+            cfg.max_seq_len = max(cfg.max_seq_len, inference_seq_len)
         else:
             self.device = device or _auto_device()
             ckpt = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
@@ -109,6 +144,9 @@ class Generator:
             self.model = MusicTransformer(cfg).to(self.device).eval()
             self.model.load_state_dict(ckpt["model"])
             self.model = self.model.to(self.dtype)
+        # Hard ceiling on prompt + generated tokens (the torch RoPE table has
+        # exactly this many rows; decoding past it crashes attention).
+        self.max_seq_len = cfg.max_seq_len
 
         self.tokenizer = (
             load_tokenizer(tokenizer_path) if tokenizer_path else build_tokenizer()
@@ -121,6 +159,21 @@ class Generator:
             if c in self.tokenizer.vocab:
                 return self.tokenizer.vocab[c]
         return None
+
+    def _needs_bos(self, prompt_ids: list[int]) -> bool:
+        return self.bos_id is not None and (not prompt_ids or prompt_ids[0] != self.bos_id)
+
+    def fit_to_context(
+        self, prompt_ids: list[int], max_new_tokens: int
+    ) -> tuple[list[int], int]:
+        """Trim `prompt_ids` / `max_new_tokens` so prompt (+ the BOS that
+        generation prepends) + continuation fits `self.max_seq_len`.
+        Idempotent, so callers may fit first and join `fitted + new_ids`;
+        `generate_ids` fits again internally as a safety net."""
+        added = self._needs_bos(prompt_ids)
+        ids = [self.bos_id, *prompt_ids] if added else list(prompt_ids)
+        ids, max_new_tokens = fit_to_context(ids, max_new_tokens, self.max_seq_len)
+        return (ids[1:] if added else ids), max_new_tokens
 
     # ---------- encode user input ---------- #
 
@@ -166,18 +219,37 @@ class Generator:
         max_new_tokens: int = 512,
         temperature: float = 1.0,
         top_k: int = 50,
+        min_new_tokens: int = 0,
+        seed: int | None = None,
     ) -> Iterator[int]:
-        if self.bos_id is not None and (not prompt_ids or prompt_ids[0] != self.bos_id):
+        """
+        `min_new_tokens`: hold EOS back for the first N tokens. Any prompt whose
+        voices all stop at the same instant (an excerpt cut on a bar line, a
+        jam partner who stops playing) reads as a piece ending — measured
+        P(EOS) as the first token was 0.5–0.93 on such prompts vs ~0.02 with
+        natural note-offs — so set this to roughly the length you want
+        guaranteed before the model may choose to end.
+
+        `seed`: seeds the backend RNG (mlx / torch) for reproducible takes.
+        """
+        prompt_ids, max_new_tokens = self.fit_to_context(prompt_ids, max_new_tokens)
+        if self._needs_bos(prompt_ids):
             prompt_ids = [self.bos_id, *prompt_ids]
         if self.backend == "mlx":
+            import mlx.core as mx
+            if seed is not None:
+                mx.random.seed(seed)
             yield from self.model.generate(
                 prompt_ids,
                 max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 top_k=top_k,
                 eos_id=self.eos_id,
+                min_new_tokens=min_new_tokens,
             )
             return
+        if seed is not None:
+            torch.manual_seed(seed)
         prompt = torch.tensor([prompt_ids], dtype=torch.long, device=self.device)
         yield from self.model.generate(
             prompt,
@@ -185,6 +257,7 @@ class Generator:
             temperature=temperature,
             top_k=top_k,
             eos_id=self.eos_id,
+            min_new_tokens=min_new_tokens,
         )
 
     def stream_notes(
@@ -204,6 +277,9 @@ class Generator:
         (in beat units); we just rescale at decode time.
         """
         emitted = 0
+        if "max_new_tokens" in gen_kwargs:
+            prompt_ids, gen_kwargs["max_new_tokens"] = self.fit_to_context(
+                prompt_ids, gen_kwargs["max_new_tokens"])
         buffer: list[int] = list(prompt_ids)
         n_in_buffer_since_decode = 0
         for tid in self.generate_ids(prompt_ids, **gen_kwargs):
@@ -238,6 +314,9 @@ class Generator:
         tempo_bpm: float = 120.0,
         **gen_kwargs,
     ) -> list[int]:
+        if "max_new_tokens" in gen_kwargs:
+            prompt_ids, gen_kwargs["max_new_tokens"] = self.fit_to_context(
+                prompt_ids, gen_kwargs["max_new_tokens"])
         new_ids = list(self.generate_ids(prompt_ids, **gen_kwargs))
         full_ids = list(prompt_ids) + new_ids
         score = self.tokenizer.decode(full_ids)
@@ -258,6 +337,11 @@ if __name__ == "__main__":
     parser.add_argument("--max-new-tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=1.0)
     parser.add_argument("--top-k", type=int, default=50)
+    parser.add_argument("--min-new-tokens", type=int, default=0,
+                        help="mask EOS for the first N generated tokens (guards "
+                             "against prompts that look like a piece ending)")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="RNG seed for a reproducible take")
     parser.add_argument("--tempo-bpm", type=float, default=None,
                         help="output tempo; defaults to input MIDI's tempo")
     parser.add_argument("--dtype", default="float16",
@@ -278,6 +362,8 @@ if __name__ == "__main__":
         max_new_tokens=args.max_new_tokens,
         temperature=args.temperature,
         top_k=args.top_k,
+        min_new_tokens=args.min_new_tokens,
+        seed=args.seed,
     )
     print(json.dumps({"prompt_tokens": len(prompt), "generated_tokens": len(new_ids),
                       "output": args.output_midi}))

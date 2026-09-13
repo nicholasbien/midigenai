@@ -80,6 +80,7 @@ def train(
     stage_local: bool = False,
     run_name: str | None = None,
     resume: bool = False,
+    resume_from: str = "",
 ) -> dict:
     import os
     from datetime import datetime
@@ -92,9 +93,16 @@ def train(
     out_dir = Path(f"/runs/{run_name}")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # resume from the newest checkpoint in this run's directory
+    # resume from the newest checkpoint in this run's directory, or an
+    # explicit checkpoint (e.g. another run's pre-decay ckpt for a WSD
+    # extension / context-extension phase)
     resume_ckpt = None
-    if resume:
+    if resume_from:
+        resume_ckpt = Path(f"/runs/{resume_from}")
+        if not resume_ckpt.exists():
+            raise FileNotFoundError(f"resume_from not found: {resume_ckpt}")
+        print(f"[modal-train] resuming from explicit ckpt {resume_ckpt}")
+    elif resume:
         ckpts = sorted(out_dir.glob("ckpt_*.pt"))
         if ckpts:
             resume_ckpt = ckpts[-1]
