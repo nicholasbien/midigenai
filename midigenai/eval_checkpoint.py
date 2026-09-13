@@ -99,12 +99,12 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
         if len(ids) < 16:
             continue
         if len(ids) > prompt_tokens:
-            ids = ids[:prompt_tokens]
+            ids = _cut_prompt(gen, ids, prompt_tokens)
         # v4: the prompt gets the header the builder would have given this file
         header = gen.make_header(f) if gen.v4 else []
         if pad_to_bar and gen.v4:
             # end the prompt on a bar line so the answer should start on "1"
-            ids = gen.pad_to_bars(ids, gen.count_bars(ids))
+            ids = gen.close_bar(ids)
         prompt = [*header, *ids] if header else ids
         prompt_score = gen.tokenizer.decode(list(ids))
         prompt_hist = pitch_class_histogram(prompt_score)
@@ -170,6 +170,19 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
         "aggregate": agg,
         "rows": rows,
     }
+
+
+def _cut_prompt(gen, ids: list[int], n: int) -> list[int]:
+    """Truncate a prompt at a note boundary (before a Position / TimeShift /
+    Bar token), never mid-note: a prompt ending in `Pitch_60` makes the
+    model's first token a Velocity, which says nothing about the music."""
+    vocab = gen.tokenizer.vocab
+    boundary = {tid for name, tid in vocab.items()
+                if name.startswith(("Position_", "TimeShift_", "Bar_", "Rest_"))}
+    for i in range(min(n, len(ids)) - 1, 8, -1):
+        if ids[i] in boundary:
+            return ids[:i]
+    return ids[:n]
 
 
 def _evaluate_accompany(gen, prompts_dir, n_prompts, gens_per_prompt, bars,

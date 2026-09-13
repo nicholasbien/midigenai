@@ -55,6 +55,9 @@ def test_pad_to_bars_and_bar_line(gen):
     ids = gen.tokenizer(_phrase(2, extra_beats=1)).ids     # 2 bars + 1 beat
     assert gen.count_bars(ids) == 3
     assert not gen.ends_on_bar_line(ids)
+    closed = gen.close_bar(ids)
+    assert gen.count_bars(closed) == 3 and gen.ends_on_bar_line(closed)
+    assert gen.close_bar(closed) == closed
     padded = gen.pad_to_bars(ids, 4)
     assert gen.count_bars(padded) == 4 and gen.ends_on_bar_line(padded)
     with pytest.raises(ValueError):

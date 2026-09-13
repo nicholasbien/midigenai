@@ -293,6 +293,14 @@ class Generator:
                   self.tokenizer.vocab["TimeSig_4/4"])
         return list(ids) + [self.bar_id, ts] * (n_bars - have)
 
+    def close_bar(self, ids: list[int]) -> list[int]:
+        """Pad an open bar to its bar line (no-op if already on one), so a
+        continuation starts on the downbeat."""
+        self._require_v4("close_bar")
+        if self.ends_on_bar_line(ids):
+            return list(ids)
+        return self.pad_to_bars(ids, self.count_bars(ids) + 1)
+
     def ends_on_bar_line(self, ids) -> bool:
         """True when the last musical token is a Bar (or Bar TimeSig) pair."""
         if not self.v4 or not ids:
@@ -389,7 +397,7 @@ class Generator:
         if self.v4:
             from .sequence_format import continuation_prompt
             if bars:
-                prompt = self.pad_to_bars(prompt, self.count_bars(prompt))
+                prompt = self.close_bar(prompt)
             prompt = continuation_prompt(self.sp, list(header), prompt)
             gen_kwargs.setdefault("stop_after_bars", bars)
         yield from self.generate_ids(prompt, **gen_kwargs)
