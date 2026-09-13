@@ -21,13 +21,17 @@
   .flash { animation: flash 0.4s; }
   .hint { font-size: 12px; color: #888; margin-top: 10px; }
   @keyframes flash { 0% { background: #ecfdf5; } 100% { background: #fafafa; } }
+.modelbar { font-size: 12px; color: #555; margin: 6px 0; }
+.tokens pre { max-height: 160px; overflow: auto; font-size: 11px; line-height: 1.4; white-space: pre-wrap; background: #f6f6f6; padding: 6px; }
+.flags { font-size: 13px; margin: 4px 0; min-height: 18px; }
+.flags .on { background: #ffe8a3; padding: 2px 6px; border-radius: 4px; }
 </style>
 </head>
 <body>
   <h1>midigenai — corpus quality rating</h1>
   <div class="sub">Rate the <b>craft</b> of the excerpt, not whether you like the genre.
     <kbd>5</kbd> excellent &nbsp;<kbd>4</kbd> good &nbsp;<kbd>3</kbd> okay &nbsp;<kbd>2</kbd> poor &nbsp;<kbd>1</kbd> junk
-    &nbsp;·&nbsp; <kbd>j</kbd> broken/junk &nbsp;<kbd>s</kbd> skip &nbsp;<kbd>r</kbd> replay &nbsp;<kbd>space</kbd> play/pause
+    &nbsp;·&nbsp; <kbd>j</kbd> broken/junk &nbsp;<kbd>s</kbd> skip &nbsp;<kbd>r</kbd> replay &nbsp;<kbd>space</kbd> play/pause &nbsp;<kbd>d</kbd> flag: drums rendered as piano (then rate)
     &nbsp;·&nbsp; <a href="/stats" target="_blank">stats</a></div>
   <div class="statusbar"><span id="count">0 rated this session</span><span id="queue"></span></div>
   <div id="stage" class="card"><div class="waiting">preparing excerpts…</div></div>
@@ -35,7 +39,21 @@
 
 <script>
 const SESSION_ID = crypto.randomUUID();
-let current = null;          // {item_id, url}
+let current = null;          // {item_id, url, model_url?, tokens?}
+let showOriginal = false;    // as-model mode: 'o' toggles original vs model view
+let pendingFlags = new Set(); // data-issue flags attached to the next rating ('d')
+
+function toggleFlag(f) {
+  if (pendingFlags.has(f)) pendingFlags.delete(f); else pendingFlags.add(f);
+  renderFlags();
+}
+function renderFlags() {
+  const el = document.getElementById('flags');
+  if (!el) return;
+  el.innerHTML = pendingFlags.size
+    ? [...pendingFlags].map(f => `<span class="on">${f.replace(/_/g, ' ')}</span>`).join(' ') + ' — now rate 1–5'
+    : '';
+}
 let sessionCount = 0;
 let totalCount = 0;
 let shownAt = 0;
@@ -81,8 +99,16 @@ function render() {
   const stage = document.getElementById('stage');
   stage.classList.add('flash');
   setTimeout(() => stage.classList.remove('flash'), 400);
+  const asModel = !!current.model_url;
+  showOriginal = false;
+  const src = asModel ? current.model_url : current.url;
+  const tokenPanel = asModel ? `
+    <div class="modelbar"><b id="viewlabel">model view</b> — tokenized &amp; decoded (1/8-beat grid, 32 velocity bins, tempo re-applied) · ${current.n_tokens} tokens · <kbd>o</kbd> toggle original</div>
+    <details class="tokens" open><summary>token stream (what the transformer reads)</summary><pre>${current.tokens.slice(0, 20000)}</pre></details>` : '';
   stage.innerHTML = `
-    <midi-player id="player" src="${current.url}" sound-font></midi-player>
+    <midi-player id="player" src="${src}" sound-font></midi-player>
+    ${tokenPanel}
+    <div id="flags" class="flags"></div>
     <div class="buttons">
       <button class="rate" onclick="rate(5)">5 excellent<kbd>5</kbd></button>
       <button class="rate" onclick="rate(4)">4 good<kbd>4</kbd></button>
@@ -98,6 +124,15 @@ function render() {
   // Browsers only allow audio after a user gesture; from the second item on
   // playback starts automatically so rating is hands-on-keyboard.
   p.addEventListener('load', () => { if (userHasInteracted) { try { p.start(); } catch (e) {} } });
+}
+
+function toggleOriginal() {
+  if (!current || !current.model_url) return;
+  showOriginal = !showOriginal;
+  const p = player();
+  try { p.stop(); } catch (e) {}
+  p.src = showOriginal ? current.url : current.model_url;
+  document.getElementById('viewlabel').textContent = showOriginal ? 'ORIGINAL (not what the model sees)' : 'model view';
 }
 
 function replay() {
@@ -119,8 +154,10 @@ async function act(action, rating) {
     session_id: SESSION_ID,
     item_id: current.item_id,
     action, rating,
+    flags: [...pendingFlags],
     listen_seconds: Math.round((Date.now() - shownAt) / 100) / 10,
   };
+  pendingFlags = new Set();
   try { const p = player(); if (p && p.playing) p.stop(); } catch (e) {}
   try {
     const res = await fetch('/api/rate', { method: 'POST',
@@ -146,6 +183,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'j') { e.preventDefault(); act('junk'); return; }
   if (e.key === 's') { e.preventDefault(); act('skip'); return; }
   if (e.key === 'r') { e.preventDefault(); replay(); return; }
+  if (e.key === 'o') { e.preventDefault(); toggleOriginal(); return; }
+  if (e.key === 'd') { e.preventDefault(); toggleFlag('drums_as_piano'); return; }
   if (e.key === ' ') { e.preventDefault(); togglePlay(); return; }
 });
 document.addEventListener('pointerdown', () => { userHasInteracted = true; });

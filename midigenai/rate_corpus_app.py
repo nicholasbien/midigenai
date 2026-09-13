@@ -55,6 +55,9 @@ MIN_EXCERPT_NOTES = 8       # windows with fewer notes are silence/tails: retry
 WINDOW_TRIES = 4
 
 
+RATER_FLAGS = {"drums_as_piano"}   # 'd' key: a drum part playing as pitched piano
+
+
 def utcnow() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
@@ -207,6 +210,25 @@ def extract_excerpt(score, start: int, end: int):
         track.controls = [c for c in track.controls if c.time >= 0]
         track.pitch_bends = [c for c in track.pitch_bends if c.time >= 0]
     return ex
+
+
+def model_view(excerpt, tokenizer):
+    """What the model learns from this excerpt: the excerpt tokenized and
+    decoded again (onsets/durations on the tokenizer's 1/8-beat grid,
+    velocities in 32 bins, mislabeled drum tracks promoted), with the
+    excerpt's tempo re-applied for playback since training strips tempo.
+    Returns (roundtrip Score, token names)."""
+    from symusic import Tempo
+
+    from midigenai.tokenizer import normalize_drums
+    ex = excerpt.copy()
+    normalize_drums(ex, "")
+    toks = tokenizer(ex)
+    names = list(toks.tokens) if hasattr(toks, "tokens") else []
+    rt = tokenizer.decode(toks.ids)
+    qpm = excerpt.tempos[0].qpm if len(excerpt.tempos) else 120.0
+    rt.tempos = [Tempo(time=0, qpm=qpm)]
+    return rt, names
 
 
 def excerpt_id(path: str, start: int, end: int) -> str:
@@ -367,7 +389,13 @@ class ExcerptFactory:
     """Pre-renders excerpts in a background thread so the rater never waits."""
 
     def __init__(self, pools: dict[str, list[dict]], weights: dict[str, float],
-                 excerpts_dir: Path, seed: int, queue_size: int = 5):
+                 excerpts_dir: Path, seed: int, queue_size: int = 5,
+                 as_model: bool = False):
+        self.as_model = as_model
+        self.tokenizer = None
+        if as_model:
+            from midigenai.tokenizer import build_tokenizer
+            self.tokenizer = build_tokenizer()
         self.pools = {s: list(p) for s, p in pools.items() if s in weights}
         self.cursor = {s: 0 for s in self.pools}
         self.weights = weights
@@ -414,7 +442,9 @@ class ExcerptFactory:
         midi_path = self.excerpts_dir / f"{eid}.mid"
         if not midi_path.exists():
             excerpt.dump_midi(midi_path)
+        extra = self._model_extra(eid, excerpt)
         return {
+            **extra,
             "item_id": uuid.uuid4().hex[:12],
             "excerpt_id": eid,
             "path": row["path"],
@@ -429,23 +459,37 @@ class ExcerptFactory:
             "is_repeat": False,
         }
 
+    def _model_extra(self, eid: str, excerpt) -> dict:
+        """as-model view: roundtrip MIDI next to the excerpt + token names."""
+        if not self.as_model:
+            return {}
+        model_path = self.excerpts_dir / f"{eid}.model.mid"
+        rt, names = model_view(excerpt, self.tokenizer)
+        rt.dump_midi(model_path)
+        return {"as_model": True, "model_file": str(model_path),
+                "tokens": names, "n_tokens": len(names)}
+
     def reextract(self, record: dict) -> dict | None:
         """Rebuild a previously rated excerpt (for repeats) from its log row."""
         from symusic import Score
         eid = record["excerpt_id"]
         midi_path = self.excerpts_dir / f"{eid}.mid"
-        if not midi_path.exists():
-            try:
+        try:
+            if not midi_path.exists() or self.as_model:
                 score = Score(record["path"])
-                extract_excerpt(score, record["start_tick"],
-                                record["end_tick"]).dump_midi(midi_path)
-            except Exception as e:
-                print(f"[rate] cannot rebuild repeat {eid}: {e}")
-                return None
+                excerpt = extract_excerpt(score, record["start_tick"], record["end_tick"])
+                if not midi_path.exists():
+                    excerpt.dump_midi(midi_path)
+                extra = self._model_extra(eid, excerpt)
+            else:
+                extra = {}
+        except Exception as e:
+            print(f"[rate] cannot rebuild repeat {eid}: {e}")
+            return None
         item = {k: record[k] for k in ("excerpt_id", "path", "source", "start_tick",
                                        "end_tick", "start_seconds", "end_seconds")
                 if k in record}
-        item.update({"item_id": uuid.uuid4().hex[:12], "n_bars": record.get("n_bars"),
+        item.update({**extra, "item_id": uuid.uuid4().hex[:12], "n_bars": record.get("n_bars"),
                      "features": record.get("features") or {},
                      "excerpt_file": str(midi_path), "is_repeat": True})
         return item
@@ -485,7 +529,7 @@ def build_app(args):
     weights = parse_source_weights(args.source_weights, sorted(pools))
     print(f"[rate] source weights: {weights}")
     factory = ExcerptFactory(pools, weights, excerpts_dir, args.seed,
-                             queue_size=args.queue_size)
+                             queue_size=args.queue_size, as_model=args.as_model)
 
     app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
     pending: dict[str, dict] = {}           # item_id -> full item (server-side only)
@@ -511,7 +555,14 @@ def build_app(args):
 
     def public(item: dict) -> dict:
         # BLIND: the browser only ever sees an opaque id and the audio url
-        return {"item_id": item["item_id"], "url": f"/midi/{item['excerpt_id']}.mid"}
+        # (plus, in --as-model mode, the tokenizer roundtrip and its tokens,
+        # which carry no identifying information either)
+        out = {"item_id": item["item_id"], "url": f"/midi/{item['excerpt_id']}.mid"}
+        if item.get("as_model"):
+            out["model_url"] = f"/midi/{item['excerpt_id']}.model.mid"
+            out["tokens"] = " ".join(item.get("tokens") or [])
+            out["n_tokens"] = item.get("n_tokens")
+        return out
 
     @app.route("/")
     def index():
@@ -552,6 +603,9 @@ def build_app(args):
             rating, flags = 1, ["junk"]
         elif action != "skip":
             return jsonify({"error": f"bad action {action!r}"}), 400
+        # data-issue flags toggled by the rater (kept separate from the
+        # rating so they can drive pipeline fixes, e.g. drum promotion)
+        flags += [f for f in (data.get("flags") or []) if f in RATER_FLAGS and f not in flags]
         record = {
             "ts": utcnow(),
             "session_id": data.get("session_id", ""),
@@ -566,6 +620,7 @@ def build_app(args):
             "rating": rating,
             "flags": flags,
             "is_repeat": bool(item.get("is_repeat")),
+            "as_model": bool(item.get("as_model")),
             "skipped": rating is None,
             "listen_seconds": data.get("listen_seconds"),
             "features": item["features"],
@@ -621,6 +676,10 @@ def main(argv=None):
     p.add_argument("--queue-size", type=int, default=5)
     p.add_argument("--next-timeout", type=float, default=20.0)
     p.add_argument("--port", type=int, default=7795)
+    p.add_argument("--as-model", action="store_true",
+                   help="play the excerpt as the model sees it: tokenized and "
+                        "decoded (1/8-beat grid, 32 velocity bins, tempo re-applied) "
+                        "and show the token stream; 'o' toggles the original")
     args = p.parse_args(argv)
     if not args.manifests:
         args.manifests = [m for m in (Path(x).expanduser() for x in DEFAULT_MANIFESTS)
