@@ -390,7 +390,11 @@ class ExcerptFactory:
 
     def __init__(self, pools: dict[str, list[dict]], weights: dict[str, float],
                  excerpts_dir: Path, seed: int, queue_size: int = 5,
-                 as_model: bool = False):
+                 as_model: bool = False, exclude_paths: set[str] | None = None):
+        # files already rated in earlier sessions are never served as new
+        # items again (blind repeats go through reextract instead), so a
+        # restart with the same seed picks up where the rater left off
+        self.exclude_paths = set(exclude_paths or ())
         self.as_model = as_model
         self.tokenizer = None
         if as_model:
@@ -415,6 +419,8 @@ class ExcerptFactory:
         src = self.rng.choices(live, weights=[self.weights[s] for s in live])[0]
         row = self.pools[src][self.cursor[src]]
         self.cursor[src] += 1
+        if row["path"] in self.exclude_paths:
+            return self._next_row()
         return row
 
     def make_item(self, row: dict) -> dict | None:
@@ -528,9 +534,13 @@ def build_app(args):
         raise SystemExit("no eligible files in the given manifests")
     weights = parse_source_weights(args.source_weights, sorted(pools))
     print(f"[rate] source weights: {weights}")
+    already = {r["path"] for r in load_ratings(log_path) if r.get("path")}
+    if already:
+        print(f"[rate] {len(already)} files already rated/seen; they will not be served again")
     factory = ExcerptFactory(pools, weights, excerpts_dir, args.seed,
                              queue_size=args.queue_size,
-                             as_model=getattr(args, "as_model", False))
+                             as_model=getattr(args, "as_model", False),
+                             exclude_paths=already)
 
     app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
     pending: dict[str, dict] = {}           # item_id -> full item (server-side only)
