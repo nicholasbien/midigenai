@@ -132,10 +132,13 @@ def build_prompt(prompt_abc: str, a_abc: str, b_abc: str) -> str:
 
 
 def ask(client, model: str, user: str, temperature: float = 0.0) -> tuple[str, str]:
-    r = client.chat.completions.create(
-        model=model, temperature=temperature,
-        messages=[{"role": "system", "content": SYSTEM},
-                  {"role": "user", "content": user}])
+    kw = {"model": model,
+          "messages": [{"role": "system", "content": SYSTEM},
+                       {"role": "user", "content": user}]}
+    # the reasoning models (gpt-5.x) reject any temperature but their default
+    if temperature is not None and not model.startswith("gpt-5."):
+        kw["temperature"] = temperature
+    r = client.chat.completions.create(**kw)
     txt = (r.choices[0].message.content or "").strip()
     m = re.search(r'\{.*\}', txt, re.S)
     if not m:

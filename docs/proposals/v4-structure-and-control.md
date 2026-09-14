@@ -342,6 +342,26 @@ About three weeks end to end, one production retrain.
   candidates in `jam.py` / serving, keep the highest mean log-prob. Costs one
   forward pass per candidate, needs no training, and cannot mode-collapse the
   way optimizing likelihood with RL would. Independent of v4.
+- **LLM-as-judge (validated 2026-09-14, 59 human-voted v3 pairs).** Each pair
+  judged twice with sides swapped; verdict kept only when the two agree.
+
+  | judge | decided | agreement | ±se | net correct/60 | swap consistency |
+  |---|---|---|---|---|---|
+  | gpt-5.6-sol / notes | 51/59 | 0.725 | 0.062 | 0.627 | 0.864 |
+  | gpt-5.6-luna / notes | 43/59 | 0.767 | 0.064 | 0.559 | 0.729 |
+  | gpt-4.1-mini / abc | 52/59 | 0.673 | 0.065 | 0.593 | 0.881 |
+  | gpt-4.1-mini / notes | 39/59 | 0.692 | 0.074 | 0.458 | 0.661 |
+  | gpt-5.6-sol / abc | 42/59 | 0.595 | 0.076 | 0.424 | 0.712 |
+
+  References: 10-metric reward 0.658, model log-prob 0.717, human
+  self-consistency 0.88. Takeaways: the **bar-by-bar note list beats ABC**
+  for the stronger model (0.725 vs 0.595 — our midi2abc output is dense tied
+  chord brackets, not the folk-tune ABC these models learned); model strength
+  helps (4.1-mini 0.692 -> sol 0.725 -> luna 0.767 on notes); but standard
+  errors are ~0.065, so sol and luna are not separable at n=59, and only
+  luna clears the log-prob baseline by more than noise. Best overall by net
+  correct answers **and** reliability is **sol on notes**. Next: a larger
+  validation (200+ pairs) before generating bulk RLAIF labels.
 - **Neural reward head.** The proper version of `reward_probe`: scalar head on
   the music model, Bradley-Terry loss, trained once preference data reaches
   ~1000+ pairs. A 769-feature linear probe already memorizes at 122 pairs
