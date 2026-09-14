@@ -7,3 +7,44 @@
 [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on http://127.0.0.1:7798
 [33mPress CTRL+C to quit[0m
+127.0.0.1 - - [14/Sep/2026 02:29:19] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:19] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:19] "GET /midi/20260914022910_ad8c2a15_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:19] "GET /midi/20260914022910_ad8c2a15_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:19] "[36mGET /midi/20260914022910_ad8c2a15_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:19] "[36mGET /midi/20260914022910_ad8c2a15_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:19] "[36mGET /midi/20260914022910_ad8c2a15_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:19] "[36mGET /midi/20260914022910_ad8c2a15_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:32] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:32] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:32] "GET /midi/20260914022912_92e8a4e1_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:32] "GET /midi/20260914022912_92e8a4e1_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:32] "[36mGET /midi/20260914022912_92e8a4e1_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:32] "[36mGET /midi/20260914022912_92e8a4e1_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:32] "[36mGET /midi/20260914022912_92e8a4e1_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:32] "[36mGET /midi/20260914022912_92e8a4e1_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:48] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:48] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:48] "GET /midi/20260914022913_538bd8b4_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:48] "GET /midi/20260914022913_538bd8b4_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:29:48] "[36mGET /midi/20260914022913_538bd8b4_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:48] "[36mGET /midi/20260914022913_538bd8b4_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:48] "[36mGET /midi/20260914022913_538bd8b4_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:29:48] "[36mGET /midi/20260914022913_538bd8b4_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:30:06] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:30:06] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:30:06] "GET /midi/20260914022915_f349c827_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:30:06] "GET /midi/20260914022915_f349c827_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:30:06] "[36mGET /midi/20260914022915_f349c827_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:30:06] "[36mGET /midi/20260914022915_f349c827_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:30:06] "[36mGET /midi/20260914022915_f349c827_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:30:06] "[36mGET /midi/20260914022915_f349c827_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:30:14] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:30:14] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:30:14] "GET /midi/20260914022917_580f1e07_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:30:14] "GET /midi/20260914022917_580f1e07_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:30:14] "[36mGET /midi/20260914022917_580f1e07_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:30:14] "[36mGET /midi/20260914022917_580f1e07_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:30:14] "[36mGET /midi/20260914022917_580f1e07_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:30:14] "[36mGET /midi/20260914022917_580f1e07_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:30:45] "GET /api/next HTTP/1.1" 200 -

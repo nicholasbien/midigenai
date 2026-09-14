@@ -502,7 +502,7 @@ def main():
                    help="model B's temperature (cross-model fairness); defaults to --temperature")
     p.add_argument("--top-k", type=int, default=50)
     # plumbing
-    p.add_argument("--queue-size", type=int, default=4)
+    p.add_argument("--queue-size", type=int, default=12)
     p.add_argument("--next-timeout", type=float, default=25.0)
     p.add_argument("--dup-rate", type=float, default=0.1,
                    help="probability of blindly re-serving an already-voted "

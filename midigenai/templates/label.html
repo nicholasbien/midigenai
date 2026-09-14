@@ -169,6 +169,7 @@ function render() {
   p.left_roll.url = p.left_timeline_url; p.right_roll.url = p.right_timeline_url;
   stage.innerHTML = `
     <div class="legend">Prompt <span style="font-weight:400;color:#4f46e5">· ${p.prompt_source || ''}</span> <span style="color:#999">${p.prompt_name || ''}</span>
+      <span id="loadnote" style="color:#b45309"></span>
       &nbsp;·&nbsp; shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays 1 with the prompt, then 2 from the red line on; <kbd>space</kbd> replays both, <kbd>a</kbd> replays 1 with the prompt, <kbd>b</kbd> replays 2.</div>
     <div class="rows">
       <div class="opt" id="opt-left">
@@ -209,10 +210,21 @@ function render() {
   // players fire 'load' once the soundfont/sequence is ready; start the
   // sequence after both are loaded (browsers require a prior user gesture,
   // which the first vote provides; the first pair needs one click).
-  let loaded = 0;
-  const arm = () => { loaded++; if (loaded === 2 && userHasInteracted) setTimeout(() => playSequence('both'), 200); };
-  document.getElementById('pl-left').addEventListener('load', arm);
-  document.getElementById('pl-right').addEventListener('load', arm);
+  // Start as soon as row 1 can play. Waiting for both players meant one slow
+  // soundfont download (a new instrument the CDN hasn't cached) looked like a
+  // hang; a timer starts anyway if the load event never arrives.
+  let started = false;
+  const note = document.getElementById('loadnote');
+  const begin = (why) => {
+    if (started || !userHasInteracted) return;
+    started = true;
+    if (note) note.textContent = '';
+    playSequence('both');
+  };
+  const left = document.getElementById('pl-left');
+  if (note) note.textContent = 'loading sounds…';
+  left.addEventListener('load', () => begin('load'));
+  setTimeout(() => begin('timeout'), 4000);
 }
 
 let userHasInteracted = false;
