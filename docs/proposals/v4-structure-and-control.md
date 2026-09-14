@@ -331,6 +331,23 @@ checkpoints:
 
 About three weeks end to end, one production retrain.
 
+## Parked ideas (good, not now)
+
+- **Best-of-n by model likelihood at inference.** Measured 2026-09-14 on 120
+  same-model v3 pairs: the base model's own mean log-probability of a
+  continuation predicts the human vote **0.717** of the time held-out, versus
+  0.658 for the fitted 10-metric reward and a 0.88 labeler ceiling. Not a
+  length artifact (corr with length difference -0.07). Combining it with the
+  metrics scores *worse* (0.667) than likelihood alone. So: sample n
+  candidates in `jam.py` / serving, keep the highest mean log-prob. Costs one
+  forward pass per candidate, needs no training, and cannot mode-collapse the
+  way optimizing likelihood with RL would. Independent of v4.
+- **Neural reward head.** The proper version of `reward_probe`: scalar head on
+  the music model, Bradley-Terry loss, trained once preference data reaches
+  ~1000+ pairs. A 769-feature linear probe already memorizes at 122 pairs
+  (0.99 train / 0.60 held-out), so more capacity needs more labels, not
+  cleverer regularization.
+
 ## Explicitly deferred
 
 - Anticipatory (arrival-time) interleaving: revisit only if a use case for
