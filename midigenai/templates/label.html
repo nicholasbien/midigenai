@@ -37,13 +37,21 @@
   .flash { animation: flash 0.4s; }
   /* phone: thumb-sized targets, no hover-only affordances, no key hints */
   @media (max-width: 760px) {
-    body { margin: 12px auto; padding: 0 10px; }
-    .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-    button { padding: 16px 12px; font-size: 15px; }
+    body { margin: 6px auto; padding: 0 8px; }
+    /* both continuations have to fit one screen: drop the prose, the chrome,
+       and the built-in transport (the roll already shows position) */
+    h1, .sub, .legend, .hint, .statusbar, .eid { display: none; }
+    midi-player { display: none; }
+    .card { padding: 8px; }
+    .opt { padding: 8px; margin-bottom: 6px; }
+    .opt h3 { margin: 0 0 4px; font-size: 12px; }
+    .rowplay { margin-top: 6px; gap: 6px; }
+    .chips { margin-top: 4px; }
+    .chip { padding: 2px 8px; font-size: 11px; }
+    .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    button { padding: 14px 10px; font-size: 15px; }
     button.wide { grid-column: 1 / -1; }
     kbd { display: none; }
-    .legend, .sub { font-size: 12px; }
-    .opt { padding: 10px; }
   }
   .rowplay { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
   .rowplay button { padding: 8px 12px; font-size: 12px; }

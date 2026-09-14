@@ -9,12 +9,37 @@
 [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on http://127.0.0.1:7797
 [33mPress CTRL+C to quit[0m
-127.0.0.1 - - [14/Sep/2026 12:44:40] "POST /api/vote HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 12:44:40] "GET /api/next HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 12:44:40] "GET /midi/20260914124357_3e022d85_b_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 12:44:40] "GET /midi/20260914124357_3e022d85_a_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 12:44:40] "GET /midi/20260914124357_3e022d85_b_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 12:44:40] "GET /midi/20260914124357_3e022d85_a_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 12:44:40] "GET /midi/20260914124357_3e022d85_a_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 12:44:40] "GET /midi/20260914124357_3e022d85_b_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 12:45:32] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:45:56] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:45:56] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:45:57] "GET /midi/20260914124554_7b7bfc98_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:45:57] "GET /midi/20260914124554_7b7bfc98_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:45:57] "GET /midi/20260914124554_7b7bfc98_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:45:57] "GET /midi/20260914124554_7b7bfc98_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:45:57] "GET /midi/20260914124554_7b7bfc98_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:45:57] "GET /midi/20260914124554_7b7bfc98_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:26] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:26] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:26] "GET /midi/20260914124555_58dc6f8c_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:26] "GET /midi/20260914124555_58dc6f8c_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:26] "GET /midi/20260914124555_58dc6f8c_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:26] "GET /midi/20260914124555_58dc6f8c_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:26] "GET /midi/20260914124555_58dc6f8c_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:26] "GET /midi/20260914124555_58dc6f8c_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:49] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:49] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:49] "GET /midi/20260914124556_f02c416a_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:49] "GET /midi/20260914124556_f02c416a_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:49] "GET /midi/20260914124556_f02c416a_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:49] "GET /midi/20260914124556_f02c416a_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:49] "GET /midi/20260914124556_f02c416a_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:46:49] "GET /midi/20260914124556_f02c416a_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:11] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:11] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:11] "GET /midi/20260914124556_805d6008_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:11] "GET /midi/20260914124556_805d6008_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:11] "GET /midi/20260914124556_805d6008_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:11] "GET /midi/20260914124556_805d6008_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:11] "GET /midi/20260914124556_805d6008_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:11] "GET /midi/20260914124556_805d6008_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:29] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 12:47:29] "GET / HTTP/1.1" 200 -
