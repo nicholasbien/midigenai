@@ -381,6 +381,16 @@ About three weeks end to end, one production retrain.
   optimistic until re-measured on more pairs. Judging prompt-fit alone
   (`fit_only`) is the most self-consistent rubric but the least aligned: what
   this labeler rewards is not fit alone.
+
+  **Is the judge just re-deriving model log-probability?** Partly, but not
+  entirely. On the 75 v3 pairs with both signals: judge right 0.800, log-prob
+  right 0.760, the two agree with each other 0.747. On the 18 pairs where
+  **log-prob picks the wrong side, the judge is right 11/18 = 0.611** (se
+  0.118, chance 0.5) - suggestive of complementary signal but not significant
+  at this sample size. Where log-prob is right the judge is right 0.860. Net:
+  the judge is worth paying for as a *labeler* (it is right more often, and
+  independently right on some pairs), but this is the check to repeat at
+  n>=200 on v4 pairs before spending on bulk labeling.
 - **Neural reward head.** The proper version of `reward_probe`: scalar head on
   the music model, Bradley-Terry loss, trained once preference data reaches
   ~1000+ pairs. A 769-feature linear probe already memorizes at 122 pairs
