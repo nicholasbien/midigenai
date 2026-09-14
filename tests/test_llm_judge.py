@@ -102,3 +102,24 @@ def test_to_notes_is_readable_and_names_drums():
     assert "0:Kick" in txt and "2:HatClosed" in txt   # named, not pitch numbers
     assert render(p, "notes") == txt and render(p, "abc") != txt
     assert to_notes(tmp / "nope.mid") is None
+
+
+def test_prompt_variants_and_split():
+    """Variants share the JSON contract; dev/test split is disjoint and stable."""
+    from midigenai.llm_judge import PROMPTS, load_cases
+
+    assert {"base", "taste", "strict", "fit_only"} <= set(PROMPTS)
+    for name, text in PROMPTS.items():
+        assert '"winner"' in text and "JSON only" in text, name
+    assert PROMPTS["taste"] != PROMPTS["base"]
+    assert "restraint beats busyness" in PROMPTS["taste"]
+    assert "abstention costs nothing" in PROMPTS["strict"]
+
+    labels = Path("evals/labeling_v3_same/labels.jsonl")
+    if not labels.exists():
+        return
+    dev = {c[0] for c in load_cases(labels, 0, 0, "dev")}
+    test = {c[0] for c in load_cases(labels, 0, 0, "test")}
+    allc = {c[0] for c in load_cases(labels, 0, 0, "all")}
+    assert dev and test and not (dev & test) and dev | test == allc
+    assert dev == {c[0] for c in load_cases(labels, 0, 0, "dev")}   # deterministic

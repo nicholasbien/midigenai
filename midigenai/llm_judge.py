@@ -31,7 +31,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-SYSTEM = """You judge short continuations of a musical phrase, written in symbolic notation.
+PROMPTS: dict[str, str] = {}
+
+PROMPTS["base"] = """You judge short continuations of a musical phrase, written in symbolic notation.
 
 You are given a PROMPT (the phrase a musician played) and two candidate
 CONTINUATIONS produced by a music model. Pick the one a working musician
@@ -49,6 +51,43 @@ Ignore genre preference: a well-made polka beats a sloppy nocturne. Ignore
 length. If they are genuinely equal, say "tie" — do not guess.
 
 Reply with JSON only: {"winner": "1" | "2" | "tie", "reason": "<12 words>"}"""
+
+# What the labeler's own votes revealed (Bradley-Terry fit over 120 pairs,
+# 2026-09-14): the strongest weights are *negative* on rhythmic entropy
+# (-0.84) and note density (-0.43), mildly positive on repetition. In plain
+# terms this labeler picks the calmer, steadier, more groove-like take over
+# the busier one. "taste" states that; "strict" adds an abstention rule,
+# since a judge that guesses on coin-flips only adds noise to the data.
+PROMPTS["taste"] = PROMPTS["base"].replace(
+    "Ignore genre preference:",
+    """Two tendencies of the listener you stand in for, when the choice is close:
+  * restraint beats busyness \u2014 fewer, better-placed notes over a flurry;
+  * a steady, repeating groove beats rhythmic scattering. Repetition with
+    intent is a strength here, not a weakness.
+These break ties; they never outrank fit with the prompt or obvious defects.
+
+Ignore genre preference:""")
+
+PROMPTS["strict"] = PROMPTS["taste"].replace(
+    "If they are genuinely equal, say \"tie\" \u2014 do not guess.",
+    """Answer "tie" whenever you would be guessing: an abstention costs nothing,
+a coin-flip verdict poisons the data. Name a winner only if you could defend
+it in one sentence to the musician who played the prompt.""")
+
+PROMPTS["fit_only"] = """You judge short continuations of a musical phrase, written in symbolic notation.
+
+You are given a PROMPT (the phrase a musician played) and two candidate
+CONTINUATIONS. Judge one thing: which one sounds like it belongs to the same
+piece of music as the prompt?
+
+Same key and harmony, same groove and subdivision, same register and density,
+the instruments behaving as they behaved. A continuation that is pleasant on
+its own but unrelated to the prompt loses to a plainer one that clearly
+belongs.
+
+Reply with JSON only: {"winner": "1" | "2" | "tie", "reason": "<12 words>"}"""
+
+SYSTEM = PROMPTS["base"]
 
 
 PITCH_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -131,9 +170,10 @@ def build_prompt(prompt_abc: str, a_abc: str, b_abc: str) -> str:
             "Which continuation is better? JSON only.")
 
 
-def ask(client, model: str, user: str, temperature: float = 0.0) -> tuple[str, str]:
+def ask(client, model: str, user: str, temperature: float = 0.0,
+        system: str | None = None) -> tuple[str, str]:
     kw = {"model": model,
-          "messages": [{"role": "system", "content": SYSTEM},
+          "messages": [{"role": "system", "content": system or SYSTEM},
                        {"role": "user", "content": user}]}
     # the reasoning models (gpt-5.x) reject any temperature but their default
     if temperature is not None and not model.startswith("gpt-5."):
@@ -151,10 +191,10 @@ def ask(client, model: str, user: str, temperature: float = 0.0) -> tuple[str, s
     return (w if w in ("1", "2", "tie") else "tie"), str(d.get("reason", ""))[:80]
 
 
-def judge_pair(client, model, prompt_abc, a_abc, b_abc) -> dict:
+def judge_pair(client, model, prompt_abc, a_abc, b_abc, system=None) -> dict:
     """Judged twice with the sides swapped; a stable judge gives mirrored answers."""
-    w1, r1 = ask(client, model, build_prompt(prompt_abc, a_abc, b_abc))
-    w2, r2 = ask(client, model, build_prompt(prompt_abc, b_abc, a_abc))
+    w1, r1 = ask(client, model, build_prompt(prompt_abc, a_abc, b_abc), system=system)
+    w2, r2 = ask(client, model, build_prompt(prompt_abc, b_abc, a_abc), system=system)
     flip = {"1": "2", "2": "1", "tie": "tie"}
     w2_unswapped = flip[w2]
     consistent = w1 == w2_unswapped
@@ -163,8 +203,13 @@ def judge_pair(client, model, prompt_abc, a_abc, b_abc) -> dict:
             "consistent": consistent, "reason": r1 or r2}
 
 
-def load_cases(labels_path: Path, limit: int, seed: int):
-    """Decided human votes with their MIDI files, as (pair_id, human, paths)."""
+def load_cases(labels_path: Path, limit: int, seed: int, split: str = "all"):
+    """Decided human votes with their MIDI files, as (pair_id, human, paths).
+
+    `split` partitions by a hash of the pair id: tune prompts on "dev" and
+    report on "test", or the number you report is just the tuning score.
+    """
+    import hashlib
     pairs_dir = labels_path.parent / "pairs"
     out = []
     for line in labels_path.read_text().splitlines():
@@ -178,6 +223,10 @@ def load_cases(labels_path: Path, limit: int, seed: int):
         lose = "b" if win == "a" else "a"
         p, w, l = (pairs_dir / f"{pid}_prompt.mid", pairs_dir / f"{pid}_{win}.mid",
                    pairs_dir / f"{pid}_{lose}.mid")
+        if split != "all":
+            h = int(hashlib.sha1(pid.encode()).hexdigest(), 16) % 2
+            if (h == 0) != (split == "dev"):
+                continue
         if p.exists() and w.exists() and l.exists():
             out.append((pid, win, p, w, l))
     random.Random(seed).shuffle(out)
@@ -189,8 +238,12 @@ def validate(args) -> None:
     if not os.environ.get("OPENAI_API_KEY"):
         raise SystemExit("set OPENAI_API_KEY")
     client = OpenAI()
-    cases = load_cases(args.labels, args.limit, args.seed)
-    print(f"[judge] {len(cases)} human-voted pairs, model={args.model}")
+    system = (Path(args.system_file).read_text() if args.system_file
+              else PROMPTS[args.prompt])
+    cases = load_cases(args.labels, args.limit, args.seed, split=args.split)
+    print(f"[judge] {len(cases)} human-voted pairs, model={args.model}, "
+          f"format={args.format}, prompt={args.system_file or args.prompt}, "
+          f"split={args.split}")
 
     rng = random.Random(args.seed)
 
@@ -205,7 +258,7 @@ def validate(args) -> None:
         winner_first = rng.random() < 0.5
         first, second = (aw, al) if winner_first else (al, aw)
         try:
-            res = judge_pair(client, args.model, pa, first, second)
+            res = judge_pair(client, args.model, pa, first, second, system=system)
         except Exception as e:
             return {"pair_id": pid, "error": f"{type(e).__name__}: {e}"[:120]}
         human_side = "1" if winner_first else "2"
@@ -227,6 +280,7 @@ def validate(args) -> None:
     firsts = sum(r["first_pass"] == "1" for r in ok)
     out = {
         "model": args.model, "format": args.format,
+        "prompt": args.system_file or args.prompt, "split": args.split,
         "n": len(ok), "n_decided": len(decided),
         "agreement_with_human": agree / len(decided) if decided else None,
         "swap_consistency": swap_ok / len(ok),
@@ -254,6 +308,12 @@ def main() -> None:
     v = sub.add_parser("validate")
     v.add_argument("--labels", type=Path, required=True)
     v.add_argument("--model", default="gpt-4.1-mini")
+    v.add_argument("--prompt", choices=sorted(PROMPTS), default="base",
+                   help="which judging rubric to use")
+    v.add_argument("--system-file", type=Path, default=None,
+                   help="read the rubric from a file instead")
+    v.add_argument("--split", choices=["all", "dev", "test"], default="all",
+                   help="tune on dev, report on test")
     v.add_argument("--format", choices=["abc", "notes"], default="notes",
                    help="how the music is shown to the judge; validate both and "
                         "let agreement with the human decide")
