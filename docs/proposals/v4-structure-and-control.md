@@ -401,6 +401,31 @@ About three weeks end to end, one production retrain.
   own degree of repetition far more faithfully; the aggregate rise comes
   entirely from repetitive prompts. Treat the raw repetition metric as
   uninformative on its own from here on - use the prompt-conditional split.
+- **Accompaniment is the weak capability; diagnosed 2026-09-14.** Against a
+  chance baseline (the model's parts scored against a *different* window's
+  condition), 18 eight-bar windows:
+
+  | pitch-class overlap with the condition | |
+  |---|---|
+  | real accompaniment (ceiling) | 0.431 |
+  | model | 0.228 |
+  | chance (mismatched condition) | 0.160 |
+
+  The model closes only **25% of the chance-to-real gap**: it is listening to
+  the condition, but weakly. Bar contract is 67% at 8 bars and ~2% at 16
+  (the trained window length) - half of 16-bar generations are ended early by
+  a BOS, which the stop set treats as end-of-segment; worth chasing, the
+  raw stream reaches a median of 24 bars.
+  Root cause of the weakness is most likely data volume: accompaniment ended
+  up **13.6% of the corpus, not the 25% intended**, because Aria (33% of all
+  tokens, single-track piano) yields no accompaniment documents at all.
+  Fixes for the next build, in order of expected value:
+  1. Make Aria contribute: split solo piano into a left-hand condition and a
+     right-hand target (or by register). That converts a third of the corpus
+     from zero accompaniment to full participation.
+  2. Upweight multi-track sources with `--mixture` for accompaniment share.
+  3. Ban BOS until the requested bar count is reached, so the bar contract
+     holds at the trained 16-bar length.
 - **Neural reward head.** The proper version of `reward_probe`: scalar head on
   the music model, Bradley-Terry loss, trained once preference data reaches
   ~1000+ pairs. A 769-feature linear probe already memorizes at 122 pairs
