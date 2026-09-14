@@ -287,19 +287,26 @@ def phrase_start_offset_beats(score, start_tick=0, beats_per_bar=4):
 
 
 def pitch_class_overlap(score_a, score_b, tpq=None, bar_ticks=None):
-    """Mean per-bar Jaccard overlap of pitch-class sets between two scores on
-    a shared grid (accompaniment fit: generated parts vs the condition).
-    Drum tracks are ignored."""
-    tpq = tpq or max(score_a.ticks_per_quarter, 1)
-    bar_ticks = bar_ticks or tpq * 4
+    """Mean per-bar Jaccard overlap of pitch-class sets between two scores.
+    Drum tracks are ignored.
+
+    The two scores routinely arrive on different clocks: a decoded generation
+    carries the tokenizer's resolution (16 ticks per quarter) while a
+    condition taken from a file keeps the file's (often 480). Bucketing both
+    with one `bar_ticks` then compares bar 1 of one against bar 30 of the
+    other, so each score is bucketed on its OWN tick rate unless the caller
+    insists otherwise.
+    """
+    beats_per_bar = (bar_ticks / tpq) if (tpq and bar_ticks) else 4.0
 
     def per_bar(score):
+        own_bar = max(score.ticks_per_quarter, 1) * beats_per_bar
         out = {}
         for t in score.tracks:
             if t.is_drum:
                 continue
             for n in t.notes:
-                out.setdefault(n.start // bar_ticks, set()).add(n.pitch % 12)
+                out.setdefault(int(n.start // own_bar), set()).add(n.pitch % 12)
         return out
     a, b = per_bar(score_a), per_bar(score_b)
     bars = sorted(set(a) & set(b))

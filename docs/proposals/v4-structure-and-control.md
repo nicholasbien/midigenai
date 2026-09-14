@@ -401,7 +401,29 @@ About three weeks end to end, one production retrain.
   own degree of repetition far more faithfully; the aggregate rise comes
   entirely from repetitive prompts. Treat the raw repetition metric as
   uninformative on its own from here on - use the prompt-conditional split.
-- **Accompaniment is the weak capability; diagnosed 2026-09-14.** Against a
+- **CORRECTION (2026-09-14, caught by the user's ears).** Everything in the
+  entry below was measured through a tick-rate bug and is wrong. A decoded
+  generation carries the tokenizer's clock (16 ticks per quarter); a
+  condition taken from a file keeps the file's (usually 480). Both the audio
+  renders and `pitch_class_overlap` mixed the two, so generated onsets were
+  compressed 30x - the user heard every accompaniment note fire at once on
+  the downbeat, and the metric compared bar 1 of one score against bar 30 of
+  the other. With each score bucketed on its own clock (`eval.py`, regression
+  test in `test_v4_format.py`), the same 18 windows give:
+
+  | pitch-class overlap with the condition | broken | fixed |
+  |---|---|---|
+  | real accompaniment (ceiling) | 0.431 | 0.431 |
+  | model | 0.228 | **0.403** |
+  | chance (mismatched condition) | 0.160 | 0.184 |
+  | share of the chance-to-real gap closed | 25% | **89%** |
+
+  So accompaniment harmony is close to real parts, not near chance. The
+  hand-split work below still stands on its own (13.6% -> 24% of the corpus),
+  but it is no longer a fix for a broken capability. The bar contract (67% at
+  8 bars, unreliable at 16) is a separate, real issue and unaffected by this.
+
+- ~~**Accompaniment is the weak capability; diagnosed 2026-09-14.**~~ (superseded) Against a
   chance baseline (the model's parts scored against a *different* window's
   condition), 18 eight-bar windows:
 

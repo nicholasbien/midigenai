@@ -329,3 +329,27 @@ def test_hand_split_makes_solo_piano_contribute_accompaniment(tok, sp):
     # off by default for multi-track files, and disabled by 0
     assert not DocBuilder(tok, accomp_windows=0, infill_windows=0, track_views=0,
                           window_bars=8, hand_split_windows=0).build(path)["accompaniment"]
+
+
+def test_pitch_class_overlap_survives_different_tick_rates():
+    """A decoded generation runs at 16 ticks/quarter, a condition from a file
+    at 480; bucketing both with one bar length compared bar 1 against bar 30."""
+    from midigenai.eval import pitch_class_overlap
+
+    def piece(tpq, pitches):
+        s = Score(tpq)
+        s.time_signatures.append(TimeSignature(0, 4, 4))
+        t = Track(program=0)
+        for bar in range(4):
+            for beat in range(4):
+                t.notes.append(Note(bar * tpq * 4 + beat * tpq, tpq // 2,
+                                    pitches[bar % len(pitches)], 80))
+        s.tracks.append(t)
+        return s
+
+    same_pitches = [60, 62, 64, 65]
+    a, b = piece(16, same_pitches), piece(480, same_pitches)
+    assert pitch_class_overlap(a, b) == 1.0          # identical music, two clocks
+    assert pitch_class_overlap(piece(480, same_pitches), b) == 1.0
+    c = piece(16, [61, 63, 66, 68])                   # disjoint pitch classes
+    assert pitch_class_overlap(c, b) == 0.0
