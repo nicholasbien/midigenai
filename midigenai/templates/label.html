@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>midigenai — preference labeling</title>
 <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js,npm/focus-visible@5,npm/html-midi-player@1.5.0"></script>
 <style>
@@ -34,6 +35,20 @@
   .statusbar { display: flex; justify-content: space-between; font-size: 13px; color: #444; margin: 10px 0; }
   .waiting { text-align: center; color: #888; padding: 40px 0; font-size: 14px; }
   .flash { animation: flash 0.4s; }
+  /* phone: thumb-sized targets, no hover-only affordances, no key hints */
+  @media (max-width: 760px) {
+    body { margin: 12px auto; padding: 0 10px; }
+    .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    button { padding: 16px 12px; font-size: 15px; }
+    button.wide { grid-column: 1 / -1; }
+    kbd { display: none; }
+    .legend, .sub { font-size: 12px; }
+    .opt { padding: 10px; }
+  }
+  #tapstart { position: fixed; inset: 0; background: rgba(250,250,250,.97); z-index: 50;
+    display: none; align-items: center; justify-content: center; text-align: center;
+    font-size: 17px; color: #444; padding: 24px; }
+  #tapstart b { display: block; font-size: 20px; margin-bottom: 8px; }
   @keyframes flash { 0% { background: #ecfdf5; } 100% { background: #fafafa; } }
 </style>
 </head>
@@ -43,6 +58,7 @@
     <kbd>1</kbd> left &nbsp;<kbd>2</kbd> right &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip
     &nbsp;·&nbsp; flags (before voting): <kbd>q</kbd>/<kbd>w</kbd> degrades &nbsp;<kbd>e</kbd>/<kbd>r</kbd> too long</div>
   <div class="statusbar"><span id="count">0 labeled this session</span><span id="queue"></span></div>
+  <div id="tapstart"><div><b>Tap to start</b>Phone browsers block audio until you touch the page.</div></div>
   <div id="stage" class="card"><div class="waiting">warming up the model…</div></div>
 
 <script>
@@ -199,8 +215,8 @@ function render() {
       <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
       <button onclick="vote('bad')">Both bad<kbd>x</kbd></button>
       <button onclick="vote('skip')">Skip<kbd>s</kbd></button>
-      <button onclick="vote('drums_as_piano')" style="border-color:#d97706;color:#b45309">Drums playing as piano<kbd>d</kbd></button>
-      <button onclick="vote('bad_prompt')" style="border-color:#dc2626;color:#dc2626">Bad prompt — exclude from data<kbd>p</kbd></button>
+      <button class="wide" onclick="vote('drums_as_piano')" style="border-color:#d97706;color:#b45309">Drums playing as piano<kbd>d</kbd></button>
+      <button class="wide" onclick="vote('bad_prompt')" style="border-color:#dc2626;color:#dc2626">Bad prompt — exclude from data<kbd>p</kbd></button>
     </div>
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
   `;
@@ -228,8 +244,20 @@ function render() {
 }
 
 let userHasInteracted = false;
-document.addEventListener('keydown', () => { userHasInteracted = true; }, { once: true });
-document.addEventListener('click', () => { userHasInteracted = true; }, { once: true });
+function markInteracted() {
+  if (userHasInteracted) return;
+  userHasInteracted = true;
+  const o = document.getElementById('tapstart');
+  if (o) o.style.display = 'none';
+  if (current) playSequence('both');
+}
+document.addEventListener('keydown', markInteracted, { once: true });
+document.addEventListener('pointerdown', markInteracted, { once: true });
+// phones block audio until a real touch; say so instead of playing silence
+if (matchMedia('(hover: none)').matches) {
+  const o = document.getElementById('tapstart');
+  if (o) o.style.display = 'flex';
+}
 
 async function vote(choice) {
   if (!current) return;
