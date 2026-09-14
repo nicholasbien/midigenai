@@ -303,10 +303,12 @@ def test_hand_split_makes_solo_piano_contribute_accompaniment(tok, sp):
     s.time_signatures.append(TimeSignature(0, 4, 4))
     piano = Track(program=0)
     for b in range(20):
+        # left hand sustains under the bar, right hand plays over it — the
+        # shape split_hands looks for (see _held_under)
+        piano.notes.append(Note(b * 1920, 1900, 40 + (b % 5), 70))
         for beat in range(4):
-            t = b * 1920 + beat * 480
-            piano.notes.append(Note(t, 460, 40 + (b % 5), 70))        # left hand
-            piano.notes.append(Note(t, 220, 72 + (beat * 2) % 7, 90))  # right hand
+            piano.notes.append(Note(b * 1920 + beat * 480, 220,
+                                    72 + (beat * 2) % 7, 90))
     s.tracks.append(piano)
 
     low, high = split_hands(s)

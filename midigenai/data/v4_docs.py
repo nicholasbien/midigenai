@@ -101,28 +101,32 @@ def bar_edges(sc: Score) -> list[int]:
 
 
 HAND_SPLIT_MIN, HAND_SPLIT_MAX = 50, 67      # keep the split near middle C
-HAND_SPLIT_MIN_SIMULTANEITY = 0.30           # see split_hands
+HAND_SPLIT_MIN_HELD = 0.35                   # see split_hands
 
 
-def _simultaneity(low, high) -> float:
-    """Fraction of the high part's onsets that sound while the low part is
-    already sounding. Two-handed writing scores high; a single melodic line
-    cut at a pitch scores near zero, because its notes alternate rather than
-    overlap."""
-    spans = sorted((n.start, n.start + max(n.duration, 1))
-                   for t in low.tracks for n in t.notes)
+def _held_under(low, high, margin: int) -> float:
+    """Fraction of the high part's onsets that arrive over a low note which
+    began at least `margin` ticks earlier and is still sounding.
+
+    Plain overlap is useless here: legato and pedal make consecutive notes of
+    a single line overlap, so 97% of Aria windows passed that test. Requiring
+    the low note to have *started a beat earlier* separates them cleanly - a
+    synthetic two-hand window scores 0.75, a synthetic melody 0.00, and real
+    Aria windows sit at 0.59, much nearer the two-hand end.
+    """
+    lo = sorted((n.start, n.start + max(n.duration, 1))
+                for t in low.tracks for n in t.notes)
     onsets = sorted(n.start for t in high.tracks for n in t.notes)
-    if not spans or not onsets:
+    if not lo or not onsets:
         return 0.0
     import bisect
-    starts = [s for s, _ in spans]
-    covered = 0
+    starts = [s for s, _ in lo]
+    held = 0
     for o in onsets:
-        i = bisect.bisect_right(starts, o)
-        # a note starting at or before o and still sounding at o
-        if any(e > o for _, e in spans[max(0, i - 12):i]):
-            covered += 1
-    return covered / len(onsets)
+        i = bisect.bisect_right(starts, o - margin)
+        if any(e > o for _, e in lo[max(0, i - 24):i]):
+            held += 1
+    return held / len(onsets)
 
 
 def split_hands(win: Score) -> tuple[Score, Score] | None:
@@ -135,12 +139,14 @@ def split_hands(win: Score) -> tuple[Score, Score] | None:
     The split point is the window's median pitch, held near middle C so a
     bass-register passage does not get cut in an implausible place.
 
-    Rejects windows that are really one melodic line: 57% of Aria windows
-    that pass a notes-only test are near-monophonic (median 1.12 notes per
-    onset), and slicing a melody at a pitch produces two half-melodies, not
-    an accompaniment pair. The test that separates them is simultaneity —
-    whether the hands actually sound together — since a single line crossing
-    the split still puts notes on both sides of almost every bar.
+    Rejects windows that are really one melodic line: slicing a melody at a
+    pitch produces two half-melodies, not an accompaniment pair, and a single
+    line crossing the split still puts notes on both sides of almost every
+    bar, so coverage cannot tell them apart. `_held_under` can.
+
+    Note that notes-per-onset is the wrong test here (Aria's median is 1.12,
+    which looks monophonic): two hands routinely strike at different moments,
+    and what makes them two hands is that one sustains under the other.
     """
     notes = [n for t in win.tracks if not t.is_drum for n in t.notes]
     if len(notes) < 2 * MIN_SEGMENT_NOTES:
@@ -161,7 +167,8 @@ def split_hands(win: Score) -> tuple[Score, Score] | None:
         high.tracks.append(ht)
     if _n_notes(low) < MIN_SEGMENT_NOTES or _n_notes(high) < MIN_SEGMENT_NOTES:
         return None
-    if max(_simultaneity(low, high), _simultaneity(high, low)) < HAND_SPLIT_MIN_SIMULTANEITY:
+    beat = max(win.ticks_per_quarter, 1)
+    if max(_held_under(low, high, beat), _held_under(high, low, beat)) < HAND_SPLIT_MIN_HELD:
         return None
     return low, high
 
