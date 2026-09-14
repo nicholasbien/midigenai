@@ -263,3 +263,28 @@ def test_prompt_window_keeps_program_state():
     assert tok.decode(window).tracks[0].is_drum
     # without the fix the same window decodes as a pitched track
     assert not tok.decode(ids[40:104]).tracks[0].is_drum
+
+
+def test_name_says_drums_needs_boundaries():
+    """"909" inside a numeric file id is not a TR-909 (real bug: Aria piano
+    transcription val_aria_909098_0.mid was served and trained as drums)."""
+    from midigenai.tokenizer import name_says_drums, normalize_drums
+
+    assert name_says_drums("Drums")
+    assert name_says_drums("acoustic snare")
+    assert name_says_drums("HiHat")
+    assert name_says_drums("TR-909")
+    assert name_says_drums("909_kit")
+    assert not name_says_drums("val_aria_909098_0.mid")
+    assert not name_says_drums("785909_0.mid")
+    assert not name_says_drums("9d4b20cadb6f4a8909b2a73bad2c0014.mid")
+    assert not name_says_drums("What a Wonderful World")   # 'hat' inside a word
+    assert not name_says_drums("Tomorrow Never Knows")     # 'tom' inside a word
+
+    s = Score(480)
+    piano = Track(program=0)
+    for i in range(40):
+        piano.notes.append(Note(i * 240, 200, 60 + (i * 3) % 24, 80))
+    s.tracks.append(piano)
+    assert normalize_drums(s, "val_aria_909098_0.mid") == 0
+    assert not s.tracks[0].is_drum

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Sequence, Union
 
 import json
+import re
 
 from miditok import MIDILike, REMI, TokenizerConfig
 
@@ -149,8 +150,28 @@ def roundtrip(midi_path: PathLike, out_path: PathLike) -> tuple[int, list[int]]:
     return len(ids), ids
 
 
-DRUM_NAME_HINTS = ("drum", "drm", "perc", "kit", "808", "909", "kick", "snare",
-                   "hat", "cymbal", "tom", "clap", "batter", "schlag", "beat")
+# Track-name hints. Split by how safely they can be matched inside a longer
+# string: "drum"/"snare" are unambiguous, but "hat"/"tom"/"909" appear inside
+# ordinary words and hex/numeric file ids ("785909_0.mid" is an Aria piano
+# transcription, not a TR-909), so those need a boundary.
+DRUM_HINTS_ANYWHERE = ("drum", "perc", "kick", "snare", "cymbal", "hihat",
+                       "hi-hat", "clap", "batter", "schlag")
+DRUM_HINTS_BOUNDED = ("drm", "kit", "hat", "tom", "beat", "808", "909")
+_BOUNDED_RE = re.compile(
+    r"(?<![0-9a-z])(" + "|".join(DRUM_HINTS_BOUNDED) + r")(?![0-9a-z])")
+# kept for callers that just want the full list
+DRUM_NAME_HINTS = DRUM_HINTS_ANYWHERE + DRUM_HINTS_BOUNDED
+
+
+def name_says_drums(name: str) -> bool:
+    """True when a track or file name names a drum part.
+
+    Boundary-checked for the ambiguous hints: matching "909" anywhere turned
+    ~9,900 single-track corpus files (mostly Aria piano, whose ids are bare
+    numbers) into drum tracks.
+    """
+    name = (name or "").lower()
+    return any(k in name for k in DRUM_HINTS_ANYWHERE) or bool(_BOUNDED_RE.search(name))
 
 # General MIDI percussion key range, and the three voices that make a kit
 # recognisable. Requiring one from each family is what separates a kit from
@@ -198,14 +219,12 @@ def normalize_drums(score, filename_hint: str = "") -> int:
     obviously a kit but it plays as piano" prompts.
     Returns the number of tracks promoted. Mutates `score` in place.
     """
-    fname = filename_hint.lower()
-    fname_says_drums = any(k in fname for k in DRUM_NAME_HINTS)
+    fname_says_drums = name_says_drums(filename_hint)
     changed = 0
     for t in score.tracks:
         if t.is_drum:
             continue
-        name = (t.name or "").lower()
-        if any(k in name for k in DRUM_NAME_HINTS) or \
+        if name_says_drums(t.name) or \
                 (fname_says_drums and len(score.tracks) == 1) or \
                 looks_like_drums(t):
             t.is_drum = True
