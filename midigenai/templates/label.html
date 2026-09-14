@@ -15,9 +15,10 @@
   .opt { background: white; border: 2px solid #ddd; border-radius: 6px; padding: 12px; }
   .opt.chosen { border-color: #4f46e5; }
   midi-player { width: 100%; }
-  .roll { width: 100%; height: 110px; background: #fff; border: 1px solid #e5e5e5; border-radius: 4px; display: block; }
-  .roll rect.pr { fill: #bbb; } .roll rect.gen { fill: #4f46e5; } .roll rect.drum { fill: #d97706; }
-  .roll line.cut { stroke: #dc2626; stroke-width: 1.5; } .roll line.head { stroke: #111; stroke-width: 1; }
+  .rollwrap { overflow-x: auto; background: #fff; border: 1px solid #e5e5e5; border-radius: 4px; padding: 2px 0; }
+  midi-visualizer { display: block; }
+  midi-visualizer svg rect.promptshade { fill: #111; opacity: .07; }
+  midi-visualizer svg line.handoff { stroke: #dc2626; stroke-width: 2; }
   .opt.playing { border-color: #10b981; }
   .rows .opt { margin-bottom: 10px; }
   .legend { font-size: 11px; color: #777; margin: 4px 0 8px; }
@@ -102,50 +103,66 @@ function renderFlags() {
     flagChip('right', 'too_long', 'too long', 'r');
 }
 
-// ---- piano roll: prompt tail (grey) | red line | continuation (blue), shared time scale ----
-function drawRoll(svg, roll, tmax) {
-  const W = svg.clientWidth || 800, H = 110;
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
-  const notes = roll.notes || [];
-  const pitches = notes.map(n => n.p);
-  const lo = Math.min(48, ...pitches), hi = Math.max(72, ...pitches);
-  const x = t => 4 + (W - 8) * t / tmax, y = p => H - 4 - (H - 8) * (p - lo) / (hi - lo + 1);
-  const rh = Math.max(1.5, (H - 8) / (hi - lo + 1));
-  let out = '';
-  for (const n of notes) {
-    const cls = n.d ? 'drum' : (n.prompt ? 'pr' : 'gen');
-    out += `<rect class="${cls}" x="${x(n.s).toFixed(1)}" y="${(y(n.p) - rh).toFixed(1)}" width="${Math.max(1.5, x(n.e) - x(n.s)).toFixed(1)}" height="${rh.toFixed(1)}" rx="0.5"/>`;
+// ---- piano roll: the player library's own visualizer (it highlights each
+// note as it sounds), plus a shaded prompt region and a handoff line drawn
+// into the same SVG. Both sides get the same pitch range and the library's
+// default pixels-per-second, so the two rows share one scale. ----
+function setupRoll(side, roll, lo, hi) {
+  const vis = document.getElementById('roll-' + side);
+  vis.config = { noteHeight: 4, minPitch: lo, maxPitch: hi,
+                 noteRGB: '90, 100, 180', activeNoteRGB: '220, 38, 38' };
+  vis.src = roll.url;
+  decorateWhenReady(side, roll);
+}
+
+function decorateWhenReady(side, roll, tries = 0) {
+  const vis = document.getElementById('roll-' + side);
+  const svg = vis && vis.querySelector('svg');
+  if (!svg || !svg.querySelector('rect')) {
+    if (tries < 100) setTimeout(() => decorateWhenReady(side, roll, tries + 1), 100);
+    return;
   }
-  out += `<line class="cut" x1="${x(roll.prompt_end_s)}" x2="${x(roll.prompt_end_s)}" y1="0" y2="${H}"/>`;
-  out += `<line class="head" x1="0" x2="0" y1="0" y2="${H}" style="display:none"/>`;
-  svg.innerHTML = out;
-  svg._x = x;
+  if (svg.querySelector('line.handoff')) return;
+  const w = svg.width.baseVal.value || parseFloat(svg.getAttribute('width')) || 0;
+  const h = svg.height.baseVal.value || parseFloat(svg.getAttribute('height')) || 0;
+  const tmax = Math.max(...(roll.notes || []).map(n => n.e), roll.prompt_end_s + 0.1);
+  const x = w * roll.prompt_end_s / tmax;
+  const NS = 'http://www.w3.org/2000/svg';
+  const shade = document.createElementNS(NS, 'rect');
+  shade.setAttribute('x', 0); shade.setAttribute('y', 0);
+  shade.setAttribute('width', x.toFixed(1)); shade.setAttribute('height', h);
+  shade.setAttribute('class', 'promptshade');
+  svg.insertBefore(shade, svg.firstChild);
+  const line = document.createElementNS(NS, 'line');
+  line.setAttribute('x1', x.toFixed(1)); line.setAttribute('x2', x.toFixed(1));
+  line.setAttribute('y1', 0); line.setAttribute('y2', h);
+  line.setAttribute('class', 'handoff');
+  svg.appendChild(line);
 }
 
-let headTimer = null;
-function trackHead(side) {
-  clearInterval(headTimer);
-  const player = document.getElementById('pl-' + side), svg = document.getElementById('roll-' + side);
-  headTimer = setInterval(() => {
-    const head = svg.querySelector('line.head');
-    if (!player || !head) return;
-    const t = player.currentTime || 0;
-    head.style.display = ''; head.setAttribute('x1', svg._x(t)); head.setAttribute('x2', svg._x(t));
-  }, 60);
+// auto-play: side 1 with the prompt tail for context, then side 2 from the
+// handoff only — the prompt is identical on both sides, so replaying it just
+// costs time. `withPrompt` forces the full row (used by the 'a'/'b' keys).
+function playSide(side, withPrompt) {
+  const pl = document.getElementById('pl-' + side);
+  if (!pl) return;
+  document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing'));
+  document.getElementById('opt-' + side).classList.add('playing');
+  const offset = withPrompt ? 0 : (current[side + '_roll'].prompt_end_s || 0);
+  try { pl.currentTime = offset; pl.start(); } catch (e) { try { pl.start(); } catch (e2) {} }
 }
 
-// auto-play: side 1 (prompt tail + continuation), then side 2
-function playSequence(start = 'left') {
-  const order = start === 'left' ? ['left', 'right'] : start === 'left-only' ? ['left'] : ['right'];
+function playSequence(mode = 'both') {
+  const plan = mode === 'both' ? [['left', true], ['right', false]]
+             : mode === 'left' ? [['left', true]]
+             : [['right', false]];
   const go = (i) => {
-    if (i >= order.length) { clearInterval(headTimer); document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing')); return; }
-    const side = order[i], pl = document.getElementById('pl-' + side);
-    if (!pl) return;
-    document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing'));
-    document.getElementById('opt-' + side).classList.add('playing');
-    const onStop = () => { pl.removeEventListener('stop', onStop); setTimeout(() => go(i + 1), 250); };
+    if (i >= plan.length) { document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing')); return; }
+    const [side, withPrompt] = plan[i];
+    const pl = document.getElementById('pl-' + side);
+    const onStop = () => { pl.removeEventListener('stop', onStop); setTimeout(() => go(i + 1), 200); };
     pl.addEventListener('stop', onStop);
-    try { pl.currentTime = 0; pl.start(); trackHead(side); } catch (e) { setTimeout(() => go(i), 300); }
+    playSide(side, withPrompt);
   };
   document.querySelectorAll('midi-player').forEach(pl => { try { pl.stop(); } catch (e) {} });
   go(0);
@@ -158,21 +175,23 @@ function render() {
   flags = { left: new Set(), right: new Set() };
   stage.classList.add('flash');
   setTimeout(() => stage.classList.remove('flash'), 400);
-  const tmax = Math.max(...['left_roll', 'right_roll'].flatMap(k => (p[k].notes || []).map(n => n.e)), p.left_roll.prompt_end_s + 1);
+  const allP = ['left_roll', 'right_roll'].flatMap(k => (p[k].notes || []).map(n => n.p));
+  const lo = Math.max(0, Math.min(48, ...allP) - 2), hi = Math.min(127, Math.max(72, ...allP) + 2);
+  p.left_roll.url = p.left_timeline_url; p.right_roll.url = p.right_timeline_url;
   stage.innerHTML = `
     <div class="legend">Prompt <span style="font-weight:400;color:#4f46e5">· ${p.prompt_source || ''}</span> <span style="color:#999">${p.prompt_name || ''}</span>
-      &nbsp;·&nbsp; grey = last bars of the prompt, red line = where the model takes over, blue = generated, orange = drums. Both rows share one time axis. Plays 1 then 2 automatically; <kbd>space</kbd> replays both, <kbd>a</kbd>/<kbd>b</kbd> replay one.</div>
+      &nbsp;·&nbsp; shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays 1 with the prompt, then 2 from the red line on; <kbd>space</kbd> replays both, <kbd>a</kbd> replays 1 with the prompt, <kbd>b</kbd> replays 2.</div>
     <div class="rows">
       <div class="opt" id="opt-left">
         <h3>Continuation 1</h3>
-        <svg class="roll" id="roll-left"></svg>
-        <midi-player id="pl-left" src="${p.left_timeline_url}" sound-font></midi-player>
+        <div class="rollwrap"><midi-visualizer type="piano-roll" id="roll-left"></midi-visualizer></div>
+        <midi-player id="pl-left" src="${p.left_timeline_url}" sound-font visualizer="#roll-left"></midi-player>
         <div class="chips" id="flags-left"></div>
       </div>
       <div class="opt" id="opt-right">
         <h3>Continuation 2</h3>
-        <svg class="roll" id="roll-right"></svg>
-        <midi-player id="pl-right" src="${p.right_timeline_url}" sound-font></midi-player>
+        <div class="rollwrap"><midi-visualizer type="piano-roll" id="roll-right"></midi-visualizer></div>
+        <midi-player id="pl-right" src="${p.right_timeline_url}" sound-font visualizer="#roll-right"></midi-player>
         <div class="chips" id="flags-right"></div>
       </div>
     </div>
@@ -187,13 +206,13 @@ function render() {
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
   `;
   renderFlags();
-  drawRoll(document.getElementById('roll-left'), p.left_roll, tmax);
-  drawRoll(document.getElementById('roll-right'), p.right_roll, tmax);
+  setupRoll('left', p.left_roll, lo, hi);
+  setupRoll('right', p.right_roll, lo, hi);
   // players fire 'load' once the soundfont/sequence is ready; start the
   // sequence after both are loaded (browsers require a prior user gesture,
   // which the first vote provides; the first pair needs one click).
   let loaded = 0;
-  const arm = () => { loaded++; if (loaded === 2 && userHasInteracted) setTimeout(() => playSequence('left'), 200); };
+  const arm = () => { loaded++; if (loaded === 2 && userHasInteracted) setTimeout(() => playSequence('both'), 200); };
   document.getElementById('pl-left').addEventListener('load', arm);
   document.getElementById('pl-right').addEventListener('load', arm);
 }
@@ -232,8 +251,8 @@ document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip', 'p': 'bad_prompt' };
   if (map[e.key]) { e.preventDefault(); vote(map[e.key]); return; }
-  if (e.key === ' ') { e.preventDefault(); playSequence('left'); return; }
-  if (e.key === 'a') { e.preventDefault(); playSequence('left-only'); return; }
+  if (e.key === ' ') { e.preventDefault(); playSequence('both'); return; }
+  if (e.key === 'a') { e.preventDefault(); playSequence('left'); return; }
   if (e.key === 'b') { e.preventDefault(); playSequence('right'); return; }
   const flagMap = { q: ['left', 'degrades'], w: ['right', 'degrades'],
                     e: ['left', 'too_long'], r: ['right', 'too_long'] };
