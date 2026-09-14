@@ -54,5 +54,21 @@
   "val_lamd_f6d6b4f3c70e67ba533a": "320 tokens, 72 notes",
   "val_aria_235381_8": "214 tokens, 57 notes",
   "user_44_0": "194 tokens, 48 notes"
+ },
+ "ckpt_083000": {
+  "val_lamd_a3edc51d9ceb9ca498c6": "273 tokens, 64 notes",
+  "user_tron": "318 tokens, 73 notes",
+  "val_lamd_5674d2c5e1ade7e04e26": "320 tokens, 89 notes",
+  "val_lamd_f6d6b4f3c70e67ba533a": "318 tokens, 73 notes",
+  "val_aria_235381_8": "223 tokens, 56 notes",
+  "user_44_0": "132 tokens, 30 notes"
+ },
+ "ckpt_089000": {
+  "val_lamd_a3edc51d9ceb9ca498c6": "320 tokens, 77 notes",
+  "user_tron": "318 tokens, 79 notes",
+  "val_lamd_5674d2c5e1ade7e04e26": "320 tokens, 86 notes",
+  "val_lamd_f6d6b4f3c70e67ba533a": "320 tokens, 75 notes",
+  "val_aria_235381_8": "320 tokens, 86 notes",
+  "user_44_0": "318 tokens, 83 notes"
  }
 }

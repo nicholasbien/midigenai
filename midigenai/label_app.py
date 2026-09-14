@@ -127,6 +127,24 @@ class PairFactory:
         self.worker = threading.Thread(target=self._run, daemon=True)
         self.worker.start()
 
+    def _slice_with_program(self, ids: list[int], start: int, n: int) -> list[int]:
+        """Window of `n` tokens starting at `start`, with the instrument that
+        was sounding at that point restored in front of it.
+
+        `Program_*` tokens are stateful: everything after one keeps that
+        program until the next. A window cut after the file's `Program_-1`
+        therefore decodes a drum kit as piano — which is exactly what
+        happened to drum-only prompts before this.
+        """
+        if not hasattr(self, "_inv"):
+            self._inv = {v: k for k, v in self.gen_a.tokenizer.vocab.items()}
+        prefix: list[int] = []
+        for j in range(start - 1, -1, -1):
+            if self._inv.get(ids[j], "").startswith("Program_"):
+                prefix = [ids[j]]
+                break
+        return prefix + list(ids[start:start + n])
+
     def _next_prompt(self) -> Path:
         """Round-robin over a shuffled prompt list, least-used first.
 
@@ -151,7 +169,7 @@ class PairFactory:
         prompt_ids = self.gen_a.tokenizer(prompt_score).ids
         if len(prompt_ids) > args.prompt_tokens:
             start = self.rng.randrange(0, len(prompt_ids) - args.prompt_tokens)
-            prompt_ids = prompt_ids[start : start + args.prompt_tokens]
+            prompt_ids = self._slice_with_program(prompt_ids, start, args.prompt_tokens)
         tempo = self.gen_a.detect_tempo(prompt_file)
 
         pair_id = f"{datetime.datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:8]}"

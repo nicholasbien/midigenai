@@ -236,3 +236,30 @@ def test_looks_like_drums():
     s.tracks.append(bass)
     assert normalize_drums(s, "untitled.mid") == 1
     assert s.tracks[0].is_drum and not s.tracks[1].is_drum
+
+
+def test_prompt_window_keeps_program_state():
+    """A prompt window cut after the file's Program token must carry it, or a
+    drum kit decodes as piano (real bug, val_gigamidi_5aa9c6cc..., 2026-09-14)."""
+    from types import SimpleNamespace
+
+    from midigenai.label_app import PairFactory
+    tok = build_tokenizer()                       # MIDILike, as v3 uses
+    s = Score(480)
+    s.time_signatures.append(TimeSignature(0, 4, 4))
+    kit = Track(program=0, is_drum=True)
+    for b in range(24):
+        for beat in range(4):
+            kit.notes.append(Note(b * 1920 + beat * 480, 60, 36 if beat % 2 == 0 else 38, 100))
+    s.tracks.append(kit)
+    ids = tok(s).ids
+    inv = {v: k for k, v in tok.vocab.items()}
+    assert inv[ids[0]] == "Program_-1"            # drums declared once, up front
+
+    f = PairFactory.__new__(PairFactory)
+    f.gen_a = SimpleNamespace(tokenizer=tok)
+    window = f._slice_with_program(ids, 40, 64)
+    assert inv[window[0]] == "Program_-1"
+    assert tok.decode(window).tracks[0].is_drum
+    # without the fix the same window decodes as a pitched track
+    assert not tok.decode(ids[40:104]).tracks[0].is_drum
