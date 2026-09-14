@@ -71,11 +71,19 @@ def test_stop_after_bars_filters_stream(gen, monkeypatch):
     pos, pitch = gen.tokenizer.vocab["Position_0"], gen.tokenizer.vocab["Pitch_60"]
     fake = [bar, ts, pos, pitch, bar, ts, pos, pitch, bar, ts, pos, pitch]
     monkeypatch.setattr(gen, "_generate_raw", lambda *a, **k: iter(fake))
-    out = list(gen.generate_ids([gen.bos_id, pos, pitch], stop_after_bars=2, max_new_tokens=50))
+    out = list(gen.generate_ids([gen.bos_id, pos, pitch], stop_after_bars=2,
+                                max_new_tokens=50, trim_leading_bars=False))
     assert out == fake[:8]
     # prompt ending on a bar line: that bar line is bar 1 of the answer
-    out = list(gen.generate_ids([gen.bos_id, pos, pitch, bar, ts], stop_after_bars=2, max_new_tokens=50))
+    out = list(gen.generate_ids([gen.bos_id, pos, pitch, bar, ts], stop_after_bars=2,
+                                max_new_tokens=50, trim_leading_bars=False))
     assert out == fake[:4]
+    # trim_leading_bars (default): empty bars before the first note are
+    # dropped and do not count toward the bar budget
+    out = list(gen.generate_ids([gen.bos_id, pos, pitch], stop_after_bars=2,
+                                max_new_tokens=50))
+    assert out == fake[2:]            # the leading empty bar is gone,
+    assert gen.count_bars(out) == 2   # so both later bars fit the budget
     monkeypatch.setattr(gen, "_generate_raw", lambda *a, **k: iter([pos, pitch, gen.sp.sep, pitch]))
     assert list(gen.generate_ids([gen.bos_id, pos], max_new_tokens=50)) == [pos, pitch]
 

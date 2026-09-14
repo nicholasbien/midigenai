@@ -324,6 +324,7 @@ class Generator:
         seed: int | None = None,
         stop_after_bars: int | None = None,
         ban_ids: list[int] | None = None,
+        trim_leading_bars: bool = True,
     ) -> Iterator[int]:
         """
         `min_new_tokens`: hold EOS back for the first N tokens. Any prompt whose
@@ -344,6 +345,14 @@ class Generator:
         `ban_ids` (v4): token ids masked out of sampling. Default for a v4
         checkpoint is SEP / MASK / BOS, which are never valid continuation
         output; `accompany` / `infill` pass a narrower set.
+
+        `trim_leading_bars` (v4, default on): drop `Bar`/`TimeSig` tokens
+        emitted before the first note, and do not count them toward
+        `stop_after_bars`. A prompt closed to a bar line reads as the end of
+        a section, and ~9% of samples answer with several empty bars
+        (measured on v4_full ckpt_060000/083000, 2026-09-14); the music that
+        follows is fine, so the fix is to start it at the downbeat we gave
+        the model instead of several bars later.
         """
         if ban_ids is None and self.v4:
             ban_ids = sorted(t for t in (self.sp.sep, self.sp.mask, self.bos_id) if t is not None)
@@ -356,12 +365,18 @@ class Generator:
             yield from raw
             return
         bars = 1 if (stop_after_bars and self.ends_on_bar_line(prompt_ids)) else 0
+        started = not trim_leading_bars
         for t in raw:
             if t == self.eos_id:
                 yield t
                 return
             if t in self.stop_ids:
                 return
+            if not started:
+                # swallow empty bars (and their TimeSig) until the first note
+                if t == self.bar_id or t in self.timesig_ids:
+                    continue
+                started = True
             if stop_after_bars and t == self.bar_id:
                 bars += 1
                 if bars > stop_after_bars:

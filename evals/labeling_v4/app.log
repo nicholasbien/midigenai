@@ -2,11 +2,29 @@
   return cls(params=path)
 /Users/nicholasbien/midigenai/env/lib/python3.12/site-packages/miditok/tokenizations/remi.py:88: UserWarning: Attribute controls are not compatible with 'config.one_token_stream_for_programs' and multi-vocabulary tokenizers. Disabling them from the config.
   super().__init__(tokenizer_config, params)
-[label] 114 prompt files; models: v3 vs ckpt_060000
+[label] 61 prompt files; models: v3 vs ckpt_083000
 [label] open http://localhost:7797
  * Serving Flask app 'label_app'
  * Debug mode: off
 [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on http://127.0.0.1:7797
 [33mPress CTRL+C to quit[0m
-127.0.0.1 - - [14/Sep/2026 01:32:59] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:47:51] "[36mGET / HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:47:51] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:47:51] "GET /api/stats HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:47:51] "GET /midi/20260914014721_4bc0a683_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:47:51] "GET /midi/20260914014721_4bc0a683_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:47:51] "[36mGET /midi/20260914014721_4bc0a683_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:47:51] "[36mGET /midi/20260914014721_4bc0a683_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:47:51] "[36mGET /midi/20260914014721_4bc0a683_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:47:51] "[36mGET /midi/20260914014721_4bc0a683_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:47:53] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [14/Sep/2026 01:48:29] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:48:29] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:48:29] "GET /midi/20260914014722_43888104_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:48:29] "GET /midi/20260914014722_43888104_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:48:29] "[36mGET /midi/20260914014722_43888104_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:48:29] "[36mGET /midi/20260914014722_43888104_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:48:29] "[36mGET /midi/20260914014722_43888104_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:48:29] "[36mGET /midi/20260914014722_43888104_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:48:45] "GET / HTTP/1.1" 200 -

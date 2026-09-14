@@ -169,7 +169,16 @@ class PairFactory:
             of the prompt followed by the continuation, so the two sides of a
             pair line up in time; the note list (seconds) drives the piano
             roll in the UI, with prompt notes marked."""
-            cut_tick = gen.tokenizer.decode(list(ids)).end()
+            decoded_prompt = gen.tokenizer.decode(list(ids))
+            cut_tick = decoded_prompt.end()
+            if getattr(gen, "v4", False):
+                # the v4 prompt is padded to its bar line, and the tokenizer
+                # emits nothing after the last note: the handoff is the bar
+                # line, not the last note's end
+                from midigenai.attributes import ticks_per_bar
+                nbars = gen.count_bars(ids)
+                if nbars > 1:
+                    cut_tick = max(cut_tick, (nbars - 1) * ticks_per_bar(decoded_prompt))
             new_ids = list(gen.generate_ids(ids, **kw))
             full = gen.tokenizer.decode(list(ids) + new_ids)
             tpq = max(full.ticks_per_quarter, 1)
