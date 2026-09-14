@@ -401,6 +401,25 @@ About three weeks end to end, one production retrain.
   own degree of repetition far more faithfully; the aggregate rise comes
   entirely from repetitive prompts. Treat the raw repetition metric as
   uninformative on its own from here on - use the prompt-conditional split.
+- **v4 vs v3 on the automatic metrics (both 113M, same 30 prompts).** The
+  earlier comparisons used `pilot_best` (a 25M MIDILike pilot), not v3.
+  Against v3 proper:
+
+  | metric | v3 | v4 | v4 (prompt closed to bar) |
+  |---|---|---|---|
+  | prompt coherence | 0.721 | 0.733 | 0.687 |
+  | downbeat delta vs prompt | -0.048 | -0.034 | **-0.013** |
+  | first-note offset from bar line | 0.792 | 0.696 | **0.390** |
+  | scale consistency | 0.915 | 0.908 | 0.914 |
+  | 4-gram repetition | 0.266 | 0.316 | 0.301 |
+  | note density | 10.79 | 9.04 | 8.81 |
+
+  Verdict: v4 wins clearly on **bar structure** (half the offset when given a
+  closed bar) and ties everywhere else. Coherence is +0.012, inside noise.
+  The repetition difference is prompt-following, not degeneracy (see below).
+  The real v4 argument is not the continuation metrics - it is accompaniment
+  and infill, which v3 cannot do at all, plus the header controls.
+
 - **CORRECTION (2026-09-14, caught by the user's ears).** Everything in the
   entry below was measured through a tick-rate bug and is wrong. A decoded
   generation carries the tokenizer's clock (16 ticks per quarter); a
