@@ -188,7 +188,7 @@ class DocBuilder:
     # corpus-wide share (single-track sources add no accompaniment) near
     # the 60/25/15 target
     def __init__(self, tokenizer, track_views: int = 2, accomp_windows: int = 4,
-                 infill_windows: int = 2, window_bars: int = 16,
+                 infill_windows: int = 1, window_bars: int = 16,
                  context_bars: int = 16, max_span_bars: int = 4,
                  single_target_frac: float = 0.6,
                  genres: dict[str, list[str]] | None = None,
