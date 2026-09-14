@@ -43,6 +43,30 @@ def utcnow() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def velocity_scale(prompt_score, target_peak: int = 118) -> float:
+    """One gain factor for a whole pair, derived from the prompt.
+
+    Generations routinely peak around velocity 60-80, which is close to
+    inaudible on a phone speaker. Scaling per file would flatten a real
+    difference between the two takes, so the factor comes from the prompt —
+    identical for both sides — and their relative loudness survives.
+    """
+    vels = [n.velocity for t in prompt_score.tracks for n in t.notes]
+    if not vels:
+        return 1.0
+    peak = max(vels)
+    return max(1.0, min(3.0, target_peak / max(peak, 1)))
+
+
+def apply_velocity_scale(score, scale: float):
+    if scale <= 1.0:
+        return score
+    for track in score.tracks:
+        for n in track.notes:
+            n.velocity = max(1, min(127, int(round(n.velocity * scale))))
+    return score
+
+
 def _degeneracy(score) -> dict:
     """Cheap sanity metrics for a continuation-only Score. `degenerate` is
     True for near-empty, one-pitch-stuck, or hard-looping samples."""
@@ -187,7 +211,8 @@ class PairFactory:
         prompt_path = self.pairs_dir / f"{pair_id}_prompt.mid"
         prompt_score = self.gen_a.tokenizer.decode(list(prompt_ids))
         prompt_score.tempos = [Tempo(time=0, qpm=tempo)]
-        prompt_score.dump_midi(prompt_path)
+        prompt_score.dump_midi(prompt_path)          # unscaled: models read this
+        vscale = velocity_scale(prompt_score) if args.normalize_velocity else 1.0
 
         # Cross-vocabulary pairs (e.g. v3 MIDILike vs a v4 REMI checkpoint):
         # each side re-tokenizes the SAME prompt score with its own tokenizer.
@@ -252,6 +277,8 @@ class PairFactory:
                                   "d": bool(track.is_drum), "prompt": n.start < (cut_tick - tail0)})
             cont.tempos = [Tempo(time=0, qpm=tempo)]
             timeline.tempos = [Tempo(time=0, qpm=tempo)]
+            apply_velocity_scale(cont, vscale)
+            apply_velocity_scale(timeline, vscale)
             return new_ids, cont, timeline, {"notes": notes, "prompt_end_s": round((cut_tick - tail0) * spt, 3)}
 
         if not self.cross_model and args.candidates > 2:
@@ -487,6 +514,10 @@ def main():
                    help="pad a v4 side's prompt to its bar line (production jam "
                         "behaviour). Off by default so both sides of a pair start "
                         "from the identical instant.")
+    p.add_argument("--normalize-velocity", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="scale the review clips up to a usable listening level, "
+                        "with one factor per pair so the two takes stay comparable")
     p.add_argument("--max-cont-seconds", type=float, default=8.0,
                    help="hard cap on continuation length in the review clips: notes "
                         "starting after this are dropped (a fixed token budget gives "
