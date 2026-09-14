@@ -391,6 +391,16 @@ About three weeks end to end, one production retrain.
   the judge is worth paying for as a *labeler* (it is right more often, and
   independently right on some pairs), but this is the check to repeat at
   n>=200 on v4 pairs before spending on bulk labeling.
+- **Repetition in v4 is prompt-following, not degeneracy** (measured
+  2026-09-14). Aggregate 4-gram repetition roughly doubled vs the MIDILike
+  baseline (0.160 -> 0.316), which looked like a regression. It is not:
+  correlation between the *prompt's* repetition and the continuation's is
+  **+0.66 for v4 vs +0.51 for the baseline**, and splitting at the median
+  prompt, v4 answers a repetitive prompt with 0.470 repetition and a plain
+  prompt with 0.062 (baseline: 0.139 / 0.031). So v4 mirrors the prompt's
+  own degree of repetition far more faithfully; the aggregate rise comes
+  entirely from repetitive prompts. Treat the raw repetition metric as
+  uninformative on its own from here on - use the prompt-conditional split.
 - **Neural reward head.** The proper version of `reward_probe`: scalar head on
   the music model, Bradley-Terry loss, trained once preference data reaches
   ~1000+ pairs. A 769-feature linear probe already memorizes at 122 pairs
