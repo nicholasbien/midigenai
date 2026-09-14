@@ -119,11 +119,15 @@ def test_short_target_is_padded_to_window(tok, sp):
         assert count_bars(sp, rest[:i]) == count_bars(sp, rest[i + 1:]) == 16
 
 
-def test_single_track_file_has_no_accompaniment(tok):
+def test_single_track_file_accompaniment_only_via_hand_split(tok):
+    """A single track has no other part to predict - unless it is a keyboard
+    part, where the two hands are a real pair (see split_hands)."""
     s = Score(480)
     s.tracks.append(_song(20).tracks[0])
-    docs = DocBuilder(tok).build(_write(s))
-    assert docs["continuation"] and not docs["accompaniment"] and docs["infill"]
+    path = _write(s)
+    assert not DocBuilder(tok, hand_split_windows=0).build(path)["accompaniment"]
+    docs = DocBuilder(tok).build(path)
+    assert docs["continuation"] and docs["infill"]
 
 
 def test_unsupported_time_signature_is_skipped(tok):
@@ -288,3 +292,40 @@ def test_name_says_drums_needs_boundaries():
     s.tracks.append(piano)
     assert normalize_drums(s, "val_aria_909098_0.mid") == 0
     assert not s.tracks[0].is_drum
+
+
+def test_hand_split_makes_solo_piano_contribute_accompaniment(tok, sp):
+    """Aria is a third of the corpus and single-track, so it produced no
+    accompaniment documents at all; the hands are a real pair, both ways."""
+    from midigenai.data.v4_docs import split_hands
+
+    s = Score(480)
+    s.time_signatures.append(TimeSignature(0, 4, 4))
+    piano = Track(program=0)
+    for b in range(20):
+        for beat in range(4):
+            t = b * 1920 + beat * 480
+            piano.notes.append(Note(t, 460, 40 + (b % 5), 70))        # left hand
+            piano.notes.append(Note(t, 220, 72 + (beat * 2) % 7, 90))  # right hand
+    s.tracks.append(piano)
+
+    low, high = split_hands(s)
+    assert max(n.pitch for t in low.tracks for n in t.notes) < \
+           min(n.pitch for t in high.tracks for n in t.notes)
+
+    path = _write(s, "solo.mid")
+    docs = DocBuilder(tok, accomp_windows=4, infill_windows=0, track_views=0,
+                      window_bars=8, hand_split_windows=2).build(path)
+    assert docs["accompaniment"], "solo piano should now yield accompaniment docs"
+    for doc in docs["accompaniment"]:
+        _, rest = split_header(sp, doc[1:])
+        i = rest.index(sp.sep)
+        assert count_bars(sp, rest[:i]) == count_bars(sp, rest[i + 1:]) == 8
+    # both directions present: the two conditions differ
+    conds = {tuple(split_header(sp, d[1:])[1][:split_header(sp, d[1:])[1].index(sp.sep)])
+             for d in docs["accompaniment"]}
+    assert len(conds) >= 2
+
+    # off by default for multi-track files, and disabled by 0
+    assert not DocBuilder(tok, accomp_windows=0, infill_windows=0, track_views=0,
+                          window_bars=8, hand_split_windows=0).build(path)["accompaniment"]

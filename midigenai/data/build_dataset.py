@@ -403,6 +403,10 @@ if __name__ == "__main__":
                         help="v4: longest infilled span")
     parser.add_argument("--genres", type=Path, default=None,
                         help="v4: optional JSON {path: [genre,...]} for Genre_ tokens")
+    parser.add_argument("--hand-split-windows", type=int, default=2,
+                        help="v4: accompaniment windows per solo-keyboard file, built "
+                             "by splitting the hands (both directions). 0 disables; "
+                             "this is what makes Aria contribute accompaniment data.")
     parser.add_argument("--segment-eos", action="store_true",
                         help="v4: also end accompaniment/infill targets with EOS "
                              "(off by default; see v4_docs.DocBuilder)")
@@ -412,7 +416,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     v4_opts = dict(accomp_windows=args.accomp_windows, infill_windows=args.infill_windows,
                    window_bars=args.window_bars, context_bars=args.context_bars,
-                   max_span_bars=args.max_span_bars, segment_eos=args.segment_eos)
+                   max_span_bars=args.max_span_bars, segment_eos=args.segment_eos,
+                   hand_split_windows=args.hand_split_windows)
     if args.genres:
         v4_opts["genres"] = json.loads(args.genres.read_text())
     if args.quality:

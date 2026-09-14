@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import random
 
-from symusic import Score, TimeSignature
+from symusic import Score, TimeSignature, Track
 
 from midigenai.attributes import header_for_score, source_from_path
 from midigenai.sequence_format import (
@@ -100,6 +100,41 @@ def bar_edges(sc: Score) -> list[int]:
     return db
 
 
+HAND_SPLIT_MIN, HAND_SPLIT_MAX = 50, 67      # keep the split near middle C
+
+
+def split_hands(win: Score) -> tuple[Score, Score] | None:
+    """Split a solo keyboard window into (low hand, high hand).
+
+    A third of the corpus is Aria: single-track piano transcriptions, which
+    produce no accompaniment documents at all and left the task at 13.6% of
+    the corpus instead of the intended 25%. Two hands of one piano are a
+    genuine accompaniment pair, and they are the most abundant one we have.
+    The split point is the window's median pitch, held near middle C so a
+    bass-register passage does not get cut in an implausible place.
+    """
+    notes = [n for t in win.tracks if not t.is_drum for n in t.notes]
+    if len(notes) < 2 * MIN_SEGMENT_NOTES:
+        return None
+    pitches = sorted(n.pitch for n in notes)
+    split = min(max(pitches[len(pitches) // 2], HAND_SPLIT_MIN), HAND_SPLIT_MAX)
+    low, high = Score(win.tpq), Score(win.tpq)
+    for dst in (low, high):
+        for ts in win.time_signatures:
+            dst.time_signatures.append(ts)
+    for t in win.tracks:
+        if t.is_drum:
+            continue
+        lt, ht = Track(program=t.program), Track(program=t.program)
+        for n in t.notes:
+            (lt if n.pitch < split else ht).notes.append(n)
+        low.tracks.append(lt)
+        high.tracks.append(ht)
+    if _n_notes(low) < MIN_SEGMENT_NOTES or _n_notes(high) < MIN_SEGMENT_NOTES:
+        return None
+    return low, high
+
+
 def _tracks_in_window(sc: Score, start: int, end: int, min_notes: int) -> list[int]:
     out = []
     for i, t in enumerate(sc.tracks):
@@ -119,7 +154,8 @@ class DocBuilder:
                  context_bars: int = 16, max_span_bars: int = 4,
                  genres: dict[str, list[str]] | None = None,
                  quality: dict[str, int] | None = None,
-                 segment_eos: bool = False):
+                 segment_eos: bool = False,
+                 hand_split_windows: int = 2):
         self.tok = tokenizer
         self.sp = Specials.from_tokenizer(tokenizer)
         self.bar_id = tokenizer.vocab["Bar_None"]
@@ -138,6 +174,9 @@ class DocBuilder:
         # Inference stops targets by bar count, and the next document's BOS
         # is the terminator the model sees instead.
         self.segment_eos = segment_eos
+        # solo-keyboard files: accompaniment windows from a left/right hand
+        # split, generated in BOTH directions (see split_hands)
+        self.hand_split_windows = hand_split_windows
 
     # -- helpers -- #
     def _ids(self, sc: Score) -> list[int]:
@@ -229,6 +268,27 @@ class DocBuilder:
                     continue
                 doc = accompaniment_doc(sp, self._header(win, source, path), *segs)
                 out["accompaniment"].append(doc if self.segment_eos else doc[:-1])
+
+        # 2b. solo keyboard: left hand <-> right hand, both directions
+        solo = [i for i, t in enumerate(score.tracks) if not t.is_drum and len(t.notes)]
+        if (self.hand_split_windows and len(solo) == 1
+                and not any(t.is_drum and len(t.notes) for t in score.tracks)
+                and n_bars >= self.window_bars):
+            for _ in range(self.hand_split_windows):
+                b0 = rng.randrange(0, n_bars - self.window_bars + 1)
+                win = _window(score, edges[b0], edges[b0 + self.window_bars])
+                hands = split_hands(win)
+                if hands is None:
+                    continue
+                low, high = hands
+                header = self._header(win, source, path)
+                for cond, tgt in ((low, high), (high, low)):
+                    segs = (self._segment(cond, self.window_bars),
+                            self._segment(tgt, self.window_bars))
+                    if None in segs:
+                        continue
+                    doc = accompaniment_doc(sp, header, *segs)
+                    out["accompaniment"].append(doc if self.segment_eos else doc[:-1])
 
         # 3. span infill windows
         if n_bars >= 2 * self.max_span_bars + 2:

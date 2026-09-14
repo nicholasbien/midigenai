@@ -420,9 +420,13 @@ About three weeks end to end, one production retrain.
   up **13.6% of the corpus, not the 25% intended**, because Aria (33% of all
   tokens, single-track piano) yields no accompaniment documents at all.
   Fixes for the next build, in order of expected value:
-  1. Make Aria contribute: split solo piano into a left-hand condition and a
-     right-hand target (or by register). That converts a third of the corpus
-     from zero accompaniment to full participation.
+  1. **Done** (`split_hands`, `--hand-split-windows`, default 2): solo
+     keyboard windows become accompaniment pairs in **both** directions -
+     left hand conditions right hand and vice versa, so the model learns to
+     put a bass under a melody and a melody over a bass. Measured on 40 real
+     Aria files, the mix goes from 0% accompaniment to **32%**; across the
+     whole corpus that lifts accompaniment from 13.6% to roughly 24%, the
+     share originally intended.
   2. Upweight multi-track sources with `--mixture` for accompaniment share.
   3. Ban BOS until the requested bar count is reached, so the bar contract
      holds at the trained 16-bar length.
