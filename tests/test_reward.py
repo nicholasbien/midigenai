@@ -59,3 +59,35 @@ def test_rejects_degenerate_and_unknown_features(spec):
     assert r.score(tok, tok(_score(n_notes=2)).ids) is None
     with pytest.raises(ValueError):
         Reward({**spec, "features": ["not_a_metric"]})
+
+
+def test_probe_reward_roundtrip():
+    """The probe scores from the model's own activations and needs the prompt."""
+    from dataclasses import asdict
+    import torch
+    from midigenai.model import ModelConfig, MusicTransformer
+    from midigenai.reward_probe import ProbeReward, feature_vector
+
+    tok = build_tokenizer()
+    cfg = ModelConfig(vocab_size=len(tok.vocab), d_model=32, n_layers=2, n_heads=2,
+                      d_ff=64, max_seq_len=512)
+    torch.manual_seed(0)
+    model = MusicTransformer(cfg).eval()
+    dev = torch.device("cpu")
+
+    ids = tok(_score()).ids
+    prompt, cont = ids[:40], ids[40:120]
+    v = feature_vector(model, prompt, cont, dev)
+    assert v is not None and v.shape == (cfg.d_model + 1,)
+    assert np.isfinite(v).all()
+    assert v[-1] <= 0                          # last feature is a mean log-prob
+
+    spec = {"kind": "probe", "checkpoint": "x", "d_model": cfg.d_model,
+            "weights": np.ones(cfg.d_model + 1).tolist(),
+            "diff_std": np.ones(cfg.d_model + 1).tolist(),
+            "heldout_accuracy": 0.7}
+    r = ProbeReward(spec, model, dev)
+    assert isinstance(r.score(tok, cont, prompt_ids=prompt), float)
+    assert r.score(tok, [], prompt_ids=prompt) is None
+    with pytest.raises(ValueError):
+        r.score(tok, cont)                     # prompt is not optional here

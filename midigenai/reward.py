@@ -92,7 +92,9 @@ class Reward:
         v = np.asarray(out, dtype=np.float64)
         return v if np.isfinite(v).all() else None
 
-    def score(self, tokenizer, cont_ids) -> float | None:
+    def score(self, tokenizer, cont_ids, prompt_ids=None) -> float | None:
+        """`prompt_ids` is accepted and ignored: these features look only at
+        the continuation. A probe reward uses it (see reward_probe)."""
         v = self.feature_vector(tokenizer, cont_ids)
         if v is None:
             return None

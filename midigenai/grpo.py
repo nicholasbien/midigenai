@@ -165,7 +165,8 @@ def train(cfg: GRPOConfig) -> None:
             if not prompt_ids:
                 continue
             samples = sample_group(policy, prompt_ids, cfg, device)
-            scored = [(s, reward.score(tokenizer, s)) for s in samples]
+            scored = [(s, reward.score(tokenizer, s, prompt_ids=prompt_ids))
+                      for s in samples]
             scored = [(s, r) for s, r in scored if r is not None and len(s) > 1]
             if len(scored) < 2:
                 continue                      # nothing to compare within the group

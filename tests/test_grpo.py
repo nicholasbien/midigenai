@@ -64,7 +64,8 @@ def test_grpo_runs_and_logs(monkeypatch):
     # reward so the test exercises the loop, not the music metrics
     import midigenai.reward as rmod
     monkeypatch.setattr(rmod.Reward, "score",
-                        lambda self, tok, ids: 0.01 * len(ids) + 0.001 * (ids[0] if ids else 0))
+                        lambda self, tok, ids, prompt_ids=None:
+                            0.01 * len(ids) + 0.001 * (ids[0] if ids else 0))
 
     cfg = GRPOConfig(checkpoint=ckpt, tokenizer=tmp / "tokenizer.json",
                      reward=tmp / "reward.json", prompts=_prompt_dir(tmp, tok),
