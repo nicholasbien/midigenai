@@ -199,3 +199,40 @@ def test_drop_header_families(sp, tok):
     task_header = [sp.task_accomp, *header]
     assert drop_header_families(sp, task_header, rng, 1.0, 0.0) == [sp.task_accomp]
     assert drop_header_families(sp, task_header, rng, 0.0, 1.0) == [sp.task_accomp]
+
+
+def test_looks_like_drums():
+    """Content-based drum promotion: strict enough to leave a bass line alone."""
+    from midigenai.tokenizer import looks_like_drums, normalize_drums
+
+    kit = Track(program=0)
+    for b in range(8):
+        for beat in range(4):
+            t = b * 1920 + beat * 480
+            kit.notes.append(Note(t, 60, 36 if beat % 2 == 0 else 38, 100))
+            kit.notes.append(Note(t, 60, 42, 80))
+    assert looks_like_drums(kit)
+
+    bass = Track(program=33)
+    for i in range(40):
+        bass.notes.append(Note(i * 480, 400, 36 + (i * 7) % 19, 90))
+    assert not looks_like_drums(bass)          # too many distinct pitches
+
+    ostinato = Track(program=33)               # 4-note bass riff in the drum range
+    for i in range(40):
+        ostinato.notes.append(Note(i * 480, 400, [36, 41, 46, 51][i % 4], 90))
+    assert not looks_like_drums(ostinato)      # kick+hat but no snare
+
+    riff = Track(program=0)                    # few pitches, but not a kit
+    for i in range(40):
+        riff.notes.append(Note(i * 240, 200, [40, 45, 47][i % 3], 90))
+    assert not looks_like_drums(riff)          # no kick, no hat
+
+    assert not looks_like_drums(Track(program=0))   # empty
+
+    s = Score(480)
+    s.time_signatures.append(TimeSignature(0, 4, 4))
+    s.tracks.append(kit)
+    s.tracks.append(bass)
+    assert normalize_drums(s, "untitled.mid") == 1
+    assert s.tracks[0].is_drum and not s.tracks[1].is_drum

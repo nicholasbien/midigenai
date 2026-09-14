@@ -198,6 +198,7 @@ function render() {
       <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
       <button onclick="vote('bad')">Both bad<kbd>x</kbd></button>
       <button onclick="vote('skip')">Skip<kbd>s</kbd></button>
+      <button onclick="vote('drums_as_piano')" style="border-color:#d97706;color:#b45309">Drums playing as piano<kbd>d</kbd></button>
       <button onclick="vote('bad_prompt')" style="border-color:#dc2626;color:#dc2626">Bad prompt — exclude from data<kbd>p</kbd></button>
     </div>
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
@@ -236,7 +237,7 @@ async function vote(choice) {
     await fetch('/api/vote', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) });
-    if (choice !== 'skip' && choice !== 'bad_prompt') { sessionCount++; totalCount++; updateCount(); }
+    if (!['skip', 'bad_prompt', 'drums_as_piano'].includes(choice)) { sessionCount++; totalCount++; updateCount(); }
   } catch (e) {
     alert('failed to record vote: ' + e.message);
     return;
@@ -246,7 +247,8 @@ async function vote(choice) {
 
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
-  const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip', 'p': 'bad_prompt' };
+  const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip',
+                'p': 'bad_prompt', 'd': 'drums_as_piano' };
   if (map[e.key]) { e.preventDefault(); vote(map[e.key]); return; }
   if (e.key === ' ') { e.preventDefault(); playSequence('both'); return; }
   if (e.key === 'a') { e.preventDefault(); playSequence('left'); return; }

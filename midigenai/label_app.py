@@ -184,14 +184,15 @@ class PairFactory:
             tpq = max(full.ticks_per_quarter, 1)
             tail0 = max(0, cut_tick - int(args.prompt_tail_beats * tpq))
             spt = 60.0 / (tempo * tpq)
+            cap = cut_tick + int(args.max_cont_seconds * tempo / 60.0 * tpq)
             cont = full.copy()
             timeline = full.copy()
             notes = []
             for track, ct, tt in zip(full.tracks, cont.tracks, timeline.tracks):
-                ct.notes = [n for n in track.notes if n.start >= cut_tick]
+                ct.notes = [n for n in track.notes if cut_tick <= n.start < cap]
                 for n in ct.notes:
                     n.start -= cut_tick
-                tt.notes = [n for n in track.notes if n.start >= tail0]
+                tt.notes = [n for n in track.notes if tail0 <= n.start < cap]
                 for n in tt.notes:
                     n.start -= tail0
                 for n in tt.notes:
@@ -431,7 +432,11 @@ def main():
     p.add_argument("--prompt-tokens", type=int, default=256)
     # ~64 notes / ~30-45s of music: enough to judge, short enough to label fast
     p.add_argument("--max-new-tokens", type=int, default=256)
-    p.add_argument("--prompt-tail-beats", type=float, default=16,
+    p.add_argument("--max-cont-seconds", type=float, default=8.0,
+                   help="hard cap on continuation length in the review clips: notes "
+                        "starting after this are dropped (a fixed token budget gives "
+                        "wildly different durations across tempos)")
+    p.add_argument("--prompt-tail-beats", type=float, default=8,
                    help="beats of prompt kept in front of each continuation in the "
                         "timeline view / playback")
     p.add_argument("--candidates", type=int, default=1,

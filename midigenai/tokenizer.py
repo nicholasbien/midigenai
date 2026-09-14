@@ -152,6 +152,36 @@ def roundtrip(midi_path: PathLike, out_path: PathLike) -> tuple[int, list[int]]:
 DRUM_NAME_HINTS = ("drum", "drm", "perc", "kit", "808", "909", "kick", "snare",
                    "hat", "cymbal", "tom", "clap", "batter", "schlag", "beat")
 
+# General MIDI percussion key range, and the three voices that make a kit
+# recognisable. Requiring one from each family is what separates a kit from
+# a bass ostinato that happens to sit in the same pitch range.
+GM_DRUM_RANGE = range(35, 60)
+GM_KICK = (35, 36)
+GM_SNARE = (38, 40)
+GM_HAT = (42, 44, 46)
+
+
+def looks_like_drums(track, min_notes: int = 16) -> bool:
+    """Content-based drum detection for tracks with no naming hint.
+
+    Deliberately strict — promoting a pitched track to drums destroys its
+    melody — so all of: enough notes, a tiny pitch alphabet, nearly every
+    note inside the GM percussion range, and a kick AND a snare AND a hat.
+    A four-note bass ostinato sitting in the percussion range fails the last
+    test, which two-of-four core pitches would have let through.
+    """
+    pitches = [n.pitch for n in track.notes]
+    if len(pitches) < min_notes:
+        return False
+    distinct = set(pitches)
+    if len(distinct) > 8:
+        return False
+    in_range = sum(1 for p in pitches if p in GM_DRUM_RANGE) / len(pitches)
+    if in_range < 0.85:
+        return False
+    return all(any(p in distinct for p in fam)
+               for fam in (GM_KICK, GM_SNARE, GM_HAT))
+
 
 def normalize_drums(score, filename_hint: str = "") -> int:
     """
@@ -162,7 +192,10 @@ def normalize_drums(score, filename_hint: str = "") -> int:
     on a normal channel with program 0 — the model would learn drum rhythms
     as piano. Conservative heuristic: promote on a drum keyword in the track
     name, or in the filename when the file has a single melodic reading of it
-    (drums split across many named tracks are matched per-track anyway).
+    (drums split across many named tracks are matched per-track anyway), or
+    on drum-shaped content (`looks_like_drums`) for tracks whose name says
+    nothing — a real pattern in Lakh/LAMD, and the main source of "this is
+    obviously a kit but it plays as piano" prompts.
     Returns the number of tracks promoted. Mutates `score` in place.
     """
     fname = filename_hint.lower()
@@ -173,7 +206,8 @@ def normalize_drums(score, filename_hint: str = "") -> int:
             continue
         name = (t.name or "").lower()
         if any(k in name for k in DRUM_NAME_HINTS) or \
-                (fname_says_drums and len(score.tracks) == 1):
+                (fname_says_drums and len(score.tracks) == 1) or \
+                looks_like_drums(t):
             t.is_drum = True
             changed += 1
     return changed
