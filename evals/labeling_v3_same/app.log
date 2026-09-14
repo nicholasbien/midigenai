@@ -1,34 +1,47 @@
 /Users/nicholasbien/midigenai-v4/midigenai/tokenizer.py:108: UserWarning: Attribute controls are not compatible with 'config.one_token_stream_for_programs' and multi-vocabulary tokenizers. Disabling them from the config.
   return cls(params=path)
-[label] 57 prompt files; models: v3 vs v3
+[label] 400 prompt files; models: v3 vs v3
 [label] open http://localhost:7798
  * Serving Flask app 'label_app'
  * Debug mode: off
 [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on http://127.0.0.1:7798
 [33mPress CTRL+C to quit[0m
-127.0.0.1 - - [14/Sep/2026 01:59:51] "POST /api/vote HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 01:59:51] "GET /api/next HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 01:59:51] "GET /midi/20260914015929_6a296488_a_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 01:59:51] "GET /midi/20260914015929_6a296488_b_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 01:59:51] "[36mGET /midi/20260914015929_6a296488_b_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 01:59:51] "[36mGET /midi/20260914015929_6a296488_a_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 01:59:51] "[36mGET /midi/20260914015929_6a296488_b_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 01:59:51] "[36mGET /midi/20260914015929_6a296488_a_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 02:00:27] "POST /api/vote HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 02:00:27] "GET /api/next HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 02:00:27] "GET /midi/20260914015930_7aad4748_b_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 02:00:27] "GET /midi/20260914015930_7aad4748_a_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 02:00:27] "[36mGET /midi/20260914015930_7aad4748_b_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 02:00:27] "[36mGET /midi/20260914015930_7aad4748_a_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 02:00:27] "[36mGET /midi/20260914015930_7aad4748_b_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 02:00:27] "[36mGET /midi/20260914015930_7aad4748_a_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 02:00:48] "POST /api/vote HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 02:00:48] "GET /api/next HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 02:00:48] "GET /midi/20260914015932_410076a1_b_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 02:00:48] "GET /midi/20260914015932_410076a1_a_timeline.mid HTTP/1.1" 200 -
-127.0.0.1 - - [14/Sep/2026 02:00:48] "[36mGET /midi/20260914015932_410076a1_b_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 02:00:48] "[36mGET /midi/20260914015932_410076a1_a_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 02:00:48] "[36mGET /midi/20260914015932_410076a1_b_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 02:00:48] "[36mGET /midi/20260914015932_410076a1_a_timeline.mid HTTP/1.1[0m" 304 -
-127.0.0.1 - - [14/Sep/2026 02:00:53] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:05:15] "[36mGET / HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:05:15] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:05:15] "GET /api/stats HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:05:15] "GET /midi/20260914020449_0f23ebb1_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:05:15] "GET /midi/20260914020449_0f23ebb1_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:05:15] "[36mGET /midi/20260914020449_0f23ebb1_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:05:15] "[36mGET /midi/20260914020449_0f23ebb1_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:05:15] "[36mGET /midi/20260914020449_0f23ebb1_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:05:15] "[36mGET /midi/20260914020449_0f23ebb1_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:05:16] "[33mGET /favicon.ico HTTP/1.1[0m" 404 -
+127.0.0.1 - - [14/Sep/2026 02:05:38] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:05:38] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:05:38] "GET /midi/20260914020451_e3162dfa_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:05:38] "GET /midi/20260914020451_e3162dfa_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:05:38] "[36mGET /midi/20260914020451_e3162dfa_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:05:38] "[36mGET /midi/20260914020451_e3162dfa_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:05:38] "[36mGET /midi/20260914020451_e3162dfa_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:05:38] "[36mGET /midi/20260914020451_e3162dfa_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:06:00] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:00] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:01] "GET /midi/20260914020453_82a9127c_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:01] "GET /midi/20260914020453_82a9127c_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:01] "[36mGET /midi/20260914020453_82a9127c_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:06:01] "[36mGET /midi/20260914020453_82a9127c_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:06:01] "[36mGET /midi/20260914020453_82a9127c_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:06:01] "[36mGET /midi/20260914020453_82a9127c_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:06:18] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:18] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:18] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:18] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:24] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:24] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:24] "GET /midi/20260914020538_7dc609ff_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:24] "GET /midi/20260914020538_7dc609ff_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 02:06:24] "[36mGET /midi/20260914020538_7dc609ff_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:06:24] "[36mGET /midi/20260914020538_7dc609ff_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:06:24] "[36mGET /midi/20260914020538_7dc609ff_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 02:06:24] "[36mGET /midi/20260914020538_7dc609ff_b_timeline.mid HTTP/1.1[0m" 304 -

@@ -103,6 +103,19 @@ class PairFactory:
             f for f in sorted(Path(args.prompts).glob("*.mid")) +
                        sorted(Path(args.prompts).glob("*.midi"))
             if f.name not in blacklisted]
+        self.prompt_order = {f: i for i, f in enumerate(
+            random.Random(12345).sample(self.prompt_files, len(self.prompt_files)))} \
+            if self.prompt_files else {}
+        self.prompt_uses = {f: 0 for f in self.prompt_files}
+        self._prompt_lock = threading.Lock()
+        # carry over usage from pairs already generated into this output dir
+        for meta in Path(args.out).glob("pairs/*.json"):
+            try:
+                used = Path(json.loads(meta.read_text())["prompt_file"])
+            except Exception:
+                continue
+            if used in self.prompt_uses:
+                self.prompt_uses[used] += 1
         if not self.prompt_files:
             raise SystemExit(f"no .mid files in {args.prompts}")
         print(f"[label] {len(self.prompt_files)} prompt files; "
@@ -114,9 +127,21 @@ class PairFactory:
         self.worker = threading.Thread(target=self._run, daemon=True)
         self.worker.start()
 
+    def _next_prompt(self) -> Path:
+        """Round-robin over a shuffled prompt list, least-used first.
+
+        Sampling with replacement made the same prompt come up five times in
+        150 pairs; prompts already used in this output directory start with
+        that many uses, so a restart continues rather than resets.
+        """
+        with self._prompt_lock:
+            f = min(self.prompt_files, key=lambda p: (self.prompt_uses[p], self.prompt_order[p]))
+            self.prompt_uses[f] += 1
+            return f
+
     def _generate_one(self) -> dict:
         args = self.args
-        prompt_file = self.rng.choice(self.prompt_files)
+        prompt_file = self._next_prompt()
         from symusic import Score
 
         from midigenai.tokenizer import normalize_drums
