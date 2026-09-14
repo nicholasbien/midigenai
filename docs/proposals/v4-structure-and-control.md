@@ -362,6 +362,25 @@ About three weeks end to end, one production retrain.
   luna clears the log-prob baseline by more than noise. Best overall by net
   correct answers **and** reliability is **sol on notes**. Next: a larger
   validation (200+ pairs) before generating bulk RLAIF labels.
+
+  **Rubric tuning (the biggest lever), sol on notes, dev/test split by pair id:**
+
+  | split | rubric | decided | agreement | +/-se | net | swap |
+  |---|---|---|---|---|---|---|
+  | dev | base | 39/44 | 0.692 | 0.074 | 0.614 | 0.886 |
+  | dev | fit_only | 42/44 | 0.667 | 0.073 | 0.636 | 0.955 |
+  | dev | taste | 36/44 | 0.722 | 0.075 | 0.591 | 0.818 |
+  | dev | **strict** | 38/44 | **0.737** | 0.071 | 0.636 | 0.864 |
+  | test | **strict** | 36/45 | **0.861** | 0.058 | 0.689 | 0.800 |
+
+  `taste` states the preference the Bradley-Terry fit revealed (restraint and
+  groove over busyness) as a tie-breaker; `strict` adds "abstain rather than
+  guess" on top. Picked on dev, `strict` then scored **0.861 on the held-out
+  half** - at the labeler's own 0.88 self-consistency. The dev/test jump
+  (0.74 -> 0.86) is bigger than the standard errors explain, so treat 0.86 as
+  optimistic until re-measured on more pairs. Judging prompt-fit alone
+  (`fit_only`) is the most self-consistent rubric but the least aligned: what
+  this labeler rewards is not fit alone.
 - **Neural reward head.** The proper version of `reward_probe`: scalar head on
   the music model, Bradley-Terry loss, trained once preference data reaches
   ~1000+ pairs. A 769-feature linear probe already memorizes at 122 pairs
