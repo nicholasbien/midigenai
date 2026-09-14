@@ -96,6 +96,25 @@
   in build_dataset); a restart script must regenerate its inputs; one big
   `modal volume put` wedges after a sleep/network change (per-file resumable
   puts); macOS xargs -I has a 255-byte replacement limit (helper script).
+
+- 2026-09-14 02:40: **Corpus bug found while labeling, fixed for the NEXT
+  build (not this run).** `normalize_drums` matched its name hints as bare
+  substrings, so "909"/"808"/"hat"/"tom" hit inside arbitrary ids and song
+  titles. Damage, measured on the strict manifest:
+  - **~9,900 single-track files force-promoted to drums by FILENAME**
+    (aria 6,454 = 0.80% of aria, gigamidi 2,790, lamd 443, lakh 180). Aria
+    ids are bare numbers, so `785909_0.mid` read as a TR-909 — piano
+    transcriptions trained as drum kits.
+  - **~0.6% of pitched tracks in multi-track files promoted by TRACK NAME**
+    (sampled 2,979 tracks: 32 promoted, 19 of them false — "Beatles 1",
+    "CT5909-FLY AWAY FROM HERE", "WHATTOOK").
+  Fix (`name_says_drums`): unambiguous hints still match anywhere;
+  drm/kit/hat/tom/beat/808/909 require a non-alphanumeric boundary. False
+  promotions by filename drop to 0 across all 1.44M files, genuine names
+  ("Drums", "HiHat", "TR-909", "909_kit") still match, regression test on
+  `val_aria_909098_0.mid`. Present in v3's corpus too, so not a v4
+  regression and it does not invalidate the v3-vs-v4 comparison — but
+  **`corpus_full_v4` must be rebuilt with this fix before any further run.**
   - **Arm C is 24/beat, not 12**: measured off-grid share and error per
     source (Lakh/LAMD ~3 ms median error at 1/8 beat; Aria/MAESTRO/POP909
     15-23 ms, i.e. nearly every onset off-grid). At 1/24 beat the performed
