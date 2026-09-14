@@ -1,0 +1,12 @@
+/Users/nicholasbien/midigenai/env/lib/python3.12/site-packages/miditok/tokenizations/remi.py:88: UserWarning: Attribute controls are not compatible with 'config.one_token_stream_for_programs' and multi-vocabulary tokenizers. Disabling them from the config.
+  super().__init__(tokenizer_config, params)
+[label] 114 prompt files; models: ckpt_018000 vs ckpt_018000
+[label] open http://localhost:7798
+ * Serving Flask app 'label_app'
+ * Debug mode: off
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on http://127.0.0.1:7798
+[33mPress CTRL+C to quit[0m
+127.0.0.1 - - [13/Sep/2026 21:08:07] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [13/Sep/2026 21:08:34] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [13/Sep/2026 21:08:34] "GET /api/next HTTP/1.1" 200 -

@@ -152,6 +152,7 @@ class PairFactory:
         # which is how it is prompted in production.
         side_prompt_ids = {}
         conts = {}
+        rolls = {}
         candidate_log = None
 
         def side_ids(gen):
@@ -163,19 +164,34 @@ class PairFactory:
             return ids
 
         def continuation(gen, ids, kw):
-            """(new_ids, continuation-only Score): decode with full prompt
-            context (programs, ringing notes), then trim to the continuation
-            so files review faster."""
+            """Returns (new_ids, continuation-only Score, timeline Score,
+            note list). The timeline Score is the last `--prompt-tail-beats`
+            of the prompt followed by the continuation, so the two sides of a
+            pair line up in time; the note list (seconds) drives the piano
+            roll in the UI, with prompt notes marked."""
             cut_tick = gen.tokenizer.decode(list(ids)).end()
             new_ids = list(gen.generate_ids(ids, **kw))
             full = gen.tokenizer.decode(list(ids) + new_ids)
-            for track in full.tracks:
-                kept = [n for n in track.notes if n.start >= cut_tick]
-                for n in kept:
+            tpq = max(full.ticks_per_quarter, 1)
+            tail0 = max(0, cut_tick - int(args.prompt_tail_beats * tpq))
+            spt = 60.0 / (tempo * tpq)
+            cont = full.copy()
+            timeline = full.copy()
+            notes = []
+            for track, ct, tt in zip(full.tracks, cont.tracks, timeline.tracks):
+                ct.notes = [n for n in track.notes if n.start >= cut_tick]
+                for n in ct.notes:
                     n.start -= cut_tick
-                track.notes = kept
-            full.tempos = [Tempo(time=0, qpm=tempo)]
-            return new_ids, full
+                tt.notes = [n for n in track.notes if n.start >= tail0]
+                for n in tt.notes:
+                    n.start -= tail0
+                for n in tt.notes:
+                    notes.append({"s": round(n.start * spt, 3), "e": round((n.start + n.duration) * spt, 3),
+                                  "p": int(n.pitch), "v": int(n.velocity),
+                                  "d": bool(track.is_drum), "prompt": n.start < (cut_tick - tail0)})
+            cont.tempos = [Tempo(time=0, qpm=tempo)]
+            timeline.tempos = [Tempo(time=0, qpm=tempo)]
+            return new_ids, cont, timeline, {"notes": notes, "prompt_end_s": round((cut_tick - tail0) * spt, 3)}
 
         if not self.cross_model and args.candidates > 2:
             # Curated same-model pairs: sample K continuations, drop the
@@ -188,22 +204,26 @@ class PairFactory:
             side_prompt_ids = {"a": ids, "b": ids}
             cands = []
             for k in range(args.candidates):
-                new_ids, sc = continuation(self.gen_a, ids, kwargs_by_side["a"])
-                cands.append((new_ids, sc, _degeneracy(sc)))
+                new_ids, sc, tl, nj = continuation(self.gen_a, ids, kwargs_by_side["a"])
+                cands.append((new_ids, sc, _degeneracy(sc), tl, nj))
             ok = [c for c in cands if not c[2]["degenerate"]]
             pool = ok if len(ok) >= 2 else sorted(cands, key=lambda c: c[2]["badness"])[:2]
             picked = self.rng.sample(pool, 2)
-            for name, (new_ids, sc, m) in zip(("a", "b"), picked):
+            for name, (new_ids, sc, m, tl, nj) in zip(("a", "b"), picked):
                 conts[name] = new_ids
                 sc.dump_midi(self.pairs_dir / f"{pair_id}_{name}.mid")
+                tl.dump_midi(self.pairs_dir / f"{pair_id}_{name}_timeline.mid")
+                rolls[name] = nj
             candidate_log = [{**c[2], "chosen": c in picked, "n_ids": len(c[0])} for c in cands]
         else:
             for name, gen in (("a", self.gen_a), ("b", self.gen_b)):
                 ids = side_ids(gen)
                 side_prompt_ids[name] = ids
-                new_ids, sc = continuation(gen, ids, kwargs_by_side[name])
+                new_ids, sc, tl, nj = continuation(gen, ids, kwargs_by_side[name])
                 conts[name] = new_ids
                 sc.dump_midi(self.pairs_dir / f"{pair_id}_{name}.mid")
+                tl.dump_midi(self.pairs_dir / f"{pair_id}_{name}_timeline.mid")
+                rolls[name] = nj
 
         meta = {
             "pair_id": pair_id,
@@ -237,6 +257,10 @@ class PairFactory:
             "prompt_url": f"/midi/{pair_id}_prompt.mid",
             "left_url": f"/midi/{pair_id}_{left}.mid",
             "right_url": f"/midi/{pair_id}_{right}.mid",
+            "left_timeline_url": f"/midi/{pair_id}_{left}_timeline.mid",
+            "right_timeline_url": f"/midi/{pair_id}_{right}_timeline.mid",
+            "left_roll": rolls[left],
+            "right_roll": rolls[right],
             "left_is": left,
             "right_is": right,
             "left_model": meta[f"model_{left}"],
@@ -398,6 +422,9 @@ def main():
     p.add_argument("--prompt-tokens", type=int, default=256)
     # ~64 notes / ~30-45s of music: enough to judge, short enough to label fast
     p.add_argument("--max-new-tokens", type=int, default=256)
+    p.add_argument("--prompt-tail-beats", type=float, default=16,
+                   help="beats of prompt kept in front of each continuation in the "
+                        "timeline view / playback")
     p.add_argument("--candidates", type=int, default=1,
                    help="same-model pairs only: sample this many continuations per "
                         "prompt, drop degenerate ones, show two plausible survivors")
