@@ -43,6 +43,28 @@ def utcnow() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def _degeneracy(score) -> dict:
+    """Cheap sanity metrics for a continuation-only Score. `degenerate` is
+    True for near-empty, one-pitch-stuck, or hard-looping samples."""
+    from midigenai.eval import repetition_rate
+    notes = [n for t in score.tracks for n in t.notes]
+    n = len(notes)
+    if n == 0:
+        return {"n_notes": 0, "top_pitch_share": 1.0, "repetition": 1.0,
+                "degenerate": True, "badness": 9.0}
+    pitches = [nt.pitch for nt in notes]
+    top = max(pitches.count(p) for p in set(pitches)) / n
+    try:
+        rep = float(repetition_rate(score)) if n >= 8 else 0.0
+    except Exception:
+        rep = 0.0
+    degenerate = n < 8 or top > 0.5 or rep > 0.6 or n > 600
+    badness = (8 - n) / 8 if n < 8 else 0.0
+    badness += max(0.0, top - 0.3) + max(0.0, rep - 0.3) + (1.0 if n > 600 else 0.0)
+    return {"n_notes": n, "top_pitch_share": round(top, 3), "repetition": round(rep, 3),
+            "degenerate": bool(degenerate), "badness": round(badness, 3)}
+
+
 def load_generator(args, side: str):
     """Build the generator for side 'a' or 'b'. Returns (generator, label)."""
     ckpt = getattr(args, f"checkpoint{'_b' if side == 'b' else ''}", None)
@@ -130,19 +152,22 @@ class PairFactory:
         # which is how it is prompted in production.
         side_prompt_ids = {}
         conts = {}
-        for name, gen in (("a", self.gen_a), ("b", self.gen_b)):
+        candidate_log = None
+
+        def side_ids(gen):
             if gen is self.gen_a and not getattr(gen, "v4", False):
-                ids = list(prompt_ids)
-            else:
-                ids = gen.tokenizer(Score(str(prompt_path))).ids
-                if getattr(gen, "v4", False):
-                    ids = [*gen.make_header(prompt_path), *gen.close_bar(ids)]
-            side_prompt_ids[name] = ids
+                return list(prompt_ids)
+            ids = gen.tokenizer(Score(str(prompt_path))).ids
+            if getattr(gen, "v4", False):
+                ids = [*gen.make_header(prompt_path), *gen.close_bar(ids)]
+            return ids
+
+        def continuation(gen, ids, kw):
+            """(new_ids, continuation-only Score): decode with full prompt
+            context (programs, ringing notes), then trim to the continuation
+            so files review faster."""
             cut_tick = gen.tokenizer.decode(list(ids)).end()
-            new_ids = list(gen.generate_ids(ids, **kwargs_by_side[name]))
-            conts[name] = new_ids
-            # Decode with full prompt context (programs, ringing notes), then
-            # trim to the continuation only: shorter files review much faster.
+            new_ids = list(gen.generate_ids(ids, **kw))
             full = gen.tokenizer.decode(list(ids) + new_ids)
             for track in full.tracks:
                 kept = [n for n in track.notes if n.start >= cut_tick]
@@ -150,7 +175,35 @@ class PairFactory:
                     n.start -= cut_tick
                 track.notes = kept
             full.tempos = [Tempo(time=0, qpm=tempo)]
-            full.dump_midi(self.pairs_dir / f"{pair_id}_{name}.mid")
+            return new_ids, full
+
+        if not self.cross_model and args.candidates > 2:
+            # Curated same-model pairs: sample K continuations, drop the
+            # degenerate ones (near-empty, stuck on one pitch, looping), and
+            # show two plausible survivors. Votes between two plausible
+            # answers teach the reward about musical choices; a vote against
+            # a broken sample adds nothing the metrics don't already know.
+            # Never done in cross-model mode (per-model cherry-picking biases).
+            ids = side_ids(self.gen_a)
+            side_prompt_ids = {"a": ids, "b": ids}
+            cands = []
+            for k in range(args.candidates):
+                new_ids, sc = continuation(self.gen_a, ids, kwargs_by_side["a"])
+                cands.append((new_ids, sc, _degeneracy(sc)))
+            ok = [c for c in cands if not c[2]["degenerate"]]
+            pool = ok if len(ok) >= 2 else sorted(cands, key=lambda c: c[2]["badness"])[:2]
+            picked = self.rng.sample(pool, 2)
+            for name, (new_ids, sc, m) in zip(("a", "b"), picked):
+                conts[name] = new_ids
+                sc.dump_midi(self.pairs_dir / f"{pair_id}_{name}.mid")
+            candidate_log = [{**c[2], "chosen": c in picked, "n_ids": len(c[0])} for c in cands]
+        else:
+            for name, gen in (("a", self.gen_a), ("b", self.gen_b)):
+                ids = side_ids(gen)
+                side_prompt_ids[name] = ids
+                new_ids, sc = continuation(gen, ids, kwargs_by_side[name])
+                conts[name] = new_ids
+                sc.dump_midi(self.pairs_dir / f"{pair_id}_{name}.mid")
 
         meta = {
             "pair_id": pair_id,
@@ -166,6 +219,7 @@ class PairFactory:
             "cross_model": self.cross_model,
             "tempo_bpm": tempo,
             "temperature_b": kwargs_by_side["b"]["temperature"],
+            "candidates": candidate_log,
             **gen_kwargs,
         }
         (self.pairs_dir / f"{pair_id}.json").write_text(json.dumps(meta))
@@ -344,6 +398,9 @@ def main():
     p.add_argument("--prompt-tokens", type=int, default=256)
     # ~64 notes / ~30-45s of music: enough to judge, short enough to label fast
     p.add_argument("--max-new-tokens", type=int, default=256)
+    p.add_argument("--candidates", type=int, default=1,
+                   help="same-model pairs only: sample this many continuations per "
+                        "prompt, drop degenerate ones, show two plausible survivors")
     p.add_argument("--temperature", type=float, default=1.2)
     p.add_argument("--temperature-b", type=float, default=None,
                    help="model B's temperature (cross-model fairness); defaults to --temperature")
