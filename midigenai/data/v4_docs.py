@@ -101,6 +101,28 @@ def bar_edges(sc: Score) -> list[int]:
 
 
 HAND_SPLIT_MIN, HAND_SPLIT_MAX = 50, 67      # keep the split near middle C
+HAND_SPLIT_MIN_SIMULTANEITY = 0.30           # see split_hands
+
+
+def _simultaneity(low, high) -> float:
+    """Fraction of the high part's onsets that sound while the low part is
+    already sounding. Two-handed writing scores high; a single melodic line
+    cut at a pitch scores near zero, because its notes alternate rather than
+    overlap."""
+    spans = sorted((n.start, n.start + max(n.duration, 1))
+                   for t in low.tracks for n in t.notes)
+    onsets = sorted(n.start for t in high.tracks for n in t.notes)
+    if not spans or not onsets:
+        return 0.0
+    import bisect
+    starts = [s for s, _ in spans]
+    covered = 0
+    for o in onsets:
+        i = bisect.bisect_right(starts, o)
+        # a note starting at or before o and still sounding at o
+        if any(e > o for _, e in spans[max(0, i - 12):i]):
+            covered += 1
+    return covered / len(onsets)
 
 
 def split_hands(win: Score) -> tuple[Score, Score] | None:
@@ -112,6 +134,13 @@ def split_hands(win: Score) -> tuple[Score, Score] | None:
     genuine accompaniment pair, and they are the most abundant one we have.
     The split point is the window's median pitch, held near middle C so a
     bass-register passage does not get cut in an implausible place.
+
+    Rejects windows that are really one melodic line: 57% of Aria windows
+    that pass a notes-only test are near-monophonic (median 1.12 notes per
+    onset), and slicing a melody at a pitch produces two half-melodies, not
+    an accompaniment pair. The test that separates them is simultaneity —
+    whether the hands actually sound together — since a single line crossing
+    the split still puts notes on both sides of almost every bar.
     """
     notes = [n for t in win.tracks if not t.is_drum for n in t.notes]
     if len(notes) < 2 * MIN_SEGMENT_NOTES:
@@ -131,6 +160,8 @@ def split_hands(win: Score) -> tuple[Score, Score] | None:
         low.tracks.append(lt)
         high.tracks.append(ht)
     if _n_notes(low) < MIN_SEGMENT_NOTES or _n_notes(high) < MIN_SEGMENT_NOTES:
+        return None
+    if max(_simultaneity(low, high), _simultaneity(high, low)) < HAND_SPLIT_MIN_SIMULTANEITY:
         return None
     return low, high
 

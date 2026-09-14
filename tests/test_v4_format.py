@@ -353,3 +353,29 @@ def test_pitch_class_overlap_survives_different_tick_rates():
     assert pitch_class_overlap(piece(480, same_pitches), b) == 1.0
     c = piece(16, [61, 63, 66, 68])                   # disjoint pitch classes
     assert pitch_class_overlap(c, b) == 0.0
+
+
+def test_hand_split_rejects_a_single_melodic_line():
+    """Slicing a melody at a pitch gives two half-melodies, not two hands."""
+    from midigenai.data.v4_docs import split_hands
+
+    def window(build):
+        s = Score(480)
+        s.time_signatures.append(TimeSignature(0, 4, 4))
+        t = Track(program=0)
+        build(t)
+        s.tracks.append(t)
+        return s
+
+    def melody(t):                      # one line, notes never overlap
+        for i in range(48):
+            t.notes.append(Note(i * 240, 220, 48 + (i * 5) % 30, 80))
+
+    def two_hands(t):                   # sustained left hand under a melody
+        for bar in range(12):
+            t.notes.append(Note(bar * 1920, 1900, 43 + bar % 5, 70))
+            for beat in range(4):
+                t.notes.append(Note(bar * 1920 + beat * 480, 220, 72 + beat, 90))
+
+    assert split_hands(window(melody)) is None
+    assert split_hands(window(two_hands)) is not None
