@@ -203,7 +203,16 @@ class PairFactory:
                 return list(prompt_ids)
             ids = gen.tokenizer(Score(str(prompt_path))).ids
             if getattr(gen, "v4", False):
-                ids = [*gen.make_header(prompt_path), *gen.close_bar(ids)]
+                # `--v4-close-bar` pads the prompt to its bar line so the answer
+                # lands on a downbeat. Off by default here: it moves v4's
+                # starting point later than v3's, so the two rows would show
+                # different slices of the prompt and v4 would open with up to a
+                # bar of padding. The downbeat behaviour is measured properly in
+                # eval_checkpoint --pad-to-bar; a blind A/B wants both models
+                # continuing from the identical instant.
+                if args.v4_close_bar:
+                    ids = gen.close_bar(ids)
+                ids = [*gen.make_header(prompt_path), *ids]
             return ids
 
         def continuation(gen, ids, kw):
@@ -214,10 +223,9 @@ class PairFactory:
             roll in the UI, with prompt notes marked."""
             decoded_prompt = gen.tokenizer.decode(list(ids))
             cut_tick = decoded_prompt.end()
-            if getattr(gen, "v4", False):
-                # the v4 prompt is padded to its bar line, and the tokenizer
-                # emits nothing after the last note: the handoff is the bar
-                # line, not the last note's end
+            if getattr(gen, "v4", False) and args.v4_close_bar:
+                # a padded prompt ends at its bar line, and the tokenizer emits
+                # nothing after the last note, so the handoff is the bar line
                 from midigenai.attributes import ticks_per_bar
                 nbars = gen.count_bars(ids)
                 if nbars > 1:
@@ -475,6 +483,10 @@ def main():
     p.add_argument("--prompt-tokens", type=int, default=256)
     # ~64 notes / ~30-45s of music: enough to judge, short enough to label fast
     p.add_argument("--max-new-tokens", type=int, default=256)
+    p.add_argument("--v4-close-bar", action="store_true",
+                   help="pad a v4 side's prompt to its bar line (production jam "
+                        "behaviour). Off by default so both sides of a pair start "
+                        "from the identical instant.")
     p.add_argument("--max-cont-seconds", type=float, default=8.0,
                    help="hard cap on continuation length in the review clips: notes "
                         "starting after this are dropped (a fixed token budget gives "
