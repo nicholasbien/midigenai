@@ -16,9 +16,11 @@
   .opt.chosen { border-color: #4f46e5; }
   midi-player { width: 100%; }
   .rollwrap { overflow-x: auto; background: #fff; border: 1px solid #e5e5e5; border-radius: 4px; padding: 2px 0; }
+  .rollinner { position: relative; display: inline-block; min-width: 100%; }
   midi-visualizer { display: block; }
-  midi-visualizer svg rect.promptshade { fill: #111; opacity: .07; }
-  midi-visualizer svg line.handoff { stroke: #dc2626; stroke-width: 2; }
+  .shade { position: absolute; left: 0; top: 0; bottom: 0; background: #111; opacity: .07; pointer-events: none; }
+  .cutline { position: absolute; top: 0; bottom: 0; width: 2px; background: #dc2626; pointer-events: none; }
+  .cutlabel { position: absolute; top: 0; font-size: 10px; color: #dc2626; background: #fff; padding: 0 3px; pointer-events: none; }
   .opt.playing { border-color: #10b981; }
   .rows .opt { margin-bottom: 10px; }
   .legend { font-size: 11px; color: #777; margin: 4px 0 8px; }
@@ -107,37 +109,24 @@ function renderFlags() {
 // note as it sounds), plus a shaded prompt region and a handoff line drawn
 // into the same SVG. Both sides get the same pitch range and the library's
 // default pixels-per-second, so the two rows share one scale. ----
+const PX_PER_SEC = 40;   // fixed, so both rows share a scale and the
+                         // prompt/continuation boundary is exact arithmetic
+
 function setupRoll(side, roll, lo, hi) {
   const vis = document.getElementById('roll-' + side);
   vis.config = { noteHeight: 4, minPitch: lo, maxPitch: hi,
+                 pixelsPerTimeStep: PX_PER_SEC,
                  noteRGB: '90, 100, 180', activeNoteRGB: '220, 38, 38' };
   vis.src = roll.url;
-  decorateWhenReady(side, roll);
-}
-
-function decorateWhenReady(side, roll, tries = 0) {
-  const vis = document.getElementById('roll-' + side);
-  const svg = vis && vis.querySelector('svg');
-  if (!svg || !svg.querySelector('rect')) {
-    if (tries < 100) setTimeout(() => decorateWhenReady(side, roll, tries + 1), 100);
-    return;
-  }
-  if (svg.querySelector('line.handoff')) return;
-  const w = svg.width.baseVal.value || parseFloat(svg.getAttribute('width')) || 0;
-  const h = svg.height.baseVal.value || parseFloat(svg.getAttribute('height')) || 0;
-  const tmax = Math.max(...(roll.notes || []).map(n => n.e), roll.prompt_end_s + 0.1);
-  const x = w * roll.prompt_end_s / tmax;
-  const NS = 'http://www.w3.org/2000/svg';
-  const shade = document.createElementNS(NS, 'rect');
-  shade.setAttribute('x', 0); shade.setAttribute('y', 0);
-  shade.setAttribute('width', x.toFixed(1)); shade.setAttribute('height', h);
-  shade.setAttribute('class', 'promptshade');
-  svg.insertBefore(shade, svg.firstChild);
-  const line = document.createElementNS(NS, 'line');
-  line.setAttribute('x1', x.toFixed(1)); line.setAttribute('x2', x.toFixed(1));
-  line.setAttribute('y1', 0); line.setAttribute('y2', h);
-  line.setAttribute('class', 'handoff');
-  svg.appendChild(line);
+  // Overlay (not SVG children): the visualizer redraws its own SVG as notes
+  // light up, which would wipe anything injected into it.
+  const x = (roll.prompt_end_s || 0) * PX_PER_SEC;
+  const shade = document.getElementById('shade-' + side);
+  const line = document.getElementById('cut-' + side);
+  const label = document.getElementById('cutlabel-' + side);
+  shade.style.width = x + 'px';
+  line.style.left = x + 'px';
+  label.style.left = (x + 4) + 'px';
 }
 
 // auto-play: side 1 with the prompt tail for context, then side 2 from the
@@ -184,13 +173,21 @@ function render() {
     <div class="rows">
       <div class="opt" id="opt-left">
         <h3>Continuation 1</h3>
-        <div class="rollwrap"><midi-visualizer type="piano-roll" id="roll-left"></midi-visualizer></div>
+        <div class="rollwrap"><div class="rollinner">
+          <midi-visualizer type="piano-roll" id="roll-left"></midi-visualizer>
+          <div class="shade" id="shade-left"></div><div class="cutline" id="cut-left"></div>
+          <div class="cutlabel" id="cutlabel-left">model starts</div>
+        </div></div>
         <midi-player id="pl-left" src="${p.left_timeline_url}" sound-font visualizer="#roll-left"></midi-player>
         <div class="chips" id="flags-left"></div>
       </div>
       <div class="opt" id="opt-right">
         <h3>Continuation 2</h3>
-        <div class="rollwrap"><midi-visualizer type="piano-roll" id="roll-right"></midi-visualizer></div>
+        <div class="rollwrap"><div class="rollinner">
+          <midi-visualizer type="piano-roll" id="roll-right"></midi-visualizer>
+          <div class="shade" id="shade-right"></div><div class="cutline" id="cut-right"></div>
+          <div class="cutlabel" id="cutlabel-right">model starts</div>
+        </div></div>
         <midi-player id="pl-right" src="${p.right_timeline_url}" sound-font visualizer="#roll-right"></midi-player>
         <div class="chips" id="flags-right"></div>
       </div>

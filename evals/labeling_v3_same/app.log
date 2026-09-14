@@ -1,10 +1,18 @@
 /Users/nicholasbien/midigenai-v4/midigenai/tokenizer.py:108: UserWarning: Attribute controls are not compatible with 'config.one_token_stream_for_programs' and multi-vocabulary tokenizers. Disabling them from the config.
   return cls(params=path)
-[label] 60 prompt files; models: v3 vs v3
+[label] 58 prompt files; models: v3 vs v3
 [label] open http://localhost:7798
  * Serving Flask app 'label_app'
  * Debug mode: off
 [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
  * Running on http://127.0.0.1:7798
 [33mPress CTRL+C to quit[0m
-127.0.0.1 - - [14/Sep/2026 00:51:53] "GET / HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:31:35] "POST /api/vote HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:31:37] "GET /api/next HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:31:37] "GET /midi/20260914013135_68c4dc9e_a_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:31:37] "GET /midi/20260914013135_68c4dc9e_b_timeline.mid HTTP/1.1" 200 -
+127.0.0.1 - - [14/Sep/2026 01:31:37] "[36mGET /midi/20260914013135_68c4dc9e_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:31:37] "[36mGET /midi/20260914013135_68c4dc9e_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:31:37] "[36mGET /midi/20260914013135_68c4dc9e_b_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:31:37] "[36mGET /midi/20260914013135_68c4dc9e_a_timeline.mid HTTP/1.1[0m" 304 -
+127.0.0.1 - - [14/Sep/2026 01:32:59] "GET / HTTP/1.1" 200 -
