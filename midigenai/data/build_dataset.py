@@ -393,6 +393,9 @@ if __name__ == "__main__":
                              "infill docs) or midilike (v2/v3 legacy)")
     parser.add_argument("--accomp-windows", type=int, default=4,
                         help="v4: accompaniment docs per multi-track file")
+    parser.add_argument("--single-target-frac", type=float, default=0.6,
+                        help="v4: share of accompaniment docs whose target is one "
+                             "track (\"add a bass\") rather than every remaining one")
     parser.add_argument("--infill-windows", type=int, default=2,
                         help="v4: span-infill docs per file")
     parser.add_argument("--window-bars", type=int, default=16,
@@ -417,6 +420,7 @@ if __name__ == "__main__":
     v4_opts = dict(accomp_windows=args.accomp_windows, infill_windows=args.infill_windows,
                    window_bars=args.window_bars, context_bars=args.context_bars,
                    max_span_bars=args.max_span_bars, segment_eos=args.segment_eos,
+                   single_target_frac=args.single_target_frac,
                    hand_split_windows=args.hand_split_windows)
     if args.genres:
         v4_opts["genres"] = json.loads(args.genres.read_text())

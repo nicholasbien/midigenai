@@ -190,6 +190,7 @@ class DocBuilder:
     def __init__(self, tokenizer, track_views: int = 2, accomp_windows: int = 4,
                  infill_windows: int = 2, window_bars: int = 16,
                  context_bars: int = 16, max_span_bars: int = 4,
+                 single_target_frac: float = 0.6,
                  genres: dict[str, list[str]] | None = None,
                  quality: dict[str, int] | None = None,
                  segment_eos: bool = False,
@@ -204,6 +205,12 @@ class DocBuilder:
         self.window_bars = window_bars
         self.context_bars = context_bars
         self.max_span_bars = max_span_bars
+        # Share of accompaniment documents whose target is ONE track rather
+        # than every remaining track. "Add a bass" is the shape the jam asks
+        # for; "write the other five parts at once" is a harder, rarer task.
+        # Keeping both teaches the single-part skill without losing whole-
+        # arrangement coherence.
+        self.single_target_frac = single_target_frac
         self.genres = genres or {}
         self.quality = quality or {}      # path -> q_bucket (quality_predictor)
         # EOS after an accompaniment / infill target? Off by default: pilot
@@ -292,19 +299,23 @@ class DocBuilder:
                     continue
                 rng.shuffle(live)
                 n_cond = 1 if len(live) == 2 or rng.random() < 0.7 else 2
-                cond_idx, tgt_idx = live[:n_cond], live[n_cond:]
+                cond_idx, rest = live[:n_cond], live[n_cond:]
+                tgt_idx = ([rng.choice(rest)]
+                           if rng.random() < self.single_target_frac else rest)
                 win = _window(score, s, e)
                 cond = _subscore(win, cond_idx)
                 tgt = _subscore(win, tgt_idx)
                 if _n_notes(cond) < MIN_SEGMENT_NOTES or _n_notes(tgt) < MIN_SEGMENT_NOTES:
                     continue
-                # header describes the whole window: the instruments the
-                # caller wants in the result, condition included
                 segs = (self._segment(cond, self.window_bars),
                         self._segment(tgt, self.window_bars))
                 if None in segs:
                     continue
-                doc = accompaniment_doc(sp, self._header(win, source, path), *segs)
+                # the header names exactly what is in this document, condition
+                # plus target, so asking for `Inst_Bass` at inference means
+                # "add a bass" rather than "add everything this file had"
+                header = self._header(_subscore(win, cond_idx + tgt_idx), source, path)
+                doc = accompaniment_doc(sp, header, *segs)
                 out["accompaniment"].append(doc if self.segment_eos else doc[:-1])
 
         # 2b. solo keyboard: left hand <-> right hand, both directions

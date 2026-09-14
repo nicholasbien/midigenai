@@ -381,3 +381,28 @@ def test_hand_split_rejects_a_single_melodic_line():
 
     assert split_hands(window(melody)) is None
     assert split_hands(window(two_hands)) is not None
+
+
+def test_single_target_accompaniment(tok, sp):
+    """"Add a bass" is the shape the jam asks for, so most accompaniment
+    documents should target one track and name it in the header."""
+    from midigenai.attributes import is_header_token
+    inv = {v: k for k, v in tok.vocab.items()}
+
+    s = _song(40)                       # piano + bass + drums
+    path = _write(s, "trio.mid")
+    docs = DocBuilder(tok, accomp_windows=12, infill_windows=0, track_views=0,
+                      window_bars=8, single_target_frac=1.0).build(path)
+    assert docs["accompaniment"]
+    for doc in docs["accompaniment"]:
+        header, rest = split_header(sp, doc[1:])
+        names = [inv[t] for t in header if is_header_token(inv[t])]
+        insts = [n for n in names if n.startswith("Inst_")]
+        # condition (1-2 tracks) + exactly one target: at most three families
+        assert 1 <= len(insts) <= 3, names
+        i = rest.index(sp.sep)
+        assert count_bars(sp, rest[:i]) == count_bars(sp, rest[i + 1:]) == 8
+
+    everything = DocBuilder(tok, accomp_windows=12, infill_windows=0, track_views=0,
+                            window_bars=8, single_target_frac=0.0).build(path)
+    assert everything["accompaniment"]
