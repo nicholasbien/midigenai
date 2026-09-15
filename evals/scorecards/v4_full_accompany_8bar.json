@@ -375,7 +375,7 @@
       "ioi_entropy": 0.4021791902022728
     },
     {
-      "prompt": "user_1_-_Clara_Poelzl_-_Mighty_Illusion.mid",
+      "prompt": "user_3.mid",
       "gen": 0,
       "gen_tokens": 560,
       "accomp_notes": 126,
@@ -391,7 +391,7 @@
       "ioi_entropy": 1.375093827460725
     },
     {
-      "prompt": "user_1_-_Clara_Poelzl_-_Mighty_Illusion.mid",
+      "prompt": "user_3.mid",
       "gen": 1,
       "gen_tokens": 568,
       "accomp_notes": 150,

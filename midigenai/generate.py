@@ -82,6 +82,52 @@ def fit_to_context(
     return prompt_ids, max_new_tokens
 
 
+OVERLAY_TPQ = 480          # a common grid both sides resample onto
+
+
+def overlay(condition, generated, tpq: int = OVERLAY_TPQ):
+    """Stack a generated accompaniment on top of the part it answers.
+
+    Both scores start at bar 0 of the same window, so the merge is a plain
+    union of tracks -- but only after they agree on a tick rate. They do not
+    by default: a score decoded from tokens carries the tokenizer's rate
+    (16/quarter) while one parsed from an uploaded file carries the file's
+    (commonly 220 or 480). Appending the tracks without resampling leaves
+    every generated tick reinterpreted against the other grid, which in
+    practice collapsed a whole accompaniment onto the first instant of the
+    window. Resample both, then merge.
+
+    Returns a new Score; neither input is modified.
+    """
+    from symusic import Score
+
+    out = Score(tpq)
+    cond = condition.resample(tpq=tpq)
+    gen = generated.resample(tpq=tpq)
+    for ts in (cond.time_signatures or gen.time_signatures):
+        out.time_signatures.append(ts)
+    for tempo in (cond.tempos or gen.tempos):
+        out.tempos.append(tempo)
+    for src in (cond, gen):
+        for track in src.tracks:
+            if len(track.notes):
+                out.tracks.append(track)
+    return out
+
+
+def densest_track(score) -> int:
+    """Index of the track carrying the most notes.
+
+    Accompaniment is trained to answer ONE part, so a multitrack upload has
+    to be narrowed to a single condition. The busiest track is the lead line
+    on essentially anything real, and this is a no-op for the single-track
+    files the site's presets all are.
+    """
+    if not score.tracks:
+        raise ValueError("score has no tracks")
+    return max(range(len(score.tracks)), key=lambda i: len(score.tracks[i].notes))
+
+
 class Generator:
     def __init__(
         self,

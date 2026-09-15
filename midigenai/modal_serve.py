@@ -209,7 +209,9 @@ class MidiGen:
         return [list(gen.postprocess(prompt_ids, out)) for out in outs]
 
     def _to_midi_bytes(self, full_ids: list[int], tempo_bpm: float) -> bytes:
-        score = self.gen.tokenizer.decode(full_ids)
+        return self._score_to_bytes(self.gen.tokenizer.decode(full_ids), tempo_bpm)
+
+    def _score_to_bytes(self, score, tempo_bpm: float) -> bytes:
         if abs(tempo_bpm - 120.0) > 1e-6:
             from symusic import Tempo
             score.tempos = [Tempo(time=0, qpm=tempo_bpm)]
@@ -261,6 +263,86 @@ class MidiGen:
             "generated_tokens": [len(ids) for ids in sample_ids],
             "tempo_bpm": tempo_bpm,
             "midi": midis[0],   # backward-compatible single-sample field
+            "midis": midis,
+        }
+
+    @modal.method()
+    def accompany_batch(
+        self,
+        midi_bytes: bytes,
+        bars: int = 8,
+        temperature: float = 1.0,
+        top_k: int = 50,
+        n_samples: int = 1,
+        tempo_bpm: float | None = None,
+    ) -> dict:
+        """Write parts to go *with* the upload rather than after it.
+
+        Continuation extends the prompt in time; accompaniment fills the same
+        `bars` bars with a different instrument and the result is the two
+        stacked. The upload is narrowed to its densest track, since the model
+        is trained to answer a single part, and each returned MIDI is that
+        condition overlaid with one generated answer.
+        """
+        from io import BytesIO
+
+        from symusic import Score
+
+        from midigenai.attributes import header_for_score
+        from midigenai.data.v4_docs import _subscore, _window, bar_edges, trim_leading
+        from midigenai.generate import densest_track, overlay
+        from midigenai.tokenizer import normalize_drums
+
+        if not self.gen.v4:
+            raise ValueError(
+                f"accompaniment needs a v4 checkpoint; {self.version!r} is not one")
+
+        score = Score.from_midi(BytesIO(midi_bytes).read())
+        normalize_drums(score, "upload.mid")
+        score = trim_leading(score)
+        if tempo_bpm is None:
+            tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+
+        edges = bar_edges(score)
+        available = max(0, len(edges) - 1)
+        if available < 1:
+            raise ValueError("upload has no complete bar to accompany")
+        bars = max(1, min(bars, available))
+        window = _window(score, edges[0], edges[bars])
+
+        cond_index = densest_track(window)
+        condition = _subscore(window, [cond_index])
+        if not sum(len(tr.notes) for tr in condition.tracks):
+            raise ValueError("the chosen track has no notes in the first bars")
+
+        cond_ids = self.gen.tokenizer(condition).ids
+        header = self.gen.sp.header_ids_for(
+            self.gen.tokenizer, header_for_score(window))
+
+        midis, note_counts = [], []
+        for _ in range(n_samples):
+            new_ids = list(self.gen.accompany(
+                cond_ids, bars, header=header,
+                temperature=temperature, top_k=top_k))
+            answer = self.gen.tokenizer.decode(new_ids)
+            note_counts.append(sum(len(tr.notes) for tr in answer.tracks))
+            midis.append(self._score_to_bytes(overlay(condition, answer), tempo_bpm))
+
+        beats_per_bar = 4.0
+        if window.time_signatures:
+            ts = window.time_signatures[0]
+            beats_per_bar = ts.numerator * 4.0 / ts.denominator
+        return {
+            "bars": bars,
+            "bars_available": available,
+            "condition_track": cond_index,
+            "condition_track_name": window.tracks[cond_index].name or "",
+            "track_names": [tr.name or "" for tr in window.tracks],
+            "condition_notes": sum(len(tr.notes) for tr in condition.tracks),
+            "generated_notes": note_counts,
+            "tempo_bpm": tempo_bpm,
+            "window_seconds": bars * beats_per_bar * 60.0 / tempo_bpm,
+            "midi": midis[0],
             "midis": midis,
         }
 
