@@ -245,6 +245,61 @@ def upload_midi_ab():
     })
 
 
+@app.route("/api/accompany", methods=["POST"])
+def accompany():
+    """Parts to play WITH the upload, not after it.
+
+    Continuation answers "what happens next"; this answers "what else is
+    playing". The model writes over the same bars the upload occupies, and
+    each returned file is the upload's chosen track with one generated
+    answer stacked on it, so it plays as a duet rather than a handoff.
+
+    v4 only: earlier checkpoints have no accompaniment document type.
+    """
+    temperature, top_k, _ = _gen_params()
+    version = _model_version()
+    bars = request.args.get("bars", default=8, type=int)
+    bars = max(1, min(bars, 32))
+    upload = _read_upload()
+    if isinstance(upload, Response):
+        return upload
+    midi_bytes, base = upload
+    unique_str = _unique_string()
+
+    try:
+        result = _generator(version).accompany_batch.remote(
+            midi_bytes, bars=bars, temperature=temperature, top_k=top_k,
+            n_samples=2,
+        )
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+    paths = [
+        _save_midi(m, f"{base}_{unique_str}", f"acc{i}", version)
+        for i, m in enumerate(result["midis"])
+    ]
+    return jsonify({
+        "message": "Accompaniment generated",
+        "requestId": unique_str,
+        "model": version,
+        "midiUrl1": url_for("serve_user_midi",
+                            filename=os.path.basename(paths[0]), _external=True),
+        "midiUrl2": url_for("serve_user_midi",
+                            filename=os.path.basename(paths[1]), _external=True),
+        # The whole returned file is condition + answer playing together, so
+        # there is no prompt/continuation cut for the client to mark.
+        "bars": result["bars"],
+        "barsAvailable": result["bars_available"],
+        "windowSeconds": result["window_seconds"],
+        "conditionTrack": result["condition_track"],
+        "conditionTrackName": result["condition_track_name"],
+        "trackNames": result["track_names"],
+        "generatedNotes": result["generated_notes"],
+    })
+
+
+
 # v1 text-encoding streaming routes: the text format is retired.
 @app.route("/api/generate", methods=["POST"])
 @app.route("/api/generate_stream", methods=["POST"])
