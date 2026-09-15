@@ -141,6 +141,13 @@ Lakh validation picks). Sessions:
       tokens at measured-throughput estimates (~170-190k tok/s) — DEFERRED
       by decision 2026-09-02: data fixes and GRPO come first
 
+### 8. v4: structure, control, infilling, longer context
+
+- [ ] See [docs/proposals/v4-structure-and-control.md](docs/proposals/v4-structure-and-control.md)
+      (supersedes `bar-aware-tokenizer.md`): REMI Bar/Position tokens, attribute
+      control tokens, FIM-style accompaniment + span-infill documents, 4096
+      length-extension tail. One pilot-ablated retrain after v3 (= medium_full_v1) ships.
+
 ## Sequencing
 
 1 and 2 first (they change what the long run trains on), 5 in parallel (labels

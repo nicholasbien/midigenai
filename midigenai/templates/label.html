@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>midigenai — preference labeling</title>
 <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js,npm/focus-visible@5,npm/html-midi-player@1.5.0"></script>
 <style>
@@ -15,6 +16,15 @@
   .opt { background: white; border: 2px solid #ddd; border-radius: 6px; padding: 12px; }
   .opt.chosen { border-color: #4f46e5; }
   midi-player { width: 100%; }
+  .rollwrap { overflow-x: auto; background: #fff; border: 1px solid #e5e5e5; border-radius: 4px; padding: 2px 0; }
+  .rollinner { position: relative; display: inline-block; min-width: 100%; }
+  midi-visualizer { display: block; }
+  .shade { position: absolute; left: 0; top: 0; bottom: 0; background: #111; opacity: .07; pointer-events: none; }
+  .cutline { position: absolute; top: 0; bottom: 0; width: 2px; background: #dc2626; pointer-events: none; }
+  .cutlabel { position: absolute; top: 0; font-size: 10px; color: #dc2626; background: #fff; padding: 0 3px; pointer-events: none; }
+  .opt.playing { border-color: #10b981; }
+  .rows .opt { margin-bottom: 10px; }
+  .legend { font-size: 11px; color: #777; margin: 4px 0 8px; }
   .buttons { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
   button { padding: 9px 14px; border: 1px solid #ccc; background: white; border-radius: 6px; cursor: pointer; font-size: 13px; }
   button:hover { background: #f0f0f0; }
@@ -25,6 +35,31 @@
   .statusbar { display: flex; justify-content: space-between; font-size: 13px; color: #444; margin: 10px 0; }
   .waiting { text-align: center; color: #888; padding: 40px 0; font-size: 14px; }
   .flash { animation: flash 0.4s; }
+  /* phone: thumb-sized targets, no hover-only affordances, no key hints */
+  @media (max-width: 760px) {
+    body { margin: 6px auto; padding: 0 8px; }
+    /* both continuations have to fit one screen: drop the prose, the chrome,
+       and the built-in transport (the roll already shows position) */
+    h1, .sub, .legend, .hint, .statusbar, .eid { display: none; }
+    midi-player { display: none; }
+    .card { padding: 8px; }
+    .opt { padding: 8px; margin-bottom: 6px; }
+    .opt h3 { margin: 0 0 4px; font-size: 12px; }
+    .rowplay { margin-top: 6px; gap: 6px; }
+    .chips { margin-top: 4px; }
+    .chip { padding: 2px 8px; font-size: 11px; }
+    .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+    button { padding: 14px 10px; font-size: 15px; }
+    button.wide { grid-column: 1 / -1; }
+    kbd { display: none; }
+  }
+  .rowplay { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .rowplay button { padding: 8px 12px; font-size: 12px; }
+  @media (max-width: 760px) { .rowplay button { flex: 1; padding: 12px 6px; font-size: 13px; } }
+  #tapstart { position: fixed; inset: 0; background: rgba(250,250,250,.97); z-index: 50;
+    display: none; align-items: center; justify-content: center; text-align: center;
+    font-size: 17px; color: #444; padding: 24px; }
+  #tapstart b { display: block; font-size: 20px; margin-bottom: 8px; }
   @keyframes flash { 0% { background: #ecfdf5; } 100% { background: #fafafa; } }
 </style>
 </head>
@@ -33,11 +68,32 @@
   <div class="sub">Listen to the prompt, then both continuations. Pick the better one.
     <kbd>1</kbd> left &nbsp;<kbd>2</kbd> right &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip
     &nbsp;·&nbsp; flags (before voting): <kbd>q</kbd>/<kbd>w</kbd> degrades &nbsp;<kbd>e</kbd>/<kbd>r</kbd> too long</div>
+  <div class="statusbar" style="align-items:center">
+    <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:#555">
+      volume <input id="vol" type="range" min="-20" max="24" step="1" value="10"
+        oninput="setVolume(this.value)" style="width:150px">
+      <span id="voldb">+10 dB</span>
+    </label>
+  </div>
   <div class="statusbar"><span id="count">0 labeled this session</span><span id="queue"></span></div>
+  <div id="tapstart"><div><b>Tap to start</b>Phone browsers block audio until you touch the page.</div></div>
   <div id="stage" class="card"><div class="waiting">warming up the model…</div></div>
 
 <script>
 const SESSION_ID = crypto.randomUUID();
+
+function setVolume(db) {
+  db = Number(db);
+  localStorage.setItem('labelVolumeDb', String(db));
+  const el = document.getElementById('voldb');
+  if (el) el.textContent = (db >= 0 ? '+' : '') + db + ' dB';
+  try {
+    // html-midi-player renders through Tone's destination; a player's own
+    // volume is per-element and resets with every new pair, so set the master
+    const dest = window.Tone && (Tone.getDestination ? Tone.getDestination() : Tone.Destination);
+    if (dest && dest.volume) dest.volume.value = db;
+  } catch (e) {}
+}
 let current = null;
 let sessionCount = 0;
 let totalCount = 0;
@@ -96,6 +152,68 @@ function renderFlags() {
     flagChip('right', 'too_long', 'too long', 'r');
 }
 
+// ---- piano roll: the player library's own visualizer (it highlights each
+// note as it sounds), plus a shaded prompt region and a handoff line drawn
+// into the same SVG. Both sides get the same pitch range and the library's
+// default pixels-per-second, so the two rows share one scale. ----
+const PX_PER_SEC = 40;   // fixed, so both rows share a scale and the
+                         // prompt/continuation boundary is exact arithmetic
+
+function setupRoll(side, roll, lo, hi) {
+  const vis = document.getElementById('roll-' + side);
+  // the roll is sized to the screen, not to the pitch range, so two rows fit
+  const targetPx = window.innerWidth <= 760 ? 84 : 120;
+  const noteHeight = Math.max(1, Math.min(5, Math.round(targetPx / (hi - lo + 1))));
+  vis.config = { noteHeight, minPitch: lo, maxPitch: hi,
+                 pixelsPerTimeStep: PX_PER_SEC,
+                 noteRGB: '90, 100, 180', activeNoteRGB: '220, 38, 38' };
+  vis.src = roll.url;
+  // Overlay (not SVG children): the visualizer redraws its own SVG as notes
+  // light up, which would wipe anything injected into it.
+  const x = (roll.prompt_end_s || 0) * PX_PER_SEC;
+  const shade = document.getElementById('shade-' + side);
+  const line = document.getElementById('cut-' + side);
+  const label = document.getElementById('cutlabel-' + side);
+  shade.style.width = x + 'px';
+  line.style.left = x + 'px';
+  label.style.left = (x + 4) + 'px';
+}
+
+// auto-play: side 1 with the prompt tail for context, then side 2 from the
+// handoff only — the prompt is identical on both sides, so replaying it just
+// costs time. `withPrompt` forces the full row (used by the 'a'/'b' keys).
+function playSide(side, withPrompt) {
+  const pl = document.getElementById('pl-' + side);
+  if (!pl) return;
+  markInteracted();
+  document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing'));
+  document.getElementById('opt-' + side).classList.add('playing');
+  const offset = withPrompt ? 0 : (current[side + '_roll'].prompt_end_s || 0);
+  try {
+    pl.currentTime = offset;
+    const r = pl.start();
+    if (r && r.catch) r.catch(err => note('playback blocked: ' + (err.message || err)));
+  } catch (e) {
+    try { pl.start(); } catch (e2) { note('playback failed: ' + (e2.message || e2)); }
+  }
+}
+
+function playSequence(mode = 'both') {
+  const plan = mode === 'both' ? [['left', true], ['right', false]]
+             : mode === 'left' ? [['left', true]]
+             : [['right', false]];
+  const go = (i) => {
+    if (i >= plan.length) { document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing')); return; }
+    const [side, withPrompt] = plan[i];
+    const pl = document.getElementById('pl-' + side);
+    const onStop = () => { pl.removeEventListener('stop', onStop); setTimeout(() => go(i + 1), 200); };
+    pl.addEventListener('stop', onStop);
+    playSide(side, withPrompt);
+  };
+  document.querySelectorAll('midi-player').forEach(pl => { try { pl.stop(); } catch (e) {} });
+  go(0);
+}
+
 function render() {
   const p = current;
   const stage = document.getElementById('stage');
@@ -103,20 +221,36 @@ function render() {
   flags = { left: new Set(), right: new Set() };
   stage.classList.add('flash');
   setTimeout(() => stage.classList.remove('flash'), 400);
+  const allP = ['left_roll', 'right_roll'].flatMap(k => (p[k].notes || []).map(n => n.p));
+  const lo = Math.max(0, Math.min(48, ...allP) - 2), hi = Math.min(127, Math.max(72, ...allP) + 2);
+  p.left_roll.url = p.left_timeline_url; p.right_roll.url = p.right_timeline_url;
   stage.innerHTML = `
-    <div class="prompt">
-      <h3>Prompt <span style="font-weight:400;color:#4f46e5">· ${p.prompt_source || ''}</span> <span style="font-weight:400;color:#999">${p.prompt_name || ''}</span></h3>
-      <midi-player src="${p.prompt_url}" sound-font></midi-player>
-    </div>
-    <div class="row">
+    <div class="legend">Prompt <span style="font-weight:400;color:#4f46e5">· ${p.prompt_source || ''}</span> <span style="color:#999">${p.prompt_name || ''}</span>
+      <span id="loadnote" style="color:#b45309"></span>
+      &nbsp;·&nbsp; shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays 1 with the prompt, then 2 from the red line on; <kbd>space</kbd> replays both, <kbd>a</kbd> replays 1 with the prompt, <kbd>b</kbd> replays 2.</div>
+    <div class="rows">
       <div class="opt" id="opt-left">
         <h3>Continuation 1</h3>
-        <midi-player src="${p.left_url}" sound-font></midi-player>
+        <div class="rollwrap"><div class="rollinner">
+          <midi-visualizer type="piano-roll" id="roll-left"></midi-visualizer>
+          <div class="shade" id="shade-left"></div><div class="cutline" id="cut-left"></div>
+          <div class="cutlabel" id="cutlabel-left">model starts</div>
+        </div></div>
+        <midi-player id="pl-left" src="${p.left_timeline_url}" sound-font visualizer="#roll-left"></midi-player>
+        <div class="rowplay"><button type="button" onclick="playSide('left', true)">play 1 with prompt</button>
+          <button type="button" onclick="playSide('left', false)">from the red line</button></div>
         <div class="chips" id="flags-left"></div>
       </div>
       <div class="opt" id="opt-right">
         <h3>Continuation 2</h3>
-        <midi-player src="${p.right_url}" sound-font></midi-player>
+        <div class="rollwrap"><div class="rollinner">
+          <midi-visualizer type="piano-roll" id="roll-right"></midi-visualizer>
+          <div class="shade" id="shade-right"></div><div class="cutline" id="cut-right"></div>
+          <div class="cutlabel" id="cutlabel-right">model starts</div>
+        </div></div>
+        <midi-player id="pl-right" src="${p.right_timeline_url}" sound-font visualizer="#roll-right"></midi-player>
+        <div class="rowplay"><button type="button" onclick="playSide('right', true)">play 2 with prompt</button>
+          <button type="button" onclick="playSide('right', false)">from the red line</button></div>
         <div class="chips" id="flags-right"></div>
       </div>
     </div>
@@ -126,11 +260,59 @@ function render() {
       <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
       <button onclick="vote('bad')">Both bad<kbd>x</kbd></button>
       <button onclick="vote('skip')">Skip<kbd>s</kbd></button>
-      <button onclick="vote('bad_prompt')" style="border-color:#dc2626;color:#dc2626">Bad prompt — exclude from data<kbd>p</kbd></button>
+      <button class="wide" onclick="vote('drums_as_piano')" style="border-color:#d97706;color:#b45309">Drums playing as piano<kbd>d</kbd></button>
+      <button class="wide" onclick="vote('bad_prompt')" style="border-color:#dc2626;color:#dc2626">Bad prompt — exclude from data<kbd>p</kbd></button>
     </div>
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
   `;
   renderFlags();
+  setupRoll('left', p.left_roll, lo, hi);
+  setupRoll('right', p.right_roll, lo, hi);
+  // players fire 'load' once the soundfont/sequence is ready; start the
+  // sequence after both are loaded (browsers require a prior user gesture,
+  // which the first vote provides; the first pair needs one click).
+  // Start as soon as row 1 can play. Waiting for both players meant one slow
+  // soundfont download (a new instrument the CDN hasn't cached) looked like a
+  // hang; a timer starts anyway if the load event never arrives.
+  let started = false;
+  const note = document.getElementById('loadnote');
+  const begin = (why) => {
+    if (started || !userHasInteracted) return;
+    started = true;
+    if (note) note.textContent = '';
+    playSequence('both');
+  };
+  const left = document.getElementById('pl-left');
+  if (note) note.textContent = 'loading sounds…';
+  left.addEventListener('load', () => begin('load'));
+  setTimeout(() => begin('timeout'), 4000);
+}
+
+let userHasInteracted = false;
+function markInteracted(e) {
+  if (userHasInteracted) return;
+  userHasInteracted = true;
+  // iOS/Android keep the Web Audio context suspended until it is resumed
+  // from inside a real gesture; html-midi-player will not do this for us,
+  // and a resume attempted later (e.g. from a 'load' handler) is ignored.
+  try {
+    if (window.Tone) {
+      if (Tone.start) Tone.start();
+      if (Tone.context && Tone.context.resume) Tone.context.resume();
+      if (Tone.getContext && Tone.getContext().resume) Tone.getContext().resume();
+    }
+  } catch (err) { note('audio: ' + err.message); }
+  const o = document.getElementById('tapstart');
+  if (o) o.style.display = 'none';
+  setVolume(localStorage.getItem('labelVolumeDb') || 10);
+  if (current) playSequence('both');
+}
+document.addEventListener('keydown', markInteracted, { once: true });
+document.addEventListener('pointerdown', markInteracted, { once: true });
+// phones block audio until a real touch; say so instead of playing silence
+if (matchMedia('(hover: none)').matches) {
+  const o = document.getElementById('tapstart');
+  if (o) o.style.display = 'flex';
 }
 
 async function vote(choice) {
@@ -151,7 +333,7 @@ async function vote(choice) {
     await fetch('/api/vote', { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) });
-    if (choice !== 'skip' && choice !== 'bad_prompt') { sessionCount++; totalCount++; updateCount(); }
+    if (!['skip', 'bad_prompt', 'drums_as_piano'].includes(choice)) { sessionCount++; totalCount++; updateCount(); }
   } catch (e) {
     alert('failed to record vote: ' + e.message);
     return;
@@ -161,13 +343,20 @@ async function vote(choice) {
 
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
-  const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip', 'p': 'bad_prompt' };
+  const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip',
+                'p': 'bad_prompt', 'd': 'drums_as_piano' };
   if (map[e.key]) { e.preventDefault(); vote(map[e.key]); return; }
+  if (e.key === ' ') { e.preventDefault(); playSequence('both'); return; }
+  if (e.key === 'a') { e.preventDefault(); playSequence('left'); return; }
+  if (e.key === 'b') { e.preventDefault(); playSequence('right'); return; }
   const flagMap = { q: ['left', 'degrades'], w: ['right', 'degrades'],
                     e: ['left', 'too_long'], r: ['right', 'too_long'] };
   if (flagMap[e.key]) { e.preventDefault(); toggleFlag(...flagMap[e.key]); }
 });
 
+const savedVol = localStorage.getItem('labelVolumeDb') || 10;
+document.getElementById('vol').value = savedVol;
+setVolume(savedVol);
 fetchStats();
 loadNext();
 </script>

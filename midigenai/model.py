@@ -236,6 +236,7 @@ class MusicTransformer(nn.Module):
         top_k: int | None = 50,
         eos_id: int | None = None,
         min_new_tokens: int = 0,
+        ban_ids: list[int] | None = None,
     ):
         """Single-batch streaming generator. Yields token IDs one at a time.
 
@@ -256,6 +257,10 @@ class MusicTransformer(nn.Module):
             logits = logits[:, -1, :].float() / max(temperature, 1e-6)
             if eos_id is not None and i < min_new_tokens:
                 logits[:, eos_id] = -float("inf")
+            if ban_ids:
+                # tokens that are never valid output for this task (v4: SEP /
+                # MASK / BOS in a continuation)
+                logits[:, ban_ids] = -float("inf")
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float("inf")

@@ -247,3 +247,69 @@ if __name__ == "__main__":
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(result, indent=2, default=str))
         print(f"\nwrote {args.out}")
+
+
+# ---------- v4 structure metrics (bar grid from the score's own ticks) ---------- #
+
+def _onsets_from(score, start_tick=0):
+    return [n.start for t in score.tracks for n in t.notes if n.start >= start_tick]
+
+
+def downbeat_alignment(score, start_tick=0, beats_per_bar=4):
+    """Fraction of onsets (at or after `start_tick`) that fall within 1/8 beat
+    of a strong beat (1 or 3 of a 4/4 bar) on the grid implied by tick 0.
+    Prompt and continuation are decoded from one token stream, so the grid
+    is shared; compare the continuation's value to the prompt's."""
+    onsets = _onsets_from(score, start_tick)
+    if not onsets:
+        return float("nan")
+    tpq = max(score.ticks_per_quarter, 1)
+    bar = tpq * beats_per_bar
+    tol = tpq / 8
+    strong = 0
+    for s in onsets:
+        pos = s % bar
+        if min(pos, bar - pos, abs(pos - 2 * tpq)) <= tol:
+            strong += 1
+    return strong / len(onsets)
+
+
+def phrase_start_offset_beats(score, start_tick=0, beats_per_bar=4):
+    """Distance in beats from the first onset at/after `start_tick` to the
+    nearest bar line (0 = the answer starts on a downbeat)."""
+    onsets = _onsets_from(score, start_tick)
+    if not onsets:
+        return float("nan")
+    tpq = max(score.ticks_per_quarter, 1)
+    bar = tpq * beats_per_bar
+    pos = min(onsets) % bar
+    return min(pos, bar - pos) / tpq
+
+
+def pitch_class_overlap(score_a, score_b, tpq=None, bar_ticks=None):
+    """Mean per-bar Jaccard overlap of pitch-class sets between two scores.
+    Drum tracks are ignored.
+
+    The two scores routinely arrive on different clocks: a decoded generation
+    carries the tokenizer's resolution (16 ticks per quarter) while a
+    condition taken from a file keeps the file's (often 480). Bucketing both
+    with one `bar_ticks` then compares bar 1 of one against bar 30 of the
+    other, so each score is bucketed on its OWN tick rate unless the caller
+    insists otherwise.
+    """
+    beats_per_bar = (bar_ticks / tpq) if (tpq and bar_ticks) else 4.0
+
+    def per_bar(score):
+        own_bar = max(score.ticks_per_quarter, 1) * beats_per_bar
+        out = {}
+        for t in score.tracks:
+            if t.is_drum:
+                continue
+            for n in t.notes:
+                out.setdefault(int(n.start // own_bar), set()).add(n.pitch % 12)
+        return out
+    a, b = per_bar(score_a), per_bar(score_b)
+    bars = sorted(set(a) & set(b))
+    if not bars:
+        return float("nan")
+    return sum(len(a[k] & b[k]) / max(1, len(a[k] | b[k])) for k in bars) / len(bars)

@@ -43,6 +43,52 @@ def utcnow() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def velocity_scale(prompt_score, target_peak: int = 118) -> float:
+    """One gain factor for a whole pair, derived from the prompt.
+
+    Generations routinely peak around velocity 60-80, which is close to
+    inaudible on a phone speaker. Scaling per file would flatten a real
+    difference between the two takes, so the factor comes from the prompt —
+    identical for both sides — and their relative loudness survives.
+    """
+    vels = [n.velocity for t in prompt_score.tracks for n in t.notes]
+    if not vels:
+        return 1.0
+    peak = max(vels)
+    return max(1.0, min(3.0, target_peak / max(peak, 1)))
+
+
+def apply_velocity_scale(score, scale: float):
+    if scale <= 1.0:
+        return score
+    for track in score.tracks:
+        for n in track.notes:
+            n.velocity = max(1, min(127, int(round(n.velocity * scale))))
+    return score
+
+
+def _degeneracy(score) -> dict:
+    """Cheap sanity metrics for a continuation-only Score. `degenerate` is
+    True for near-empty, one-pitch-stuck, or hard-looping samples."""
+    from midigenai.eval import repetition_rate
+    notes = [n for t in score.tracks for n in t.notes]
+    n = len(notes)
+    if n == 0:
+        return {"n_notes": 0, "top_pitch_share": 1.0, "repetition": 1.0,
+                "degenerate": True, "badness": 9.0}
+    pitches = [nt.pitch for nt in notes]
+    top = max(pitches.count(p) for p in set(pitches)) / n
+    try:
+        rep = float(repetition_rate(score)) if n >= 8 else 0.0
+    except Exception:
+        rep = 0.0
+    degenerate = n < 8 or top > 0.5 or rep > 0.6 or n > 600
+    badness = (8 - n) / 8 if n < 8 else 0.0
+    badness += max(0.0, top - 0.3) + max(0.0, rep - 0.3) + (1.0 if n > 600 else 0.0)
+    return {"n_notes": n, "top_pitch_share": round(top, 3), "repetition": round(rep, 3),
+            "degenerate": bool(degenerate), "badness": round(badness, 3)}
+
+
 def load_generator(args, side: str):
     """Build the generator for side 'a' or 'b'. Returns (generator, label)."""
     ckpt = getattr(args, f"checkpoint{'_b' if side == 'b' else ''}", None)
@@ -81,6 +127,19 @@ class PairFactory:
             f for f in sorted(Path(args.prompts).glob("*.mid")) +
                        sorted(Path(args.prompts).glob("*.midi"))
             if f.name not in blacklisted]
+        self.prompt_order = {f: i for i, f in enumerate(
+            random.Random(12345).sample(self.prompt_files, len(self.prompt_files)))} \
+            if self.prompt_files else {}
+        self.prompt_uses = {f: 0 for f in self.prompt_files}
+        self._prompt_lock = threading.Lock()
+        # carry over usage from pairs already generated into this output dir
+        for meta in Path(args.out).glob("pairs/*.json"):
+            try:
+                used = Path(json.loads(meta.read_text())["prompt_file"])
+            except Exception:
+                continue
+            if used in self.prompt_uses:
+                self.prompt_uses[used] += 1
         if not self.prompt_files:
             raise SystemExit(f"no .mid files in {args.prompts}")
         print(f"[label] {len(self.prompt_files)} prompt files; "
@@ -92,9 +151,39 @@ class PairFactory:
         self.worker = threading.Thread(target=self._run, daemon=True)
         self.worker.start()
 
+    def _slice_with_program(self, ids: list[int], start: int, n: int) -> list[int]:
+        """Window of `n` tokens starting at `start`, with the instrument that
+        was sounding at that point restored in front of it.
+
+        `Program_*` tokens are stateful: everything after one keeps that
+        program until the next. A window cut after the file's `Program_-1`
+        therefore decodes a drum kit as piano — which is exactly what
+        happened to drum-only prompts before this.
+        """
+        if not hasattr(self, "_inv"):
+            self._inv = {v: k for k, v in self.gen_a.tokenizer.vocab.items()}
+        prefix: list[int] = []
+        for j in range(start - 1, -1, -1):
+            if self._inv.get(ids[j], "").startswith("Program_"):
+                prefix = [ids[j]]
+                break
+        return prefix + list(ids[start:start + n])
+
+    def _next_prompt(self) -> Path:
+        """Round-robin over a shuffled prompt list, least-used first.
+
+        Sampling with replacement made the same prompt come up five times in
+        150 pairs; prompts already used in this output directory start with
+        that many uses, so a restart continues rather than resets.
+        """
+        with self._prompt_lock:
+            f = min(self.prompt_files, key=lambda p: (self.prompt_uses[p], self.prompt_order[p]))
+            self.prompt_uses[f] += 1
+            return f
+
     def _generate_one(self) -> dict:
         args = self.args
-        prompt_file = self.rng.choice(self.prompt_files)
+        prompt_file = self._next_prompt()
         from symusic import Score
 
         from midigenai.tokenizer import normalize_drums
@@ -104,7 +193,7 @@ class PairFactory:
         prompt_ids = self.gen_a.tokenizer(prompt_score).ids
         if len(prompt_ids) > args.prompt_tokens:
             start = self.rng.randrange(0, len(prompt_ids) - args.prompt_tokens)
-            prompt_ids = prompt_ids[start : start + args.prompt_tokens]
+            prompt_ids = self._slice_with_program(prompt_ids, start, args.prompt_tokens)
         tempo = self.gen_a.detect_tempo(prompt_file)
 
         pair_id = f"{datetime.datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:8]}"
@@ -122,29 +211,115 @@ class PairFactory:
         prompt_path = self.pairs_dir / f"{pair_id}_prompt.mid"
         prompt_score = self.gen_a.tokenizer.decode(list(prompt_ids))
         prompt_score.tempos = [Tempo(time=0, qpm=tempo)]
-        prompt_score.dump_midi(prompt_path)
-        cut_tick = prompt_score.end()
+        prompt_score.dump_midi(prompt_path)          # unscaled: models read this
+        vscale = velocity_scale(prompt_score) if args.normalize_velocity else 1.0
 
+        # Cross-vocabulary pairs (e.g. v3 MIDILike vs a v4 REMI checkpoint):
+        # each side re-tokenizes the SAME prompt score with its own tokenizer.
+        # A v4 side also gets the prompt's attribute header and a closed bar,
+        # which is how it is prompted in production.
+        side_prompt_ids = {}
         conts = {}
-        for name, gen in (("a", self.gen_a), ("b", self.gen_b)):
-            new_ids = list(gen.generate_ids(prompt_ids, **kwargs_by_side[name]))
-            conts[name] = new_ids
-            # Decode with full prompt context (programs, ringing notes), then
-            # trim to the continuation only: shorter files review much faster.
-            full = gen.tokenizer.decode(list(prompt_ids) + new_ids)
-            for track in full.tracks:
-                kept = [n for n in track.notes if n.start >= cut_tick]
-                for n in kept:
+        rolls = {}
+        candidate_log = None
+
+        def side_ids(gen):
+            if gen is self.gen_a and not getattr(gen, "v4", False):
+                return list(prompt_ids)
+            ids = gen.tokenizer(Score(str(prompt_path))).ids
+            if getattr(gen, "v4", False):
+                # `--v4-close-bar` pads the prompt to its bar line so the answer
+                # lands on a downbeat. Off by default here: it moves v4's
+                # starting point later than v3's, so the two rows would show
+                # different slices of the prompt and v4 would open with up to a
+                # bar of padding. The downbeat behaviour is measured properly in
+                # eval_checkpoint --pad-to-bar; a blind A/B wants both models
+                # continuing from the identical instant.
+                if args.v4_close_bar:
+                    ids = gen.close_bar(ids)
+                ids = [*gen.make_header(prompt_path), *ids]
+            return ids
+
+        def continuation(gen, ids, kw):
+            """Returns (new_ids, continuation-only Score, timeline Score,
+            note list). The timeline Score is the last `--prompt-tail-beats`
+            of the prompt followed by the continuation, so the two sides of a
+            pair line up in time; the note list (seconds) drives the piano
+            roll in the UI, with prompt notes marked."""
+            decoded_prompt = gen.tokenizer.decode(list(ids))
+            cut_tick = decoded_prompt.end()
+            if getattr(gen, "v4", False) and args.v4_close_bar:
+                # a padded prompt ends at its bar line, and the tokenizer emits
+                # nothing after the last note, so the handoff is the bar line
+                from midigenai.attributes import ticks_per_bar
+                nbars = gen.count_bars(ids)
+                if nbars > 1:
+                    cut_tick = max(cut_tick, (nbars - 1) * ticks_per_bar(decoded_prompt))
+            new_ids = list(gen.generate_ids(ids, **kw))
+            full = gen.tokenizer.decode(list(ids) + new_ids)
+            tpq = max(full.ticks_per_quarter, 1)
+            tail0 = max(0, cut_tick - int(args.prompt_tail_beats * tpq))
+            spt = 60.0 / (tempo * tpq)
+            cap = cut_tick + int(args.max_cont_seconds * tempo / 60.0 * tpq)
+            cont = full.copy()
+            timeline = full.copy()
+            notes = []
+            for track, ct, tt in zip(full.tracks, cont.tracks, timeline.tracks):
+                ct.notes = [n for n in track.notes if cut_tick <= n.start < cap]
+                for n in ct.notes:
                     n.start -= cut_tick
-                track.notes = kept
-            full.tempos = [Tempo(time=0, qpm=tempo)]
-            full.dump_midi(self.pairs_dir / f"{pair_id}_{name}.mid")
+                tt.notes = [n for n in track.notes if tail0 <= n.start < cap]
+                for n in tt.notes:
+                    n.start -= tail0
+                for n in tt.notes:
+                    notes.append({"s": round(n.start * spt, 3), "e": round((n.start + n.duration) * spt, 3),
+                                  "p": int(n.pitch), "v": int(n.velocity),
+                                  "d": bool(track.is_drum), "prompt": n.start < (cut_tick - tail0)})
+            cont.tempos = [Tempo(time=0, qpm=tempo)]
+            timeline.tempos = [Tempo(time=0, qpm=tempo)]
+            apply_velocity_scale(cont, vscale)
+            apply_velocity_scale(timeline, vscale)
+            return new_ids, cont, timeline, {"notes": notes, "prompt_end_s": round((cut_tick - tail0) * spt, 3)}
+
+        if not self.cross_model and args.candidates > 2:
+            # Curated same-model pairs: sample K continuations, drop the
+            # degenerate ones (near-empty, stuck on one pitch, looping), and
+            # show two plausible survivors. Votes between two plausible
+            # answers teach the reward about musical choices; a vote against
+            # a broken sample adds nothing the metrics don't already know.
+            # Never done in cross-model mode (per-model cherry-picking biases).
+            ids = side_ids(self.gen_a)
+            side_prompt_ids = {"a": ids, "b": ids}
+            cands = []
+            for k in range(args.candidates):
+                new_ids, sc, tl, nj = continuation(self.gen_a, ids, kwargs_by_side["a"])
+                cands.append((new_ids, sc, _degeneracy(sc), tl, nj))
+            ok = [c for c in cands if not c[2]["degenerate"]]
+            pool = ok if len(ok) >= 2 else sorted(cands, key=lambda c: c[2]["badness"])[:2]
+            picked = self.rng.sample(pool, 2)
+            for name, (new_ids, sc, m, tl, nj) in zip(("a", "b"), picked):
+                conts[name] = new_ids
+                sc.dump_midi(self.pairs_dir / f"{pair_id}_{name}.mid")
+                tl.dump_midi(self.pairs_dir / f"{pair_id}_{name}_timeline.mid")
+                rolls[name] = nj
+            candidate_log = [{**c[2], "chosen": c in picked, "n_ids": len(c[0])} for c in cands]
+        else:
+            for name, gen in (("a", self.gen_a), ("b", self.gen_b)):
+                ids = side_ids(gen)
+                side_prompt_ids[name] = ids
+                new_ids, sc, tl, nj = continuation(gen, ids, kwargs_by_side[name])
+                conts[name] = new_ids
+                sc.dump_midi(self.pairs_dir / f"{pair_id}_{name}.mid")
+                tl.dump_midi(self.pairs_dir / f"{pair_id}_{name}_timeline.mid")
+                rolls[name] = nj
 
         meta = {
             "pair_id": pair_id,
             "created": utcnow(),
             "prompt_file": str(prompt_file),
             "prompt_ids": prompt_ids,
+            "prompt_ids_a": side_prompt_ids["a"],
+            "prompt_ids_b": side_prompt_ids["b"],
             "cont_a_ids": conts["a"],
             "cont_b_ids": conts["b"],
             "model_a": self.label_a,
@@ -152,6 +327,7 @@ class PairFactory:
             "cross_model": self.cross_model,
             "tempo_bpm": tempo,
             "temperature_b": kwargs_by_side["b"]["temperature"],
+            "candidates": candidate_log,
             **gen_kwargs,
         }
         (self.pairs_dir / f"{pair_id}.json").write_text(json.dumps(meta))
@@ -169,6 +345,10 @@ class PairFactory:
             "prompt_url": f"/midi/{pair_id}_prompt.mid",
             "left_url": f"/midi/{pair_id}_{left}.mid",
             "right_url": f"/midi/{pair_id}_{right}.mid",
+            "left_timeline_url": f"/midi/{pair_id}_{left}_timeline.mid",
+            "right_timeline_url": f"/midi/{pair_id}_{right}_timeline.mid",
+            "left_roll": rolls[left],
+            "right_roll": rolls[right],
             "left_is": left,
             "right_is": right,
             "left_model": meta[f"model_{left}"],
@@ -330,12 +510,30 @@ def main():
     p.add_argument("--prompt-tokens", type=int, default=256)
     # ~64 notes / ~30-45s of music: enough to judge, short enough to label fast
     p.add_argument("--max-new-tokens", type=int, default=256)
+    p.add_argument("--v4-close-bar", action="store_true",
+                   help="pad a v4 side's prompt to its bar line (production jam "
+                        "behaviour). Off by default so both sides of a pair start "
+                        "from the identical instant.")
+    p.add_argument("--normalize-velocity", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="scale the review clips up to a usable listening level, "
+                        "with one factor per pair so the two takes stay comparable")
+    p.add_argument("--max-cont-seconds", type=float, default=8.0,
+                   help="hard cap on continuation length in the review clips: notes "
+                        "starting after this are dropped (a fixed token budget gives "
+                        "wildly different durations across tempos)")
+    p.add_argument("--prompt-tail-beats", type=float, default=8,
+                   help="beats of prompt kept in front of each continuation in the "
+                        "timeline view / playback")
+    p.add_argument("--candidates", type=int, default=1,
+                   help="same-model pairs only: sample this many continuations per "
+                        "prompt, drop degenerate ones, show two plausible survivors")
     p.add_argument("--temperature", type=float, default=1.2)
     p.add_argument("--temperature-b", type=float, default=None,
                    help="model B's temperature (cross-model fairness); defaults to --temperature")
     p.add_argument("--top-k", type=int, default=50)
     # plumbing
-    p.add_argument("--queue-size", type=int, default=4)
+    p.add_argument("--queue-size", type=int, default=12)
     p.add_argument("--next-timeout", type=float, default=25.0)
     p.add_argument("--dup-rate", type=float, default=0.1,
                    help="probability of blindly re-serving an already-voted "

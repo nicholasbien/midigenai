@@ -138,13 +138,16 @@ class MusicTransformerMLX(nn.Module):
         return [KVCache() for _ in self.blocks]
 
     def _sample(self, logits: mx.array, temperature: float, top_k: int | None,
-                suppress_id: int | None = None) -> mx.array:
+                suppress_id: int | None = None,
+                ban_ids: list[int] | None = None) -> mx.array:
         """Same sampling semantics as model.py: fp32 logits, temperature, top-k.
         `suppress_id` (if given) is masked out before top-k — used to hold EOS
         back until `min_new_tokens` have been generated."""
         logits = logits[:, -1, :].astype(mx.float32) / max(temperature, 1e-6)
         if suppress_id is not None:
             logits = logits.at[:, suppress_id].add(-mx.inf)
+        if ban_ids:
+            logits = logits.at[:, mx.array(ban_ids)].add(-mx.inf)
         if top_k is not None and top_k < logits.shape[-1]:
             kth = mx.sort(logits, axis=-1)[:, -top_k]
             logits = mx.where(logits < kth[:, None], -mx.inf, logits)
@@ -158,6 +161,7 @@ class MusicTransformerMLX(nn.Module):
         top_k: int | None = 50,
         eos_id: int | None = None,
         min_new_tokens: int = 0,
+        ban_ids: list[int] | None = None,
     ) -> Iterator[int]:
         """Single-batch streaming generator, pipelined one step ahead: while
         the host syncs on token n (.item()), the GPU is already computing
@@ -174,12 +178,12 @@ class MusicTransformerMLX(nn.Module):
         def suppress(i: int) -> int | None:
             return eos_id if (eos_id is not None and i < min_new_tokens) else None
         logits = self(mx.array([prompt_ids]), caches)
-        token = self._sample(logits, temperature, top_k, suppress(0))
+        token = self._sample(logits, temperature, top_k, suppress(0), ban_ids)
         mx.async_eval(token)
         for i in range(max_new_tokens):
             if i + 1 < max_new_tokens:
                 next_logits = self(token[:, None], caches)
-                next_token = self._sample(next_logits, temperature, top_k, suppress(i + 1))
+                next_token = self._sample(next_logits, temperature, top_k, suppress(i + 1), ban_ids)
                 mx.async_eval(next_token)
             else:
                 next_token = None

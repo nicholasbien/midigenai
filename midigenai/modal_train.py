@@ -81,6 +81,9 @@ def train(
     run_name: str | None = None,
     resume: bool = False,
     resume_from: str = "",
+    header_dropout: float = 0.3,
+    header_drop_all: float = 0.1,
+    rope_base: float = 0.0,
 ) -> dict:
     import os
     from datetime import datetime
@@ -124,16 +127,36 @@ def train(
                 data_dir = Path(fallback)
                 break
 
-    if stage_local:
+    compressed = any((data_dir / "shards").glob("*.npy.gz"))
+    if stage_local or compressed:
         # Random mmap reads over the volume FUSE mount thrash once the corpus
         # outgrows the page cache; a sequential copy to container-local disk up
-        # front makes every training read local.
+        # front makes every training read local. Shards may be uploaded as
+        # .npy.gz (gzip -1 shrinks token shards ~4.7x; the 2026-09-13 full
+        # v4 corpus went up over a 1 MB/s link) and are inflated here.
+        import gzip
         import shutil
         import time as _time
+        from concurrent.futures import ThreadPoolExecutor
         staged = Path("/tmp/corpus")
+        (staged / "shards").mkdir(parents=True, exist_ok=True)
         t0 = _time.time()
-        shutil.copytree(data_dir, staged)
-        print(f"[modal-train] staged corpus to {staged} in {_time.time()-t0:.0f}s")
+        for f in data_dir.iterdir():
+            if f.is_file():
+                shutil.copy(f, staged / f.name)
+
+        def stage_one(src: Path) -> None:
+            if src.suffix == ".gz":
+                with gzip.open(src, "rb") as fin, open(staged / "shards" / src.name[:-3], "wb") as fout:
+                    shutil.copyfileobj(fin, fout, 16 << 20)
+            else:
+                shutil.copy(src, staged / "shards" / src.name)
+        files = sorted((data_dir / "shards").iterdir())
+        with ThreadPoolExecutor(8) as ex:
+            list(ex.map(stage_one, files))
+        n = len(list((staged / "shards").glob("*.npy")))
+        print(f"[modal-train] staged {n} shards to {staged} "
+              f"({'inflated' if compressed else 'copied'}) in {_time.time()-t0:.0f}s")
         data_dir = staged
 
     cfg = TrainConfig(
@@ -158,6 +181,9 @@ def train(
         doc_start_frac=doc_start_frac,
         mixture=mixture,
         resume=resume_ckpt,
+        header_dropout=header_dropout,
+        header_drop_all=header_drop_all,
+        rope_base=rope_base,
     )
 
     # Flush checkpoints to the volume every 10 min so a preempted/crashed run
@@ -187,7 +213,9 @@ def main(size: str = "medium", max_steps: int = 15000, batch_size: int = 16,
          aug_pitch: int = 6, aug_velocity: int = 1,
          doc_start_frac: float = 0.2, mixture: str = "",
          corpus: str = "corpus_pilot", compile: bool = False,
-         stage_local: bool = False, run_name: str = "", resume: bool = False):
+         stage_local: bool = False, run_name: str = "", resume: bool = False,
+         resume_from: str = "", header_dropout: float = 0.3,
+         header_drop_all: float = 0.1, rope_base: float = 0.0):
     """Local entrypoint — invoke training and print result."""
     result = train.remote(size=size, max_steps=max_steps, batch_size=batch_size,
                           grad_accum=grad_accum, block_size=block_size, lr=lr,
@@ -197,7 +225,9 @@ def main(size: str = "medium", max_steps: int = 15000, batch_size: int = 16,
                           doc_start_frac=doc_start_frac, mixture=mixture,
                           corpus=corpus, compile=compile,
                           stage_local=stage_local, run_name=run_name or None,
-                          resume=resume)
+                          resume=resume, resume_from=resume_from,
+                          header_dropout=header_dropout,
+                          header_drop_all=header_drop_all, rope_base=rope_base)
     print(f"\n[done] {result}")
     print(f"\nRetrieve checkpoint with:")
     print(f"  modal volume get {RUNS_VOLUME_NAME} {result['run_name']}/ckpt_final.pt ./runs/")

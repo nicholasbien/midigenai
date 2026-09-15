@@ -1,0 +1,3 @@
+{"ts": "2026-09-14T06:24:15.825971+00:00", "pair_id": "20260914022303_afdecd70", "original": {"ts": "2026-09-14T06:24:14.348773+00:00", "session_id": "a23ce72f-254f-46e8-9d59-1875e011404d", "pair_id": "20260914022303_afdecd70", "choice": "right", "left_is": "a", "right_is": "b", "preferred": "b", "left_model": "v3", "right_model": "ckpt_083000", "flags": {}}, "new_choice": "right"}
+{"ts": "2026-09-14T06:24:35.296652+00:00", "pair_id": "20260914022303_afdecd70", "action": "reverted no-op correction"}
+{"ts": "2026-09-14T06:24:35.296652+00:00", "pair_id": "20260914022228_0e9e3905", "original_choice": "left", "new_choice": "right", "preferred_model": "ckpt_083000"}
