@@ -109,6 +109,18 @@ modal run midigenai/modal_train.py --size medium --max-steps 15000 --gpu H100
 The 113M model trained on a Modal
 H100; the 25M pilot cost ~$1.50. See `modal_train.py` for the flow.
 
+## Development
+
+```bash
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements-test.txt
+python -m pytest -q          # ~5 s, CPU only
+```
+
+The same two commands run in CI (`.github/workflows/tests.yml`) on every pull
+request. Tests build tiny random checkpoints rather than downloading weights,
+so nothing here needs a GPU or the Hub.
+
 ## History
 
 midigenai supersedes [openmusenet](https://github.com/nicholasbien/openmusenet),

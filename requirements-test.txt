@@ -1,0 +1,15 @@
+# What the test suite needs. Everything here is CPU-only and installs in
+# well under a minute; the whole suite runs in ~5 s.
+#
+# torch is NOT listed: the PyPI linux wheel bundles ~2 GB of CUDA libraries
+# the tests never touch, so CI installs it from the CPU index first:
+#
+#     pip install torch --index-url https://download.pytorch.org/whl/cpu
+#     pip install -r requirements-test.txt
+pytest
+miditok
+symusic
+numpy
+flask          # rate_corpus_app / web_server import it at module scope
+flask-cors     # web_server
+modal          # modal_serve defines the served-version allowlist
