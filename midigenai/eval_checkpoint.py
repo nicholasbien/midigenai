@@ -19,6 +19,13 @@ Score one checkpoint:
 
 Compare scorecards:
     python -m midigenai.eval_checkpoint --compare evals/scorecards/*.json
+
+`--prompt-set evals/prompt_sets/heldout_v1.json` checks the prompt directory
+against a frozen set (see make_prompt_set) before generating, and records
+which prompts produced the numbers. Two scorecards are comparable exactly
+when their `prompt_set.set_id` and `prompt_set.selected` agree; without it,
+a checkpoint scored after someone re-ran `make_prompt_set build` is being
+compared on different music.
 """
 
 from __future__ import annotations
@@ -28,6 +35,8 @@ import json
 import random
 import statistics as st
 from pathlib import Path
+
+from midigenai.make_prompt_set import file_sha256, load_manifest, verify_prompts
 
 METRICS = [
     "eos_rate", "gen_tokens", "gen_notes", "gen_seconds",
@@ -47,11 +56,53 @@ DIRECTION = {"eos_rate": +1, "repetition_rate": -1, "repetition_drift": -1,
              "accomp_bars_ok": +1, "accomp_pc_overlap": +1}
 
 
+def _prompt_pool(prompts_dir: Path, prompt_set: dict | None) -> list[tuple[str, Path]]:
+    """(sha256, path) for the prompt files, in a deterministic order.
+
+    Without a frozen set the order is by filename, as before. With one, the
+    directory is verified against the manifest and the order is by content
+    hash, so renaming a file (or rebuilding the set on another machine, where
+    `build` writes the same music under a different stem) cannot change which
+    prompts the seed picks."""
+    files = sorted(prompts_dir.glob("*.mid"))
+    if prompt_set is None:
+        return [("", f) for f in files]
+
+    res = verify_prompts(prompts_dir, prompt_set)
+    if res["missing"]:
+        raise SystemExit(
+            f"[eval] {prompts_dir} is missing {len(res['missing'])} of "
+            f"{res['n_expected']} prompts in set {res['name']} "
+            f"({res['set_id']}). Scoring a different set of prompts is not a "
+            f"comparison. Rebuild with make_prompt_set build, or drop "
+            f"--prompt-set to score whatever is on disk.")
+    want = {f["sha256"] for f in prompt_set["files"]}
+    pool = [(file_sha256(f), f) for f in files]
+    return sorted((h, f) for h, f in pool if h in want)
+
+
+def _stamp_prompt_set(card: dict, prompt_set: dict | None, rows: list[dict]) -> None:
+    """Record which frozen set the numbers came from, and which of its
+    members actually produced rows (files can be skipped: too few tokens,
+    single-track in accompany mode, a decode failure)."""
+    if prompt_set is None:
+        return
+    used = sorted({r["prompt_sha"] for r in rows if r.get("prompt_sha")})
+    card["prompt_set"] = {
+        "name": prompt_set.get("name"),
+        "set_id": prompt_set.get("set_id"),
+        "n_files": prompt_set.get("n"),
+        "n_used": len(used),
+        "selected": used,
+    }
+
+
 def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Path,
                         n_prompts: int, gens_per_prompt: int, prompt_tokens: int,
                         max_new_tokens: int, temperature: float, top_k: int,
                         seed: int, mode: str = "continue", bars: int = 8,
-                        pad_to_bar: bool = False) -> dict:
+                        pad_to_bar: bool = False,
+                        prompt_set: dict | None = None) -> dict:
     """`mode`: "continue" (default) or "accompany" (v4 only: the prompt file's
     largest track is the condition over `bars` bars, the model writes the
     rest, and the generated parts are scored against the real other parts
@@ -71,11 +122,12 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
     from symusic import Score
     if mode == "accompany":
         return _evaluate_accompany(gen, prompts_dir, n_prompts, gens_per_prompt,
-                                   bars, temperature, top_k, seed, checkpoint)
+                                   bars, temperature, top_k, seed, checkpoint,
+                                   prompt_set=prompt_set)
 
-    files = sorted(prompts_dir.glob("*.mid"))
+    pool = _prompt_pool(prompts_dir, prompt_set)
     rng = random.Random(seed)
-    picked = rng.sample(files, min(n_prompts, len(files)))
+    picked = rng.sample(pool, min(n_prompts, len(pool)))
 
     def cont_score(prompt_ids, new_ids):
         """Continuation-only Score: decode with prompt context, cut, re-zero.
@@ -92,7 +144,7 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
         return full, grid, cut
 
     rows = []
-    for f in picked:
+    for sha, f in picked:
         score = Score(str(f))
         normalize_drums(score, f.name)
         ids = gen.tokenizer(score).ids
@@ -121,7 +173,7 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
             tpq = max(cont.ticks_per_quarter, 1)
             seconds = cont.end() / tpq * 0.5  # 120bpm equivalent
             row = {
-                "prompt": f.name, "gen": g,
+                "prompt": f.name, "prompt_sha": sha[:12], "gen": g,
                 "eos_rate": 1.0 if stopped else 0.0,
                 "gen_tokens": len(new_ids), "gen_notes": n_notes,
                 "gen_seconds": round(seconds, 1),
@@ -162,7 +214,7 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
         if vals:
             agg[m] = {"mean": round(st.mean(vals), 4),
                       "median": round(st.median(vals), 4)}
-    return {
+    card = {
         "checkpoint": str(checkpoint),
         "n_generations": len(rows),
         "params": {"prompt_tokens": prompt_tokens, "max_new_tokens": max_new_tokens,
@@ -170,6 +222,8 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
         "aggregate": agg,
         "rows": rows,
     }
+    _stamp_prompt_set(card, prompt_set, rows)
+    return card
 
 
 def _cut_prompt(gen, ids: list[int], n: int) -> list[int]:
@@ -186,7 +240,8 @@ def _cut_prompt(gen, ids: list[int], n: int) -> list[int]:
 
 
 def _evaluate_accompany(gen, prompts_dir, n_prompts, gens_per_prompt, bars,
-                        temperature, top_k, seed, checkpoint) -> dict:
+                        temperature, top_k, seed, checkpoint,
+                        prompt_set: dict | None = None) -> dict:
     """v4 accompaniment scorecard. For each multi-track prompt file: take a
     `bars`-bar window, condition on its busiest track, generate the rest,
     and measure bar-count adherence, pitch-class overlap with the condition
@@ -200,11 +255,11 @@ def _evaluate_accompany(gen, prompts_dir, n_prompts, gens_per_prompt, bars,
                                 scale_consistency)
     from midigenai.tokenizer import normalize_drums
 
-    files = sorted(prompts_dir.glob("*.mid"))
+    pool = _prompt_pool(prompts_dir, prompt_set)
     rng = random.Random(seed)
-    rng.shuffle(files)
+    rng.shuffle(pool)
     rows = []
-    for f in files:
+    for sha, f in pool:
         if len(rows) >= n_prompts * gens_per_prompt:
             break
         score = Score(str(f))
@@ -237,7 +292,8 @@ def _evaluate_accompany(gen, prompts_dir, n_prompts, gens_per_prompt, bars,
                 continue
             n_notes = sum(len(t.notes) for t in out.tracks)
             got_bars = gen.count_bars(new_ids)
-            row = {"prompt": f.name, "gen": g, "gen_tokens": len(new_ids),
+            row = {"prompt": f.name, "prompt_sha": sha[:12], "gen": g,
+                   "gen_tokens": len(new_ids),
                    "accomp_notes": n_notes,
                    "accomp_bars_ok": 1.0 if got_bars == bars else 0.0,
                    "eos_rate": 1.0 if (new_ids and new_ids[-1] == gen.eos_id) else 0.0}
@@ -261,8 +317,10 @@ def _evaluate_accompany(gen, prompts_dir, n_prompts, gens_per_prompt, bars,
                 and r[m] == r[m]]
         if vals:
             agg[m] = {"mean": round(st.mean(vals), 4), "median": round(st.median(vals), 4)}
-    return {"checkpoint": str(checkpoint), "mode": "accompany", "bars": bars,
+    card = {"checkpoint": str(checkpoint), "mode": "accompany", "bars": bars,
             "n_generations": len(rows), "aggregate": agg, "rows": rows}
+    _stamp_prompt_set(card, prompt_set, rows)
+    return card
 
 
 def compare(paths: list[Path]) -> None:
@@ -302,6 +360,10 @@ def main():
     p.add_argument("--bars", type=int, default=8, help="accompany: window length")
     p.add_argument("--pad-to-bar", action="store_true",
                    help="continue (v4): pad the prompt to its bar line first")
+    p.add_argument("--prompt-set", type=Path, default=None,
+                   help="frozen prompt-set manifest (make_prompt_set freeze): "
+                        "verify the prompt dir against it and stamp the "
+                        "scorecard with what was scored")
     args = p.parse_args()
 
     if args.compare:
@@ -309,12 +371,14 @@ def main():
         return
     if not args.checkpoint:
         raise SystemExit("--checkpoint required (or --compare)")
+    prompt_set = load_manifest(args.prompt_set) if args.prompt_set else None
     card = evaluate_checkpoint(args.checkpoint, args.tokenizer, args.prompts,
                                args.n_prompts, args.gens_per_prompt,
                                args.prompt_tokens, args.max_new_tokens,
                                args.temperature, args.top_k, args.seed,
                                mode=args.mode, bars=args.bars,
-                               pad_to_bar=args.pad_to_bar)
+                               pad_to_bar=args.pad_to_bar,
+                               prompt_set=prompt_set)
     suffix = "" if args.mode == "continue" else f"_{args.mode}"
     if args.pad_to_bar:
         suffix += "_padbar"
@@ -331,6 +395,10 @@ def main():
         rows_path.write_text(json.dumps(rows, indent=2))
     out.write_text(json.dumps(card, indent=2) + "\n")
     print(f"[eval] {card['n_generations']} generations -> {out}")
+    if "prompt_set" in card:
+        ps = card["prompt_set"]
+        print(f"[eval] prompt set {ps['name']} ({ps['set_id']}): "
+              f"{ps['n_used']}/{ps['n_files']} prompts scored")
     if rows is not None:
         print(f"[eval] per-prompt rows (local only) -> {rows_path}")
     for m, v in card["aggregate"].items():

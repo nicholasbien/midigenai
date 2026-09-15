@@ -25,7 +25,10 @@ evals/dataset_samples/
 # Eval prompt sets: site uploads and corpus excerpts. Third-party music
 # that happens to be useful as a test fixture is still third-party music,
 # and the filenames alone name artists and tracks. Kept on disk, never
-# committed. Rebuild with `python -m midigenai.make_prompt_set`.
+# committed. Rebuild with `python -m midigenai.make_prompt_set build`.
+# The set itself is pinned by content hash in evals/prompt_sets/ (which
+# IS committed), so a scorecard can say which prompts it scored without
+# naming any of them: make_prompt_set freeze / verify.
 evals/prompts/
 evals/scorecards/*.rows.json
 
