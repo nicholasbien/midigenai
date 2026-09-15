@@ -33,15 +33,15 @@ for note in gen.stream_notes(prompt, tempo_bpm=120):
     ...  # {pitch, start, end, velocity, program}, emitted as the model plays
 ```
 
-## Live jamming with Ableton
+## Live jamming
 
-`python -m midigenai.live_session` turns Live into a call-and-response partner:
-session-record a phrase on any track and the model answers on its own track
-within ~0.5 s, matching your phrase length in bars and staying aware of the
-whole session so far. Requires Live with the
-[AbletonMCP](https://github.com/nicholasbien/ableton-mcp-pro) control surface.
-Tip: set Live's launch quantization (the Q dropdown) to 1/4 so answers start
-on the next quarter note.
+Jamming with the model now lives in [fluidclaude](https://github.com/nicholasbien/fluidclaude):
+`gen` uses midigenai as a loop source and `listen` answers what you play over MIDI, with
+fluidclaude's own clock (or Live's, via MIDI clock) keeping time. The earlier Ableton-side
+harness (jam.py, live_session, setup_jam_set, demo_song) was removed from this package; the
+engineering notes from that work are kept in [docs/JAM_ENGINEERING_NOTES.md](docs/JAM_ENGINEERING_NOTES.md)
+and [docs/jam-timing.md](docs/jam-timing.md). The Live socket client moved to
+[ableton-mcp-pro/tools/live_client.py](https://github.com/nicholasbien/ableton-mcp-pro/blob/main/tools/live_client.py).
 
 ## Model
 
@@ -69,7 +69,7 @@ Select with `load_from_hub(version=...)` or `MIDIGENAI_VERSION`.
 ## Performance
 
 Inference is fast enough that playback, not generation, is the bottleneck
-(v2-100m on an M3 Max, fp16):
+(113M model on an M3 Max, fp16; measured on v2-100m, and v3 is the same architecture):
 
 | | decode | TTFT @ 2048-token prompt |
 |---|---|---|
@@ -91,7 +91,6 @@ midigenai/
 ├─ model_mlx.py       # MLX (Apple-silicon GPU) implementation of the same
 ├─ tokenizer.py       # MidiTok MIDILike wrapper
 ├─ generate.py        # Generator: streaming inference, KV cache, tempo plumbing
-├─ live_session.py    # interactive Ableton call-and-response
 ├─ hub.py             # HuggingFace checkpoint download / load_from_hub
 ├─ train.py           # training loop (sliding-window, AdamW, cosine LR, bf16)
 ├─ modal_train.py     # Modal H100/A100 training entrypoint

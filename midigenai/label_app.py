@@ -12,7 +12,7 @@ Run (model pulled from the HF hub by default):
 
 Compare two checkpoints instead of self-vs-self:
     python -m midigenai.label_app --prompts evals/prompts \\
-        --hub-version v2-100m --hub-version-b v2-prod
+        --hub-version v3 --hub-version-b v2-100m
 
 Keyboard: 1 = left, 2 = right, t = tie, x = both bad, s = skip.
 Open http://localhost:7788.

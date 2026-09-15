@@ -32,3 +32,6 @@ evals/*.log
 evals/**/*.mp3
 evals/**/*.wav
 evals/samples*/
+
+# corpus quality labeling: excerpt MIDIs are rebuilt from path+window on demand
+evals/quality/excerpts/
