@@ -375,7 +375,7 @@
       "ioi_entropy": 1.5
     },
     {
-      "prompt": "user_1_-_Clara_Poelzl_-_Mighty_Illusion.mid",
+      "prompt": "user_3.mid",
       "gen": 0,
       "gen_tokens": 376,
       "accomp_notes": 101,
@@ -391,7 +391,7 @@
       "ioi_entropy": 1.961837477859204
     },
     {
-      "prompt": "user_1_-_Clara_Poelzl_-_Mighty_Illusion.mid",
+      "prompt": "user_3.mid",
       "gen": 1,
       "gen_tokens": 171,
       "accomp_notes": 39,
@@ -919,7 +919,7 @@
       "ioi_entropy": 1.644093437370222
     },
     {
-      "prompt": "user_1_-_Alphaea_Chiyo_-_You_Have_Too_Many_Reasons.mid",
+      "prompt": "user_2.mid",
       "gen": 0,
       "gen_tokens": 264,
       "accomp_notes": 69,
@@ -935,7 +935,7 @@
       "ioi_entropy": 0.6769759597680174
     },
     {
-      "prompt": "user_1_-_Alphaea_Chiyo_-_You_Have_Too_Many_Reasons.mid",
+      "prompt": "user_2.mid",
       "gen": 1,
       "gen_tokens": 205,
       "accomp_notes": 47,
