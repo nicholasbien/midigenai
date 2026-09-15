@@ -61,6 +61,9 @@ class GRPOConfig:
     grad_clip: float = 1.0
     save_every: int = 50
     log_every: int = 1
+    eval_every: int = 10           # 0 disables
+    eval_prompts: int = 8
+    eval_samples: int = 4
     seed: int = 0
     device: str = ""
 
@@ -209,10 +212,45 @@ def train(cfg: GRPOConfig) -> None:
     def prompt_of(f: Path) -> list[int] | None:
         return spec.prompt_ids(f, cfg.prompt_tokens)
 
+    # A held-out set of prompts, fixed for the whole run and scored with a
+    # fixed seed. The per-step reward_mean cannot answer "is this working":
+    # every step samples different prompts, and prompts differ far more in
+    # baseline reward than training moves any one of them (observed -2.8 to
+    # -5.4 on consecutive steps of an untrained loop). Group-relative
+    # advantage cancels that inside a step; the logged average does not.
+    eval_files = [f for f in files[::max(1, len(files) // max(cfg.eval_prompts, 1))]
+                  ][:cfg.eval_prompts]
+    eval_prompts = [ids for ids in (prompt_of(f) for f in eval_files) if ids]
+
+    def eval_reward() -> float | None:
+        if not eval_prompts:
+            return None
+        ecfg = GRPOConfig(**{**asdict(cfg), "group_size": cfg.eval_samples})
+        ecfg.checkpoint, ecfg.tokenizer = cfg.checkpoint, cfg.tokenizer
+        ecfg.reward, ecfg.prompts, ecfg.out_dir = cfg.reward, cfg.prompts, cfg.out_dir
+        state = torch.random.get_rng_state()
+        torch.manual_seed(cfg.seed)          # same draws every time it is called
+        try:
+            scores = []
+            for pids in eval_prompts:
+                for smp in sample_group(policy, pids, ecfg, device, spec):
+                    r = reward.score(tokenizer, smp, prompt_ids=pids)
+                    if r is not None:
+                        scores.append(r)
+        finally:
+            torch.random.set_rng_state(state)
+            policy.train()
+        return st.mean(scores) if scores else None
+
     metrics_path = cfg.out_dir / "metrics.csv"
     if not metrics_path.exists():
-        metrics_path.write_text("step,reward_mean,reward_std,kl,loss,n_scored,elapsed_s\n")
+        metrics_path.write_text(
+            "step,reward_mean,reward_std,kl,loss,n_scored,eval_reward,elapsed_s\n")
     t0 = time.time()
+    base_eval = eval_reward() if cfg.eval_every else None
+    if base_eval is not None:
+        print(f"[grpo] eval reward before training: {base_eval:+.4f} "
+              f"({len(eval_prompts)} fixed prompts x {cfg.eval_samples} samples)")
 
     for step in range(1, cfg.steps + 1):
         policy.train()
@@ -259,12 +297,21 @@ def train(cfg: GRPOConfig) -> None:
             rm = st.mean(step_rewards)
             rs_ = st.pstdev(step_rewards) if len(step_rewards) > 1 else 0.0
             kl_m = st.mean(step_kls)
+            ev = (eval_reward() if cfg.eval_every and step % cfg.eval_every == 0
+                  else None)
             with metrics_path.open("a") as f:
                 f.write(f"{step},{rm:.4f},{rs_:.4f},{kl_m:.5f},{st.mean(losses):.4f},"
-                        f"{len(step_rewards)},{time.time()-t0:.0f}\n")
+                        f"{len(step_rewards)},{'' if ev is None else f'{ev:.4f}'},"
+                        f"{time.time()-t0:.0f}\n")
             if step % cfg.log_every == 0:
+                extra = ""
+                if ev is not None:
+                    extra = f"  EVAL {ev:+.4f}"
+                    if base_eval is not None:
+                        extra += f" ({ev - base_eval:+.4f} vs start)"
                 print(f"[grpo] step {step:4d}  reward {rm:+.3f} (sd {rs_:.3f})  "
-                      f"KL {kl_m:.4f}  groups {groups_used}  {time.time()-t0:.0f}s", flush=True)
+                      f"KL {kl_m:.5f}  groups {groups_used}  "
+                      f"{time.time()-t0:.0f}s{extra}", flush=True)
         else:
             # every sample in every group was rejected by the reward (all
             # degenerate, or too short to score) — no update, but the run must
@@ -291,7 +338,8 @@ def main() -> None:
                                ("max-new-tokens", int, 192), ("temperature", float, 1.0),
                                ("top-k", int, 50), ("lr", float, 1e-6),
                                ("beta", float, 0.04), ("save-every", int, 50),
-                               ("seed", int, 0)):
+                               ("eval-every", int, 10), ("eval-prompts", int, 8),
+                               ("eval-samples", int, 4), ("seed", int, 0)):
         p.add_argument(f"--{name}", type=typ, default=default)
     p.add_argument("--device", default="")
     a = p.parse_args()
@@ -300,7 +348,9 @@ def main() -> None:
                      prompts_per_step=a.prompts_per_step, group_size=a.group_size,
                      prompt_tokens=a.prompt_tokens, max_new_tokens=a.max_new_tokens,
                      temperature=a.temperature, top_k=a.top_k, lr=a.lr, beta=a.beta,
-                     save_every=a.save_every, seed=a.seed, device=a.device))
+                     save_every=a.save_every, eval_every=a.eval_every,
+                     eval_prompts=a.eval_prompts, eval_samples=a.eval_samples,
+                     seed=a.seed, device=a.device))
 
 
 if __name__ == "__main__":
