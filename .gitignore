@@ -22,6 +22,13 @@ data/v2_corpus*/
 # explorer sample cache
 evals/dataset_samples/
 
+# Eval prompt sets: site uploads and corpus excerpts. Third-party music
+# that happens to be useful as a test fixture is still third-party music,
+# and the filenames alone name artists and tracks. Kept on disk, never
+# committed. Rebuild with `python -m midigenai.make_prompt_set`.
+evals/prompts/
+evals/scorecards/*.rows.json
+
 # Generated eval artifacts (MIDI, audio, app logs) — derived data, not source
 evals/prompts_heldout/
 evals/prompts_val/

@@ -320,8 +320,19 @@ def main():
         suffix += "_padbar"
     out = args.out or Path(f"evals/scorecards/{Path(args.checkpoint).parent.name}{suffix}.json")
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(card, indent=2))
+    # Per-prompt rows name the files they were generated from, and those are
+    # site uploads and corpus excerpts -- third-party music whose filenames
+    # alone name artists and tracks. They stay local (gitignored) while the
+    # aggregate, which is the thing worth reviewing, is committable.
+    rows = card.pop("rows", None)
+    if rows is not None:
+        card["n_rows"] = len(rows)
+        rows_path = out.with_suffix(".rows.json")
+        rows_path.write_text(json.dumps(rows, indent=2))
+    out.write_text(json.dumps(card, indent=2) + "\n")
     print(f"[eval] {card['n_generations']} generations -> {out}")
+    if rows is not None:
+        print(f"[eval] per-prompt rows (local only) -> {rows_path}")
     for m, v in card["aggregate"].items():
         print(f"  {m:22s} mean {v['mean']:>8.3f}   median {v['median']:>8.3f}")
 
