@@ -122,3 +122,49 @@ def test_pair_config_defaults_match_the_labelled_corpus():
     cfg = PairConfig()
     assert (cfg.max_new_tokens, cfg.temperature, cfg.top_k) == (256, 1.1, 50)
     assert cfg.prompt_tokens == 256 and cfg.max_cont_seconds == 8.0
+
+
+def test_repeat_payload_has_everything_the_ui_reads():
+    """A blind repeat must carry the same fields as a fresh pair.
+
+    Repeats were served with only URLs and model names, so the template's
+    `p.left_roll.url = p.left_timeline_url` threw before anything rendered:
+    the page died, the vote never happened, and a dup-rate of 0.12 produced
+    zero recorded repeats over 36 votes. Self-consistency is the ceiling every
+    other number is read against, so losing it silently is expensive.
+    """
+    import random
+
+    served = {"p1": {"pair_id": "p1", "prompt_url": "/midi/p1_prompt.mid",
+                     "left_url": "L", "right_url": "R",
+                     "left_timeline_url": "LT", "right_timeline_url": "RT",
+                     "left_roll": {"notes": [{"p": 60}], "prompt_end_s": 1.0},
+                     "right_roll": {"notes": [{"p": 62}], "prompt_end_s": 1.0},
+                     "left_is": "a", "right_is": "b",
+                     "left_model": "base", "right_model": "trained"}}
+    voted = dict(served)
+    sided = ("url", "timeline_url", "roll", "is", "model")
+
+    def make_repeat(rng):
+        cands = [p for p in voted.values() if not p.get("_repeated")]
+        if not cands:
+            return None
+        pair = rng.choice(cands)
+        out = dict(pair)
+        out.pop("_repeated", None)
+        if rng.random() < 0.5:
+            for f in sided:
+                out[f"left_{f}"], out[f"right_{f}"] = pair[f"right_{f}"], pair[f"left_{f}"]
+        return out
+
+    fresh = served["p1"]
+    for seed in range(12):
+        rep = make_repeat(random.Random(seed))
+        assert set(rep) >= set(fresh) - {"_repeated"}, "a repeat lost fields"
+        # whichever way it was flipped, the sided fields stay consistent
+        if rep["left_is"] == "a":
+            assert rep["left_roll"] is fresh["left_roll"]
+            assert rep["left_model"] == "base" and rep["left_timeline_url"] == "LT"
+        else:
+            assert rep["left_roll"] is fresh["right_roll"]
+            assert rep["left_model"] == "trained" and rep["left_timeline_url"] == "RT"

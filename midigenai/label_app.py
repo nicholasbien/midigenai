@@ -383,7 +383,12 @@ def build_app(args) -> Flask:
     # Repeats measure the labeler's self-consistency — the accuracy ceiling
     # for any reward fit on these labels. The UI is never told it's a repeat.
     voted_pairs: dict[str, dict] = {}
+    served: dict[str, dict] = {}        # the exact payload each pair was shown with
     repeat_rng = random.Random()
+
+    # every field the UI needs that comes in left/right halves; a flipped
+    # repeat has to swap all of them together or the page is inconsistent
+    _SIDED = ("url", "timeline_url", "roll", "is", "model")
 
     def make_repeat() -> dict | None:
         candidates = [p for p in voted_pairs.values() if not p.get("_repeated")]
@@ -391,16 +396,16 @@ def build_app(args) -> Flask:
             return None
         pair = repeat_rng.choice(candidates)
         pair["_repeated"] = True
-        flipped = repeat_rng.random() < 0.5
         out = dict(pair)
         out.pop("_repeated", None)
-        if flipped:
-            out.update({
-                "left_url": pair["right_url"], "right_url": pair["left_url"],
-                "left_is": pair["right_is"], "right_is": pair["left_is"],
-                "left_model": pair["right_model"],
-                "right_model": pair["left_model"],
-            })
+        if repeat_rng.random() < 0.5:
+            # Swap every sided field, not just the URLs. Rebuilding a partial
+            # payload here is what broke repeats before: the template reads
+            # left_roll and left_timeline_url, and a payload without them
+            # throws before anything renders — so the repeat was served, the
+            # page died, and the vote never happened.
+            for f in _SIDED:
+                out[f"left_{f}"], out[f"right_{f}"] = pair[f"right_{f}"], pair[f"left_{f}"]
         return out
 
     @app.route("/")
@@ -418,6 +423,7 @@ def build_app(args) -> Flask:
             pair = factory.queue.get(timeout=args.next_timeout)
         except queue.Empty:
             return jsonify({"status": "generating"}), 202
+        served[pair["pair_id"]] = pair
         return jsonify({"status": "ok", "pair": pair,
                         "queued": factory.queue.qsize()})
 
@@ -461,17 +467,10 @@ def build_app(args) -> Flask:
         with labels_path.open("a") as f:
             f.write(json.dumps(record) + "\n")
         if choice in ("left", "right", "tie") and record["pair_id"]:
-            voted_pairs.setdefault(record["pair_id"], {
-                "pair_id": record["pair_id"],
-                "prompt_url": f"/midi/{record['pair_id']}_prompt.mid",
-                "left_url": f"/midi/{record['pair_id']}_a.mid",
-                "right_url": f"/midi/{record['pair_id']}_b.mid",
-                "left_is": "a", "right_is": "b",
-                "left_model": data.get(
-                    "left_model" if data.get("left_is") == "a" else "right_model", ""),
-                "right_model": data.get(
-                    "left_model" if data.get("left_is") == "b" else "right_model", ""),
-            })
+            # re-serve exactly what was shown, rolls and timelines included
+            full = served.get(record["pair_id"])
+            if full is not None:
+                voted_pairs.setdefault(record["pair_id"], full)
         return jsonify({"ok": True})
 
     @app.route("/api/stats")
