@@ -24,6 +24,9 @@ from pathlib import Path
 
 @dataclass
 class PairConfig:
+    mode: str = "continue"         # "continue" | "accompany"
+    bars: int = 16                 # accompany: window length (training default)
+    single_target_frac: float = 0.6   # v4_docs.DocBuilder default
     prompt_tokens: int = 256
     max_new_tokens: int = 256
     temperature: float = 1.1
@@ -167,6 +170,151 @@ def make_pair(gen, prompt_file: Path, cfg: PairConfig,
             "a": sides["a"]["bytes"], "b": sides["b"]["bytes"]}
 
 
+def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
+                        rng: random.Random) -> dict | None:
+    """One accompaniment pair, sampled the way TRAINING samples them.
+
+    This deliberately mirrors `v4_docs.DocBuilder`'s accompaniment windows
+    rather than doing something reasonable-looking of its own:
+
+      * the condition is a RANDOM shuffle of the live tracks, not the busiest
+        one. Picking the busiest made 48% of conditions drum tracks, because
+        hi-hats win on note count — a distribution the model is not trained
+        on and a question ("what accompanies this hi-hat") with no harmonic
+        grounds to answer it.
+      * 1 condition track 70% of the time, 2 the rest (always 1 when only two
+        tracks are live).
+      * the target is ONE random remaining track 60% of the time, otherwise
+        all of them.
+      * the header names condition + target only, so it reads as "add a bass"
+        rather than "add everything this file had".
+      * solo keyboard files go through a left/right hand split, which is how
+        a piano-only corpus contributes accompaniment data at all.
+
+    Labelling a different distribution from the one trained on would measure
+    a model nobody built, and would hide sampling bugs instead of exposing
+    them.
+    """
+    from symusic import Score, Tempo
+    from midigenai.data.v4_docs import (MIN_SEGMENT_NOTES, _n_notes, _subscore,
+                                        _tracks_in_window, _window, bar_edges,
+                                        split_hands, trim_leading)
+    from midigenai.attributes import header_for_score
+    from midigenai.tokenizer import normalize_drums
+
+    if not getattr(gen, "v4", False):
+        return None
+    try:
+        score = Score(str(prompt_file))
+    except Exception:
+        return None
+    normalize_drums(score, prompt_file.name)
+    score = trim_leading(score)
+    edges = bar_edges(score)
+    n_bars = len(edges) - 1
+    if n_bars < cfg.bars:
+        return None
+    b0 = rng.randrange(0, n_bars - cfg.bars + 1)
+    s_tick, e_tick = edges[b0], edges[b0 + cfg.bars]
+    win = _window(score, s_tick, e_tick)
+
+    live = _tracks_in_window(score, s_tick, e_tick, MIN_SEGMENT_NOTES)
+    kind = "tracks"
+    if len(live) >= 2:
+        rng.shuffle(live)
+        n_cond = 1 if len(live) == 2 or rng.random() < 0.7 else 2
+        cond_idx, rest = live[:n_cond], live[n_cond:]
+        tgt_idx = ([rng.choice(rest)] if rng.random() < cfg.single_target_frac
+                   else rest)
+        cond = _subscore(win, cond_idx)
+        tgt = _subscore(win, tgt_idx)
+        header_src = _subscore(win, cond_idx + tgt_idx)
+    else:
+        # solo keyboard: one hand conditions the other, both directions
+        solo = [i for i, t in enumerate(score.tracks)
+                if not t.is_drum and len(t.notes)]
+        drums = any(t.is_drum and len(t.notes) for t in score.tracks)
+        if len(solo) != 1 or drums:
+            return None
+        hands = split_hands(win)
+        if hands is None:
+            return None
+        low, high = hands
+        cond, tgt = (low, high) if rng.random() < 0.5 else (high, low)
+        header_src = win
+        kind = "hands"
+    if _n_notes(cond) < MIN_SEGMENT_NOTES or _n_notes(tgt) < MIN_SEGMENT_NOTES:
+        return None
+
+    cond_ids = gen.tokenizer(cond).ids
+    have = gen.count_bars(cond_ids)
+    bars = max(cfg.bars, have)
+    if have > cfg.bars * 2:
+        return None
+    header = gen.sp.header_ids_for(gen.tokenizer, header_for_score(header_src))
+    tempo = gen.detect_tempo(prompt_file)
+    pair_id = f"{datetime.datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:8]}"
+
+    cond_score = gen.tokenizer.decode(list(cond_ids))
+    cond_score.tempos = [Tempo(time=0, qpm=tempo)]
+    cond_end = max((n.start + n.duration
+                    for t in cond_score.tracks for n in t.notes), default=0)
+
+    sides = {}
+    for name in ("a", "b"):
+        seed = rng.randrange(1 << 30)
+        new_ids = list(gen.accompany(cond_ids, bars, header=header,
+                                     temperature=cfg.temperature,
+                                     top_k=cfg.top_k, seed=seed))
+        if not new_ids:
+            return None
+        try:
+            acc = gen.tokenizer.decode(new_ids)
+        except Exception:
+            return None
+        # clamp to the span being accompanied: a tail playing alone after the
+        # condition stops is not accompaniment, and it biases a listening test
+        for t in acc.tracks:
+            kept = [n for n in t.notes if n.start < cond_end]
+            for n in kept:
+                n.duration = min(n.duration, max(1, cond_end - n.start))
+            t.notes = kept
+        n_notes = sum(len(t.notes) for t in acc.tracks)
+        if n_notes < cfg.min_cont_notes:
+            return None
+        mix = cond_score.copy()
+        for t in acc.tracks:
+            mix.tracks.append(t)
+        mix.tempos = [Tempo(time=0, qpm=tempo)]
+        sides[name] = {"bytes": _dumps_midi(mix), "seed": seed, "ids": new_ids,
+                       "n_notes": n_notes,
+                       "bars_ok": gen.count_bars(new_ids) == bars}
+
+    meta = {
+        "pair_id": pair_id,
+        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "prompt_file": prompt_file.name,
+        "mode": "accompany", "bars": bars, "bars_requested": cfg.bars,
+        "sampling": kind,
+        "n_cond_tracks": len(cond.tracks), "n_target_tracks": len(tgt.tracks),
+        "cond_is_drums": any(t.is_drum for t in cond.tracks),
+        "model_a": cfg.model_label, "model_b": cfg.model_label,
+        "cross_model": False, "on_policy": True,
+        "tempo_bpm": tempo,
+        "temperature": cfg.temperature, "top_k": cfg.top_k,
+        "prompt_ids": [*header, *cond_ids],
+        "cond_ids": cond_ids,
+        "cont_a_ids": sides["a"]["ids"], "cont_b_ids": sides["b"]["ids"],
+        "seed_a": sides["a"]["seed"], "seed_b": sides["b"]["seed"],
+        "n_notes_a": sides["a"]["n_notes"], "n_notes_b": sides["b"]["n_notes"],
+        "bars_ok_a": sides["a"]["bars_ok"], "bars_ok_b": sides["b"]["bars_ok"],
+        **cfg.extra,
+    }
+    return {"pair_id": pair_id, "meta": meta,
+            "prompt": _dumps_midi(cond_score),
+            "a": sides["a"]["bytes"], "b": sides["b"]["bytes"]}
+
+
 def write_pair(pair: dict, pairs_dir: Path) -> None:
     pairs_dir.mkdir(parents=True, exist_ok=True)
     pid = pair["pair_id"]
@@ -188,7 +336,8 @@ def generate_pairs(gen, prompt_files: list[Path], n: int, cfg: PairConfig,
         attempts += 1
         pf = order[i % len(order)]
         i += 1
-        pair = make_pair(gen, pf, cfg, rng)
+        pair = (make_accompany_pair(gen, pf, cfg, rng) if cfg.mode == "accompany"
+                else make_pair(gen, pf, cfg, rng))
         if pair is None:
             continue
         out.append(pair)
@@ -213,6 +362,9 @@ def main() -> None:
     p.add_argument("--prompt-tokens", type=int, default=256)
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--mode", choices=("continue", "accompany"), default="continue")
+    p.add_argument("--bars", type=int, default=16,
+                   help="accompany: window length (training uses 16)")
     a = p.parse_args()
 
     if a.checkpoint:
@@ -235,8 +387,9 @@ def main() -> None:
     if not todo:
         return
 
-    cfg = PairConfig(prompt_tokens=a.prompt_tokens, max_new_tokens=a.max_new_tokens,
-                     temperature=a.temperature, top_k=a.top_k, model_label=label_name)
+    cfg = PairConfig(mode=a.mode, bars=a.bars, prompt_tokens=a.prompt_tokens,
+                     max_new_tokens=a.max_new_tokens, temperature=a.temperature,
+                     top_k=a.top_k, model_label=label_name)
     t0 = time.time()
 
     def on_pair(pair, i):
@@ -246,9 +399,18 @@ def main() -> None:
             print(f"[pairs] {i}/{todo}  {el/i:.2f}s/pair  "
                   f"eta {(todo - i) * el / i / 60:.0f} min", flush=True)
 
-    generate_pairs(gen, prompts, todo, cfg, seed=a.seed + have, on_pair=on_pair)
+    made = generate_pairs(gen, prompts, todo, cfg, seed=a.seed + have, on_pair=on_pair)
     el = time.time() - t0
-    print(f"[pairs] done: {todo} pairs in {el/60:.1f} min ({el/todo:.2f}s/pair)")
+    n = len(made)
+    print(f"[pairs] done: {n} pairs in {el/60:.1f} min "
+          f"({el/max(n,1):.2f}s/pair)")
+    if n < todo:
+        # Accompaniment needs a prompt with at least two live tracks, and a
+        # solo-piano corpus has none — reporting the request rather than the
+        # result hid that the first run produced one pair out of three.
+        print(f"[pairs] WARNING: asked for {todo}, got {n}. Prompts are "
+              f"skipped when they are too short, or (accompany mode) have "
+              f"fewer than two tracks with notes.")
 
 
 if __name__ == "__main__":

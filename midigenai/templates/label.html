@@ -236,6 +236,7 @@ function setupRoll(side, roll, lo, hi) {
   const shade = document.getElementById('shade-' + side);
   const line = document.getElementById('cut-' + side);
   const label = document.getElementById('cutlabel-' + side);
+  if (!shade || !line || !label) return;   // the prompt row has no handoff
   shade.style.width = x + 'px';
   line.style.left = x + 'px';
   label.style.left = (x + 4) + 'px';
@@ -283,36 +284,46 @@ function render() {
   flags = { left: new Set(), right: new Set() };
   stage.classList.add('flash');
   setTimeout(() => stage.classList.remove('flash'), 400);
-  const allP = ['left_roll', 'right_roll'].flatMap(k => (p[k].notes || []).map(n => n.p));
+  const ACC = p.mode === 'accompany';
+  const allP = ['left_roll', 'right_roll', 'prompt_roll']
+    .flatMap(k => ((p[k] && p[k].notes) || []).map(n => n.p));
   const lo = Math.max(0, Math.min(48, ...allP) - 2), hi = Math.min(127, Math.max(72, ...allP) + 2);
   p.left_roll.url = p.left_timeline_url; p.right_roll.url = p.right_timeline_url;
+  if (p.prompt_roll) p.prompt_roll.url = p.prompt_url;
   stage.innerHTML = `
     <div class="legend">Prompt <span style="font-weight:400;color:var(--accent)">· ${p.prompt_source || ''}</span> <span style="color:var(--faint)">${p.prompt_name || ''}</span>
       <span id="loadnote" style="color:var(--warn)"></span>
-      &nbsp;·&nbsp; shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays 1 with the prompt, then 2 from the red line on; <kbd>space</kbd> replays both, <kbd>a</kbd> replays 1 with the prompt, <kbd>b</kbd> replays 2.</div>
+      &nbsp;·&nbsp; ${ACC ? 'each row is the SAME part you just heard, plus a different set of accompanying parts — judge how well they fit together, not what comes next. Both rows share one time and pitch scale' : 'shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays 1 with the prompt, then 2 from the red line on'}; <kbd>space</kbd> replays both, <kbd>a</kbd> replays 1, <kbd>b</kbd> replays 2${ACC ? ', <kbd>c</kbd> plays the original part alone' : ''}.</div>
+    ${ACC ? `<div class="opt" id="opt-prompt" style="margin-bottom:10px">
+        <h3>The part being accompanied &mdash; both arrangements add to this</h3>
+        <div class="rollwrap"><div class="rollinner">
+          <midi-visualizer type="piano-roll" id="roll-prompt"></midi-visualizer>
+        </div></div>
+        <midi-player id="pl-prompt" src="${p.prompt_url}" sound-font visualizer="#roll-prompt"></midi-player>
+      </div>` : ''}
     <div class="rows">
       <div class="opt" id="opt-left">
-        <h3>Continuation 1</h3>
+        <h3>${ACC ? 'Arrangement 1' : 'Continuation 1'}</h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-left"></midi-visualizer>
           <div class="shade" id="shade-left"></div><div class="cutline" id="cut-left"></div>
           <div class="cutlabel" id="cutlabel-left">model starts</div>
         </div></div>
         <midi-player id="pl-left" src="${p.left_timeline_url}" sound-font visualizer="#roll-left"></midi-player>
-        <div class="rowplay"><button type="button" onclick="playSide('left', true)">play 1 with prompt</button>
-          <button type="button" onclick="playSide('left', false)">from the red line</button></div>
+        <div class="rowplay"><button type="button" onclick="playSide('left', true)">${ACC ? 'play 1' : 'play 1 with prompt'}</button>
+          ${ACC ? '' : `<button type="button" onclick="playSide('left', false)">from the red line</button>`}</div>
         <div class="chips" id="flags-left"></div>
       </div>
       <div class="opt" id="opt-right">
-        <h3>Continuation 2</h3>
+        <h3>${ACC ? 'Arrangement 2' : 'Continuation 2'}</h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-right"></midi-visualizer>
           <div class="shade" id="shade-right"></div><div class="cutline" id="cut-right"></div>
           <div class="cutlabel" id="cutlabel-right">model starts</div>
         </div></div>
         <midi-player id="pl-right" src="${p.right_timeline_url}" sound-font visualizer="#roll-right"></midi-player>
-        <div class="rowplay"><button type="button" onclick="playSide('right', true)">play 2 with prompt</button>
-          <button type="button" onclick="playSide('right', false)">from the red line</button></div>
+        <div class="rowplay"><button type="button" onclick="playSide('right', true)">${ACC ? 'play 2' : 'play 2 with prompt'}</button>
+          ${ACC ? '' : `<button type="button" onclick="playSide('right', false)">from the red line</button>`}</div>
         <div class="chips" id="flags-right"></div>
       </div>
     </div>
@@ -328,6 +339,11 @@ function render() {
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
   `;
   renderFlags();
+  const sub = document.querySelector('.sub');
+  if (sub) sub.firstChild.textContent = ACC
+    ? 'Listen to both arrangements of the same part. Pick the one whose added parts fit better. '
+    : 'Listen to the prompt, then both continuations. Pick the better one. ';
+  if (p.prompt_roll) setupRoll('prompt', p.prompt_roll, lo, hi);
   setupRoll('left', p.left_roll, lo, hi);
   setupRoll('right', p.right_roll, lo, hi);
   // players fire 'load' once the soundfont/sequence is ready; start the
@@ -386,6 +402,7 @@ async function vote(choice) {
   const body = {
     session_id: SESSION_ID,
     pair_id: p.pair_id,
+    idx: p.idx,          // distinguishes a blind repeat from its first showing
     choice,
     left_is: p.left_is, right_is: p.right_is,
     left_model: p.left_model, right_model: p.right_model,
@@ -412,6 +429,17 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'a') { e.preventDefault(); playSequence('left'); return; }
   if (e.key === 'b') { e.preventDefault(); playSequence('right'); return; }
   if (e.key === 'n') { e.preventDefault(); toggleTheme(); return; }
+  if (e.key === 'c') {          // the part being accompanied, on its own
+    const pp = document.getElementById('pl-prompt');
+    if (pp) {
+      e.preventDefault();
+      document.querySelectorAll('midi-player').forEach(pl => {
+        try { pl.stop(); } catch (err) {}
+      });
+      pp.start();
+    }
+    return;
+  }
   const flagMap = { q: ['left', 'degrades'], w: ['right', 'degrades'],
                     e: ['left', 'too_long'], r: ['right', 'too_long'] };
   if (flagMap[e.key]) { e.preventDefault(); toggleFlag(...flagMap[e.key]); }

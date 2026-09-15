@@ -60,6 +60,41 @@ def playable(pairs_dir: Path, pid: str) -> bool:
     return all((pairs_dir / f"{pid}_{s}.mid").exists() for s in ("prompt", "a", "b"))
 
 
+def select_dir(args) -> None:
+    """Manifest for a directory of pre-generated pairs (e.g. pairgen output).
+
+    Unlike the ceiling manifest these have no prior vote to agree with, so
+    there is no `original`; they are fresh labels. `--dup` adds that many
+    pairs a second time, which the server re-serves blind with the sides
+    randomised again — the same self-consistency instrument label_app gets
+    from --dup-rate, and the thing whose absence left the GRPO A/B without a
+    ceiling to read against.
+    """
+    pairs_dir = Path(args.pairs).resolve()
+    ids = sorted({f.name[:-len("_prompt.mid")]
+                  for f in pairs_dir.glob("*_prompt.mid")
+                  if (pairs_dir / f"{f.name[:-len('_prompt.mid')]}_a.mid").exists()})
+    if not ids:
+        raise SystemExit(f"no complete pairs in {pairs_dir}")
+    rng = random.Random(args.seed)
+    rng.shuffle(ids)
+    picked = ids[:args.n]
+    rows = [{"set": args.name, "pairs_dir": str(pairs_dir), "pair_id": pid,
+             "original": None} for pid in picked]
+    for pid in rng.sample(picked, min(args.dup, len(picked))):
+        rows.append({"set": args.name, "pairs_dir": str(pairs_dir),
+                     "pair_id": pid, "original": None, "is_repeat": True})
+    rng.shuffle(rows)
+    for i, r in enumerate(rows):
+        r["idx"] = i                      # duplicates need distinct identities
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "manifest.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n")
+    print(f"[select] {len(picked)} pairs + {len(rows) - len(picked)} blind repeats "
+          f"-> {out_dir / 'manifest.jsonl'}")
+
+
 def select(args) -> None:
     sets = {k: Path(v) for k, v in DEFAULT_SETS.items()}
     pool = []
@@ -98,6 +133,23 @@ def select(args) -> None:
 
 # ---------------------------------------------------------------- serving
 
+def _roll_of(path: Path, tempo: float) -> dict | None:
+    """Note list for one MIDI file, in the shape the UI's roll expects."""
+    from symusic import Score
+    try:
+        sc = Score(str(path))
+    except Exception:
+        return None
+    tpq = max(sc.ticks_per_quarter, 1)
+    spt = 60.0 / (tempo * tpq)
+    notes = [{"s": round(n.start * spt, 3),
+              "e": round((n.start + n.duration) * spt, 3),
+              "p": int(n.pitch), "v": int(n.velocity),
+              "d": bool(t.is_drum), "prompt": True}
+             for t in sc.tracks for n in t.notes]
+    return {"notes": notes, "prompt_end_s": 0.0} if notes else None
+
+
 def build_roll(pairs_dir: Path, pid: str, side: str, cache: Path) -> tuple[dict, str]:
     """(roll JSON, url path of the MIDI to play) for one side.
 
@@ -111,11 +163,23 @@ def build_roll(pairs_dir: Path, pid: str, side: str, cache: Path) -> tuple[dict,
     tl_path = pairs_dir / f"{pid}_{side}_timeline.mid"
     cont_path = pairs_dir / f"{pid}_{side}.mid"
     meta_path = pairs_dir / f"{pid}.json"
-    tempo = 120.0
+    tempo, mode = 120.0, "continue"
     if meta_path.exists():
-        tempo = float(json.loads(meta_path.read_text()).get("tempo_bpm") or 120.0)
+        meta = json.loads(meta_path.read_text())
+        tempo = float(meta.get("tempo_bpm") or 120.0)
+        mode = meta.get("mode", "continue")
 
-    if tl_path.exists():
+    if mode == "accompany":
+        # The side file is the condition already mixed with its accompaniment,
+        # so there is nothing to prepend and no instant where "the model takes
+        # over" — both parts sound from the first beat. prompt_ticks 0 leaves
+        # the roll unshaded and drops the handoff line.
+        tl = Score(str(cont_path))
+        tpq = max(tl.ticks_per_quarter, 1)
+        prompt_ticks = 0
+        url_name = f"{pid}_{side}.mid"
+        served_from = pairs_dir
+    elif tl_path.exists():
         tl = Score(str(tl_path))
         tpq = max(tl.ticks_per_quarter, 1)
         cont_end = max((n.start + n.duration
@@ -173,11 +237,13 @@ def build_app(args):
     labels_path = out_dir / "labels.jsonl"
     manifest = [json.loads(l) for l in (out_dir / "manifest.jsonl").read_text().splitlines() if l.strip()]
 
+    for i, m in enumerate(manifest):
+        m.setdefault("idx", i)
     already = set()
     if labels_path.exists():
-        already = {json.loads(l)["pair_id"]
+        already = {json.loads(l).get("idx", json.loads(l)["pair_id"])
                    for l in labels_path.read_text().splitlines() if l.strip()}
-    todo = [m for m in manifest if m["pair_id"] not in already]
+    todo = [m for m in manifest if m["idx"] not in already]
     random.Random(args.seed).shuffle(todo)
     print(f"[relabel] {len(todo)} pairs left of {len(manifest)}")
 
@@ -198,6 +264,14 @@ def build_app(args):
             rolls, urls = {}, {}
             for side in ("a", "b"):
                 rolls[side], urls[side] = build_roll(pairs_dir, pid, side, cache_dir)
+            mp = pairs_dir / f"{pid}.json"
+            mode = (json.loads(mp.read_text()).get("mode", "continue")
+                    if mp.exists() else "continue")
+            prompt_roll = None
+            if mode == "accompany":
+                # the condition on its own, so it can be seen as well as heard
+                prompt_roll = _roll_of(pairs_dir / f"{pid}_prompt.mid",
+                                       float(json.loads(mp.read_text()).get("tempo_bpm") or 120.0))
         except Exception as e:
             print(f"[relabel] skipping {pid}: {type(e).__name__}: {e}")
             todo.pop(0)
@@ -206,7 +280,7 @@ def build_app(args):
         # that always showed the same way round would measure memory, not taste
         left, right = ("a", "b") if random.random() < 0.5 else ("b", "a")
         pair = {
-            "pair_id": pid,
+            "pair_id": pid, "idx": m["idx"],
             "prompt_source": "repeat check",
             "prompt_name": "",
             "prompt_url": f"/midi/{m['set']}/pairs/{pid}_prompt.mid",
@@ -215,6 +289,7 @@ def build_app(args):
             "left_timeline_url": f"/midi/{m['set']}/{urls[left]}",
             "right_timeline_url": f"/midi/{m['set']}/{urls[right]}",
             "left_roll": rolls[left], "right_roll": rolls[right],
+            "mode": mode, "prompt_roll": prompt_roll,
             "left_is": left, "right_is": right,
             "left_model": "", "right_model": "",
         }
@@ -232,7 +307,7 @@ def build_app(args):
         pid = data.get("pair_id", "")
         rec = {
             "ts": utcnow(), "session_id": data.get("session_id", ""),
-            "pair_id": pid, "choice": choice,
+            "pair_id": pid, "idx": data.get("idx"), "choice": choice,
             "left_is": data.get("left_is", ""), "right_is": data.get("right_is", ""),
             "preferred": (data.get(f"{choice}_is", "")
                           if choice in ("left", "right") else choice),
@@ -250,12 +325,16 @@ def build_app(args):
             if labels_path.exists() else 0
         return jsonify({"total_labels": n, "queued": len(todo)})
 
+    # the sets this manifest actually references — a directory of generated
+    # pairs is not one of DEFAULT_SETS, and validating against that list is
+    # what made every MIDI request 403
+    set_dirs = {m["set"]: Path(m["pairs_dir"]).resolve() for m in manifest}
+
     @app.route("/midi/<set_name>/<kind>/<path:name>")
     def serve_midi(set_name, kind, name):
-        if set_name not in DEFAULT_SETS or kind not in ("pairs", "cache"):
+        if set_name not in set_dirs or kind not in ("pairs", "cache"):
             return "forbidden", 403
-        base = (cache_dir if kind == "cache"
-                else Path(DEFAULT_SETS[set_name]) / "pairs").resolve()
+        base = cache_dir.resolve() if kind == "cache" else set_dirs[set_name]
         full = (base / name).resolve()
         if base not in full.parents or full.suffix.lower() not in (".mid", ".midi"):
             return "forbidden", 403
@@ -346,6 +425,15 @@ def main() -> None:
     s.add_argument("--out", default="evals/ceiling")
     s.add_argument("--seed", type=int, default=0)
 
+    sd = sub.add_parser("select-dir",
+                        help="manifest for a directory of pre-generated pairs")
+    sd.add_argument("--pairs", required=True)
+    sd.add_argument("-n", type=int, default=80)
+    sd.add_argument("--dup", type=int, default=10, help="blind repeats to add")
+    sd.add_argument("--name", default="pairs")
+    sd.add_argument("--out", default="evals/labeling_accompany")
+    sd.add_argument("--seed", type=int, default=0)
+
     v = sub.add_parser("serve", help="serve them blind for re-voting")
     v.add_argument("--out", default="evals/ceiling")
     v.add_argument("--port", type=int, default=7789)
@@ -357,6 +445,8 @@ def main() -> None:
     a = p.parse_args()
     if a.cmd == "select":
         select(a)
+    elif a.cmd == "select-dir":
+        select_dir(a)
     elif a.cmd == "score":
         score(a)
     else:
