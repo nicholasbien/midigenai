@@ -49,7 +49,7 @@ on the next quarter note.
 |---|---|
 | Architecture | decoder-only transformer: RoPE, SwiGLU, RMSNorm, SDPA (FlashAttention-2), tied embeddings |
 | Parameters | 113M (`medium`; 25M `pilot` and 200M `production` configs in `model.py`) |
-| Vocabulary | 641 event tokens ([MidiTok MIDILike](https://github.com/Natooz/MidiTok)): NoteOn/Off, 32 velocity bins, TimeShift |
+| Vocabulary | 590 event tokens ([MidiTok REMI](https://github.com/Natooz/MidiTok)): Bar/Position/Duration, 32 velocity bins, plus an attribute header |
 | Context | 2048 tokens trained, longer at inference (RoPE extrapolates) |
 | Timing | beat-relative ticks; tempo stripped at training, re-applied at decode (tempo-invariant learning) |
 | Training data | Lakh + LAMD + MAESTRO + POP909 + GiantMIDI (~408k files after dedup, ~8B tokens) |
@@ -61,7 +61,8 @@ on the next quarter note.
 | `v2-pilot` | 25M | 0.97 | t=1.0, top_k=50 | [tree/main/v2-pilot](https://huggingface.co/nicholasbien/midigenai/tree/main/v2-pilot) |
 | `v2-production` | 25M | 0.93 | t=1.0, top_k=50 | [tree/main/v2-production](https://huggingface.co/nicholasbien/midigenai/tree/main/v2-production) |
 | `v2-100m` | 113M | 0.71 | t=1.2, top_k=50 | [tree/main/v2-100m](https://huggingface.co/nicholasbien/midigenai/tree/main/v2-100m) |
-| **`v3`** ← default | **113M** | **0.75 val** | **t=1.1, top_k=50** | [tree/main/v3](https://huggingface.co/nicholasbien/midigenai/tree/main/v3) |
+| `v3` | 113M | 0.75 val | t=1.1, top_k=50 | [tree/main/v3](https://huggingface.co/nicholasbien/midigenai/tree/main/v3) |
+| **`v4`** ← default | **113M** | **0.64 val** | **t=1.0, top_k=50** | [tree/main/v4](https://huggingface.co/nicholasbien/midigenai/tree/main/v4) |
 
 Select with `load_from_hub(version=...)` or `MIDIGENAI_VERSION`.
 

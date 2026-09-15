@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Optional
 
 DEFAULT_REPO = os.environ.get("MIDIGENAI_REPO_ID", "nicholasbien/midigenai")
-DEFAULT_VERSION = os.environ.get("MIDIGENAI_VERSION", "v3")
+DEFAULT_VERSION = os.environ.get("MIDIGENAI_VERSION", "v4")
 
 CKPT_FILENAME = "ckpt_final.pt"
 TOKENIZER_FILENAME = "tokenizer.json"

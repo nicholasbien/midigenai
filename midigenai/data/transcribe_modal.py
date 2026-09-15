@@ -29,8 +29,11 @@ app = modal.App("midigenai-transcribe")
 vol = modal.Volume.from_name(VOLUME, create_if_missing=True)
 
 image = (
-    modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg", "unzip", "curl")
+    # bookworm: the bullseye slim image's security pool has moved on and
+    # apt-get install 404s on ffmpeg
+    modal.Image.from_registry("python:3.11-slim-bookworm", add_python=None)
+    .run_commands("apt-get update && apt-get install -y --no-install-recommends "
+                  "ffmpeg unzip curl ca-certificates")
     .pip_install("torch==2.4.1", "torchaudio==2.4.1", "muscriptor", "symusic",
                  "pandas", "tqdm", "huggingface_hub>=0.30")
 )
@@ -72,9 +75,13 @@ def _select(root, genres: list[str] | None, limit: int) -> list[str]:
     if not (genres and meta.exists()):
         return [str(p) for p in audio[:limit]]
     df = pd.read_csv(meta, index_col=0, header=[0, 1], low_memory=False)
-    top = df[("track", "genre_top")].astype(str).str.lower()
+    top = df[("track", "genre_top")]
+    if hasattr(top, "columns"):          # duplicate column labels give a frame
+        top = top.iloc[:, 0]
     wanted = {g.strip().lower().replace("_", "-") for g in genres}
-    keep = {i for i, g in top.items() if any(w in g for w in wanted)}
+    # untagged tracks come through as NaN floats, not strings
+    keep = {i for i, g in top.items()
+            if isinstance(g, str) and any(w in g.lower() for w in wanted)}
     sel = [p for p in audio if int(p.stem) in keep]
     print(f"[fma] {len(sel)} of {len(audio)} files match {sorted(wanted)}")
     return [str(p) for p in sel[:limit]]
@@ -135,3 +142,131 @@ def main(limit: int = 1000, genres: str = "electronic,hip-hop",
 @app.function(image=image, volumes={"/data": vol}, timeout=3600)
 def fetch_and_select(root: str, genres: str, limit: int) -> list[str]:
     return _select(root, genres.split(",") if genres else None, limit)
+
+
+@app.function(image=image, volumes={"/data": vol}, timeout=1800)
+def genre_breakdown(top_n: int = 20) -> dict:
+    """What is actually in FMA, so the transcription budget can be aimed."""
+    import pandas as pd
+    from pathlib import Path
+    out = {}
+    for subset in ("fma_small",):
+        meta = Path("/data/fma/fma_metadata/tracks.csv")
+        df = pd.read_csv(meta, index_col=0, header=[0, 1], low_memory=False)
+        have = {int(p.stem) for p in Path("/data/fma", subset).rglob("*.mp3")}
+        col = df[("track", "genre_top")]
+        sub = col[col.index.isin(have)]
+        out[subset] = sub.value_counts().head(top_n).to_dict()
+        out[f"{subset}_total"] = len(have)
+    # the full catalogue, not just what we downloaded
+    col = df[("track", "genre_top")]
+    out["fma_all_tracks"] = col.value_counts().head(top_n).to_dict()
+    out["fma_all_total"] = int(col.notna().sum())
+    return out
+
+
+@app.function(image=image, gpu=os.environ.get("MIDIGENAI_BENCH_GPU", "L4"),
+              volumes={"/data": vol}, timeout=1800,
+              secrets=[modal.Secret.from_name("huggingface")])
+def bench(size: str = "large", batch_size: int = 6) -> dict:
+    """Transcription throughput on whatever GPU this function is pinned to."""
+    import time
+    from pathlib import Path
+    import torch
+    from muscriptor import TranscriptionModel
+    clip = sorted(Path("/data/fma/fma_small").rglob("*.mp3"))[0]
+    m = TranscriptionModel.load_model(size)
+    m.transcribe_to_midi(str(clip), batch_size=1)                 # warm
+    out = {}
+    for bs in (1, batch_size):
+        t0 = time.perf_counter()
+        for _ in range(3):
+            m.transcribe_to_midi(str(clip), batch_size=bs,
+                                 prelude_forcing=(bs == 1))
+        dt = (time.perf_counter() - t0) / 3
+        out[f"batch{bs}"] = {"seconds_per_30s_clip": round(dt, 1),
+                             "realtime_factor": round(30 / dt, 2)}
+    out["gpu"] = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu"
+    return out
+
+
+@app.local_entrypoint()
+def genres(top_n: int = 20):
+    """Print what is in FMA so the transcription budget can be aimed."""
+    d = genre_breakdown.remote(top_n)
+    print(f"\ndownloaded subset (fma_small): {d['fma_small_total']} clips")
+    for g, n in d["fma_small"].items():
+        print(f"  {g:22s} {n:6d}")
+    print(f"\nwhole FMA catalogue: {d['fma_all_total']:,} tracks with a top genre")
+    for g, n in d["fma_all_tracks"].items():
+        print(f"  {g:22s} {n:6d}")
+
+
+@app.function(image=image, gpu=GPU, volumes={"/data": vol}, timeout=3 * 3600,
+              secrets=[modal.Secret.from_name("huggingface")])
+def sample_genres(per_genre: int = 2, size: str = "large") -> list[dict]:
+    """One or two transcriptions per genre, so a human can pick what to fund."""
+    from pathlib import Path
+    import pandas as pd
+    from muscriptor import TranscriptionModel
+
+    meta = Path("/data/fma/fma_metadata/tracks.csv")
+    df = pd.read_csv(meta, index_col=0, header=[0, 1], low_memory=False)
+    col = df[("track", "genre_top")]
+    audio = {int(p.stem): p for p in Path("/data/fma/fma_small").rglob("*.mp3")}
+    by_genre: dict[str, list] = {}
+    for tid, g in col.items():
+        if isinstance(g, str) and tid in audio:
+            by_genre.setdefault(g, []).append(audio[tid])
+
+    out_dir = Path("/data/genre_samples")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    model = TranscriptionModel.load_model(size)
+    made = []
+    for g, files in sorted(by_genre.items()):
+        for p in files[:per_genre]:
+            stem = f"{g.replace('/', '-').replace(' ', '')}_{p.stem}"
+            mid = out_dir / f"{stem}.mid"
+            if not mid.exists():
+                try:
+                    mid.write_bytes(model.transcribe_to_midi(str(p)))
+                except Exception as e:
+                    print(f"{stem}: {type(e).__name__}"); continue
+            # keep the source audio next to it so the two can be compared
+            wav = out_dir / f"{stem}.mp3"
+            if not wav.exists():
+                wav.write_bytes(Path(p).read_bytes())
+            made.append({"genre": g, "stem": stem})
+        vol.commit()
+    vol.commit()
+    print(f"[samples] {len(made)} clips across {len(by_genre)} genres")
+    return made
+
+
+@app.local_entrypoint()
+def samples(per_genre: int = 2):
+    for m in sample_genres.remote(per_genre):
+        print(f"  {m['genre']:20s} {m['stem']}")
+
+
+@app.function(image=image, volumes={"/data": vol}, timeout=1800)
+def untagged() -> dict:
+    """How much of FMA carries no top-level genre."""
+    import pandas as pd
+    from pathlib import Path
+    df = pd.read_csv(Path("/data/fma/fma_metadata/tracks.csv"),
+                     index_col=0, header=[0, 1], low_memory=False)
+    top = df[("track", "genre_top")]
+    allg = df[("track", "genres_all")]
+    has_any = allg.astype(str).str.len() > 2        # "[]" when there are none
+    return {"tracks_total": int(len(df)),
+            "with_top_genre": int(top.notna().sum()),
+            "no_top_genre": int(top.isna().sum()),
+            "no_top_but_has_subgenres": int((top.isna() & has_any).sum()),
+            "no_genre_at_all": int((top.isna() & ~has_any).sum())}
+
+
+@app.local_entrypoint()
+def untagged_report():
+    for k, v in untagged.remote().items():
+        print(f"  {k:28s} {v:7,d}")

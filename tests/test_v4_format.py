@@ -406,3 +406,38 @@ def test_single_target_accompaniment(tok, sp):
     everything = DocBuilder(tok, accomp_windows=12, infill_windows=0, track_views=0,
                             window_bars=8, single_target_frac=0.0).build(path)
     assert everything["accompaniment"]
+
+
+def test_transcript_filter_keeps_loops_and_cuts_stuck_notes():
+    """Repetition is the genre in electronic music; a hammered pitch is not."""
+    from midigenai.data.transcript_filter import clean_score, window_is_degenerate
+
+    def build(fn):
+        s = Score(480)
+        s.time_signatures.append(TimeSignature(0, 4, 4))
+        t = Track(program=0)
+        fn(t)
+        s.tracks.append(t)
+        return s
+
+    def loop(t):                        # a real 2-bar loop, repeated: keep
+        for rep in range(12):
+            for i, p in enumerate((36, 42, 38, 42, 36, 36, 38, 42)):
+                t.notes.append(Note(rep * 1920 + i * 240, 100, p, 90))
+
+    def stuck(t):                       # one pitch at a fixed spacing: drop
+        for i in range(200):
+            t.notes.append(Note(i * 240, 100, 60, 90))
+
+    def breaks(t):                      # good for 20 s, then stuck
+        for rep in range(10):
+            for i, p in enumerate((36, 42, 38, 45, 36, 40, 38, 42)):
+                t.notes.append(Note(rep * 1920 + i * 240, 100, p, 90))
+        for i in range(120):
+            t.notes.append(Note(6 * 1920 + i * 240, 100, 60, 90))
+
+    assert clean_score(build(loop))[1] == "clean"
+    assert clean_score(build(stuck))[0] is None
+    out, verdict = clean_score(build(breaks))
+    assert out is not None and verdict.startswith("trimmed")
+    assert sum(len(t.notes) for t in out.tracks) < 200
