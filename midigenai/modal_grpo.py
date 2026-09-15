@@ -129,6 +129,27 @@ def grpo(
             "checkpoints": sorted(p.name for p in out_dir.glob("ckpt_*.pt"))}
 
 
+@app.function(image=image, volumes={MODELS_ROOT: models_volume}, timeout=600)
+def checkpoint_identity(version: str = "v4") -> dict:
+    """sha256 of the first 8 MB + byte size of the checkpoint on the volume.
+
+    A probe reward is only valid for the checkpoint whose activations it was
+    fitted on, and grpo refuses to run if they differ. The volume copy and the
+    local Hub copy are supposed to be the same file; this checks that before a
+    two-hour run finds out the hard way.
+    """
+    import hashlib
+    from pathlib import Path as P
+    f = P(MODELS_ROOT) / version / "ckpt_final.pt"
+    h = hashlib.sha256()
+    with open(f, "rb") as fh:
+        h.update(fh.read(8 << 20))
+    out = {"path": str(f), "sha256_8mb": h.hexdigest(), "bytes": f.stat().st_size}
+    print(f"[identity] {out['path']}\n[identity] sha256(first 8MB) "
+          f"{out['sha256_8mb']}\n[identity] {out['bytes']} bytes", flush=True)
+    return out
+
+
 @app.local_entrypoint()
 def main(
     run_name: str = "grpo_v4_001",

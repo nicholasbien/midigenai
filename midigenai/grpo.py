@@ -189,15 +189,52 @@ def train(cfg: GRPOConfig) -> None:
         json.dumps({k: str(v) for k, v in asdict(cfg).items()}, indent=2))
 
     tokenizer = load_tokenizer(cfg.tokenizer)
-    reward = Reward.load(cfg.reward)
-    print(f"[grpo] reward: {len(reward.features)} features, held-out "
-          f"{reward.heldout_accuracy:.2f} vs labeler {reward.self_consistency:.2f}")
+    spec = json.loads(cfg.reward.read_text())
 
     policy, model_cfg = load_policy(cfg.checkpoint, device)
     ref, _ = load_policy(cfg.checkpoint, device)
     ref.eval()
     for p in ref.parameters():
         p.requires_grad_(False)
+
+    if spec.get("kind") == "probe":
+        # Features come from the FROZEN reference, never the policy. The
+        # probe's weights were fitted on activations of this checkpoint, so
+        # reading them off a policy that RL is actively moving would let the
+        # policy raise its own reward by shifting its hidden states rather
+        # than by playing better music — the reward would drift along with
+        # the thing it is supposed to judge.
+        from midigenai.reward_probe import ProbeReward
+        # Identity is the file's content, not its path: the same checkpoint
+        # lives at a different path on a GPU box than on the machine that
+        # fitted the probe, and refusing on a path mismatch would refuse
+        # every remote run.
+        want_sha = spec.get("checkpoint_sha256_8mb")
+        want_bytes = spec.get("checkpoint_bytes")
+        if want_sha or want_bytes:
+            import hashlib
+            h = hashlib.sha256()
+            with open(cfg.checkpoint, "rb") as fh:
+                h.update(fh.read(8 << 20))
+            got_sha = h.hexdigest()
+            got_bytes = cfg.checkpoint.stat().st_size
+            if (want_sha and got_sha != want_sha) or (want_bytes and got_bytes != want_bytes):
+                raise SystemExit(
+                    f"probe was fitted on a different checkpoint than {cfg.checkpoint} "
+                    f"(sha {got_sha[:12]} vs {str(want_sha)[:12]}, "
+                    f"{got_bytes} vs {want_bytes} bytes): probe features are a "
+                    "property of the checkpoint that produced them")
+        else:
+            print(f"[grpo] WARNING: probe spec records no checkpoint hash "
+                  f"(fitted at {spec.get('checkpoint')}); cannot verify it "
+                  f"matches {cfg.checkpoint}", flush=True)
+        reward = ProbeReward(spec, ref, device)
+        print(f"[grpo] reward: probe on {spec['d_model']}-d hidden states of the "
+              f"frozen reference, held-out {spec['heldout_accuracy']:.3f}")
+    else:
+        reward = Reward.load(cfg.reward)
+        print(f"[grpo] reward: {len(reward.features)} features, held-out "
+              f"{reward.heldout_accuracy:.2f} vs labeler {reward.self_consistency:.2f}")
     opt = torch.optim.AdamW(policy.parameters(), lr=cfg.lr, betas=(0.9, 0.95),
                             weight_decay=0.0)
     print(f"[grpo] policy {policy.num_params()/1e6:.1f}M on {device}")

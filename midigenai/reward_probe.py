@@ -175,7 +175,15 @@ def fit(args) -> None:
     train_acc = float(((diffs @ w) > 0).mean())
     print(f"[probe] best l2={l2:g}: held-out {acc:.3f}, train {train_acc:.3f}")
 
+    import hashlib
+    h = hashlib.sha256()
+    with open(args.checkpoint, "rb") as fh:            # 8 MB is plenty to identify
+        h.update(fh.read(8 << 20))
     spec = {"kind": "probe", "checkpoint": str(Path(args.checkpoint).resolve()),
+            # the path is where it was fitted; the hash is what it was fitted
+            # ON, and only the hash survives being copied to a GPU box
+            "checkpoint_sha256_8mb": h.hexdigest(),
+            "checkpoint_bytes": Path(args.checkpoint).stat().st_size,
             "d_model": int(diffs.shape[1] - 1), "l2": l2,
             "weights": w.tolist(), "diff_std": std.tolist(),
             "heldout_accuracy": acc, "train_accuracy": train_acc,
