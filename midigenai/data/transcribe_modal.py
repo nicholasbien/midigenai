@@ -12,8 +12,14 @@ output non-commercial) and writes the result to a Modal volume.
 
 Free Music Archive is the source: `fma_small` is 8,000 thirty-second clips
 (7.2 GB) with genre labels, which is enough to answer "does transcribed data
-help at all" for a few dollars. Measured on an M3 Max the large model runs at
-0.68x realtime; an L4 is roughly 3x that, so ~$0.39 per hour of audio.
+help at all" for a few dollars. An L4 costs ~$0.39 per hour of audio.
+
+Running it locally instead is not practical for bulk. Re-measured on an M3
+Max (2026-09-15, large model, one 30 s clip after a warm-up pass): 145.8 s,
+i.e. 0.21x realtime. The weights do sit on MPS -- 392 parameters on mps:0 --
+so this is not a CPU fallback; it is the per-kernel launch overhead that
+autoregressive decoding pays on Metal, the same reason midigenai has its own
+MLX backend. At that rate fma_small alone is ~13 days of pinned machine.
 """
 
 from __future__ import annotations
@@ -87,7 +93,18 @@ def _select(root, genres: list[str] | None, limit: int) -> list[str]:
     return [str(p) for p in sel[:limit]]
 
 
+# The workspace GPU cap is shared with training AND serving. Transcription
+# is the only one of the three that nobody is waiting on, so it gets what is
+# left over, not what is available. Budget at a limit of 10: 1 training
+# (H100), up to 3 serving (midigenai-serve, one pool per version), 4 here,
+# 2 spare. Running this uncapped took every free slot and put the public
+# site into a site-wide 500 -- every request queued for a GPU past Railway's
+# ~120 s ceiling.
+MAX_CONTAINERS = int(os.environ.get("MIDIGENAI_TRANSCRIBE_CONTAINERS", "4"))
+
+
 @app.function(image=image, gpu=GPU, volumes={"/data": vol}, timeout=12 * 3600,
+              max_containers=MAX_CONTAINERS,
               secrets=[modal.Secret.from_name("huggingface")])
 def transcribe(paths: list[str], size: str = "large") -> dict:
     """Transcribe a shard of audio files; writes <stem>.mid onto the volume."""

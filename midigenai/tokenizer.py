@@ -83,11 +83,24 @@ def v4_config(res: int = 8) -> TokenizerConfig:
     )
 
 
+def _config_is_v4(config: TokenizerConfig) -> bool:
+    """A config names its own scheme: only v4 carries SEP/MASK specials."""
+    families = {s.split("_")[0] for s in (getattr(config, "special_tokens", None) or [])}
+    return {"SEP", "MASK"} <= families
+
+
 def build_tokenizer(config: TokenizerConfig | None = None,
                     scheme: str = "midilike"):
-    """`scheme`: "midilike" (v2/v3 checkpoints) or "v4" (REMI + header)."""
+    """`scheme`: "midilike" (v2/v3 checkpoints) or "v4" (REMI + header).
+
+    An explicit `config` decides the scheme by itself -- `v4_config()` is
+    only meaningful as REMI. Building MIDILike from it used to produce a
+    683-token v3-scheme vocabulary carrying v4's special tokens, which no
+    v4 checkpoint (590) can be loaded against and which nothing in the
+    error message would explain.
+    """
     if config is not None:
-        return MIDILike(config)
+        return REMI(config) if _config_is_v4(config) else MIDILike(config)
     if scheme == "v4":
         return REMI(v4_config())
     if scheme == "v4-24":

@@ -117,7 +117,15 @@ def list_versions() -> dict:
 @app.cls(
     image=image,
     gpu="L4",  # pinned: modern, low per-kernel latency; "any" can hand out T4s
-    scaledown_window=600,
+    # Per-version container pools (see `version` below) multiply GPU demand:
+    # three versions exercised at once each claimed their own L4 and then sat
+    # warm for the scaledown window. That filled the workspace GPU limit,
+    # which is shared with training, and every request queued behind it until
+    # Railway's ~120 s ceiling cut it off -- a site-wide 500 with no error
+    # from this code. Cap the pool so a burst queues on a warm container
+    # instead of claiming another GPU, and let idle versions go sooner.
+    max_containers=3,
+    scaledown_window=180,
     memory=32_768,
     cpu=4,
     timeout=180,
