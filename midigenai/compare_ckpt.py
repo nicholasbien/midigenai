@@ -87,8 +87,38 @@ def main() -> None:
     FEATS = {"density_hz": note_density_hz, "repetition": repetition_rate,
              "pitch_range": pitch_range, "scale_consistency": scale_consistency,
              "pitch_class_entropy": pitch_class_entropy}
+
+    # repetition_rate cannot tell a groove from a stuck loop — both score
+    # high — and the distinction decides whether a rise in it is the taste
+    # being learned or the reward being gamed: the rubric the reward was
+    # fitted from calls an exact loop a defect, while repetition_rate carries
+    # a positive weight. These separate the two.
+    bar_id = spec.sp.bar if spec.v4 else None
+
+    def loop_metrics(ids: list[int]) -> dict | None:
+        if bar_id is None:
+            return None
+        bars, cur = [], []
+        for t in ids:
+            if t == bar_id:
+                if cur:
+                    bars.append(tuple(cur))
+                cur = []
+            else:
+                cur.append(t)
+        if cur:
+            bars.append(tuple(cur))
+        if len(bars) < 3:
+            return None
+        adjacent = sum(1 for x, y in zip(bars, bars[1:]) if x == y) / (len(bars) - 1)
+        return {"adjacent_identical_bars": adjacent,
+                "distinct_bar_frac": len(set(bars)) / len(bars),
+                "n_bars": float(len(bars))}
+
+    LOOPS = ("adjacent_identical_bars", "distinct_bar_frac", "n_bars")
     res = {k: {"metric": [], "probe": [], "n_tokens": [], "empty": 0,
-               **{f: [] for f in FEATS}} for k in ("A", "B")}
+               **{f: [] for f in FEATS}, **{f: [] for f in LOOPS}}
+           for k in ("A", "B")}
 
     for i, pids in enumerate(prompts, 1):
         for name, model in models.items():
@@ -106,6 +136,10 @@ def main() -> None:
                     v = probe.score(tokenizer, smp, prompt_ids=pids)
                     if v is not None:
                         r["probe"].append(v)
+                lm = loop_metrics(smp)
+                if lm:
+                    for f, v in lm.items():
+                        r[f].append(v)
                 try:
                     sc = tokenizer.decode(list(smp))
                     for f, fn in FEATS.items():
@@ -116,18 +150,22 @@ def main() -> None:
             print(f"[compare] {i}/{len(prompts)} prompts", flush=True)
 
     print(f"\n{'':22s} {'A (baseline)':>18s} {'B (trained)':>18s}   delta")
-    rows = ["probe", "metric", "n_tokens", *FEATS]
+    rows = ["probe", "metric", "n_tokens", *FEATS, *LOOPS]
     for k in rows:
         va, vb = res["A"][k], res["B"][k]
         d = (st.mean(vb) - st.mean(va)) if va and vb else float("nan")
-        tag = "  <- optimised" if k == "probe" else ("  <- independent" if k == "metric" else "")
+        tag = ("  <- optimised" if k == "probe" else
+               "  <- independent" if k == "metric" else
+               "  <- groove or stuck?" if k == "adjacent_identical_bars" else "")
         print(f"{k:22s} {_stats(va)} {_stats(vb)}  {d:+8.3f}{tag}")
     print(f"{'degenerate samples':22s} {res['A']['empty']:18d} {res['B']['empty']:18d}")
 
     print("\nread it like this: probe up is expected and proves nothing. metric up "
           "(or flat) means\nthe gain survives a reward the policy never saw. density "
-          "or range collapsing means\nthe policy found that playing less scores well — "
-          "that is the hack, not the goal.")
+          "or range collapsing means\nthe policy found that playing less scores well. "
+          "and if repetition rose, adjacent_identical_bars\nsays which kind: near zero "
+          "is a groove, rising is a loop — a defect by the rubric the\nreward was "
+          "fitted from, even though repetition_rate is weighted positively.")
     if a.out:
         a.out.write_text(json.dumps(
             {k: {kk: (vv if isinstance(vv, int) else
