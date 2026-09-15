@@ -39,7 +39,7 @@ import torch.nn.functional as F
 
 from midigenai.model import ModelConfig, MusicTransformer
 from midigenai.reward import Reward
-from midigenai.tokenizer import load_tokenizer, normalize_drums
+from midigenai.tokenizer import is_v4, load_tokenizer, normalize_drums
 
 
 @dataclass
@@ -75,6 +75,61 @@ def _device(name: str) -> torch.device:
     return torch.device("cpu")
 
 
+class PromptSpec:
+    """Prompts and sampling rules for the checkpoint being optimised.
+
+    A v4 checkpoint is never prompted with bare note tokens: production and
+    the pair generator both prepend an attribute header describing the music
+    (instruments, density, polyphony, range), and both ban SEP / MASK / BOS,
+    which are structural tokens and never valid continuation output. GRPO
+    that skips this optimises the policy on prompts shaped like nothing it
+    will ever see — including the pairs its own reward model was fit on.
+
+    This mirrors `Generator.make_header` without loading a second copy of the
+    model: the header only needs the tokenizer and the special-token table.
+    """
+
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.v4 = is_v4(tokenizer)
+        self.sp = None
+        vocab = tokenizer.vocab
+        self.eos_id = vocab.get("EOS_None")
+        self.ban_ids: list[int] = []
+        if self.v4:
+            from midigenai.sequence_format import Specials
+            self.sp = Specials.from_tokenizer(tokenizer)
+            self.ban_ids = [i for i in (self.sp.sep, self.sp.mask, self.sp.bos)
+                            if i is not None]
+
+    def header_for(self, path: Path) -> list[int]:
+        if not self.v4:
+            return []
+        from symusic import Score
+        from midigenai.attributes import HEADER_PREFIXES, header_for_score
+        names = header_for_score(Score(str(path)))
+        rank = {pre: i for i, pre in enumerate(HEADER_PREFIXES)}
+        names.sort(key=lambda n: rank[next(pre for pre in HEADER_PREFIXES
+                                           if n.startswith(pre))])
+        return self.sp.header_ids_for(self.tokenizer, names)
+
+    def prompt_ids(self, path: Path, max_tokens: int) -> list[int] | None:
+        """Header + a prompt slice. The header is never truncated away: it is
+        the conditioning, not content."""
+        from symusic import Score
+        try:
+            sc = Score(str(path))
+        except Exception:
+            return None
+        normalize_drums(sc, path.name)
+        ids = self.tokenizer(sc).ids
+        if len(ids) < 32:
+            return None
+        head = self.header_for(path)
+        room = max(16, max_tokens - len(head))
+        return [*head, *ids[:room]]
+
+
 def load_policy(path: Path, device: torch.device) -> tuple[MusicTransformer, ModelConfig]:
     ckpt = torch.load(path, map_location="cpu", weights_only=False)
     cfg = ModelConfig(**ckpt["model_config"])
@@ -93,14 +148,31 @@ def token_logprobs(model: MusicTransformer, seq: torch.Tensor,
     return picked[:, n_prompt - 1:]          # only the sampled tokens
 
 
-def sample_group(model, prompt_ids, cfg: GRPOConfig, device) -> list[list[int]]:
+def sample_group(model, prompt_ids, cfg: GRPOConfig, device,
+                 spec: "PromptSpec | None" = None) -> list[list[int]]:
+    """`group_size` continuations of one prompt.
+
+    `eos_id` and `ban_ids` are not optional decoration: without eos_id the
+    stop branch in model.generate is dead code, every sample runs the full
+    max_new_tokens, and a sampled EOS is followed by whatever the model emits
+    afterwards — which the reward then scores as if it were music.
+    """
     model.eval()
-    out = []
+    eos_id = spec.eos_id if spec else None
+    ban_ids = (spec.ban_ids if spec else None) or None
+    x = torch.tensor([prompt_ids], dtype=torch.long, device=device)
+    kw = dict(max_new_tokens=cfg.max_new_tokens, temperature=cfg.temperature,
+              top_k=cfg.top_k, eos_id=eos_id, ban_ids=ban_ids)
     with torch.no_grad():
+        if hasattr(model, "generate_batch"):
+            # the whole group decodes in one pass; generate_batch already
+            # drops the EOS it stopped on
+            return model.generate_batch(x, cfg.group_size, **kw)
+        out = []
         for _ in range(cfg.group_size):
-            x = torch.tensor([prompt_ids], dtype=torch.long, device=device)
-            new = list(model.generate(x, max_new_tokens=cfg.max_new_tokens,
-                                      temperature=cfg.temperature, top_k=cfg.top_k))
+            new = list(model.generate(x, **kw))
+            if eos_id is not None and new and new[-1] == eos_id:
+                new = new[:-1]          # a terminator, not content to score
             out.append(new)
     return out
 
@@ -127,23 +199,15 @@ def train(cfg: GRPOConfig) -> None:
                             weight_decay=0.0)
     print(f"[grpo] policy {policy.num_params()/1e6:.1f}M on {device}")
 
-    from symusic import Score
     files = sorted(cfg.prompts.glob("*.mid"))
     if not files:
         raise SystemExit(f"no prompts in {cfg.prompts}")
+    spec = PromptSpec(tokenizer)
+    print(f"[grpo] prompts: v4={spec.v4}, header={'yes' if spec.v4 else 'n/a'}, "
+          f"eos_id={spec.eos_id}, banned={spec.ban_ids or 'none'}")
 
     def prompt_of(f: Path) -> list[int] | None:
-        try:
-            sc = Score(str(f))
-        except Exception:
-            return None
-        normalize_drums(sc, f.name)
-        ids = tokenizer(sc).ids
-        if len(ids) < 32:
-            return None
-        if len(ids) > cfg.prompt_tokens:
-            ids = ids[:cfg.prompt_tokens]
-        return ids
+        return spec.prompt_ids(f, cfg.prompt_tokens)
 
     metrics_path = cfg.out_dir / "metrics.csv"
     if not metrics_path.exists():
@@ -164,7 +228,7 @@ def train(cfg: GRPOConfig) -> None:
                     break
             if not prompt_ids:
                 continue
-            samples = sample_group(policy, prompt_ids, cfg, device)
+            samples = sample_group(policy, prompt_ids, cfg, device, spec)
             scored = [(s, reward.score(tokenizer, s, prompt_ids=prompt_ids))
                       for s in samples]
             scored = [(s, r) for s, r in scored if r is not None and len(s) > 1]
