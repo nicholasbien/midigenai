@@ -42,3 +42,18 @@ evals/samples*/
 
 # corpus quality labeling: excerpt MIDIs are rebuilt from path+window on demand
 evals/quality/excerpts/
+
+# secrets
+.env
+.env.*
+
+# ceiling re-labeling: timelines are rebuilt from the pair MIDI on demand
+evals/ceiling/timeline_cache/
+
+# local corpora and scratch outputs: multi-GB, rebuilt from ~/midigenai_data
+lmd_full_txt/
+ableton_live_txt/
+generated/
+tests/tmp/
+midigenai.egg-info/
+.claude/

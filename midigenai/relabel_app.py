@@ -1,0 +1,367 @@
+"""Blind re-labeling of already-voted pairs: the self-consistency ceiling.
+
+Every judge number in `evals/reward/` is scored against a labeler whose own
+repeat-agreement is essentially unmeasured — there are 4 repeated pairs in
+the entire preference corpus. Without that ceiling an agreement of 0.74 is
+uninterpretable: it is either a judge at the limit of the signal or a judge
+with 15 points of headroom.
+
+`label_app --dup-rate` only re-serves pairs voted *within the same live
+session*, so it cannot measure the ceiling on the historical pairs the judge
+is actually scored on. This serves those pairs from disk instead: blind (the
+UI is never told it is a repeat), with the sides re-randomised independently
+of how they were shown the first time, and with the vote written to a
+separate file so the original labels are never touched.
+
+    python -m midigenai.relabel_app select -n 60 --out evals/ceiling
+    python -m midigenai.relabel_app serve  --out evals/ceiling
+    python -m midigenai.relabel_app score  --out evals/ceiling
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import random
+from datetime import datetime, timezone
+from pathlib import Path
+
+# the four label sets and where their pair MIDI actually lives (the pairs/
+# dirs are gitignored, so most of them are only in the v4 worktree)
+DEFAULT_SETS = {
+    "v1": "/Users/nicholasbien/midigenai/evals/labeling",
+    "v3_same": "/Users/nicholasbien/midigenai-v4/evals/labeling_v3_same",
+    "v4": "/Users/nicholasbien/midigenai-v4/evals/labeling_v4",
+    "v4_final": "/Users/nicholasbien/midigenai-v4/evals/labeling_v4_final",
+}
+PROMPT_TAIL_BEATS = 8.0  # label_app's default; only used when no timeline exists
+
+
+def utcnow() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def decided(set_dir: Path) -> dict[str, str]:
+    """pair_id -> the side ("a"/"b") the labeler picked, last vote wins."""
+    out: dict[str, str] = {}
+    labels = set_dir / "labels.jsonl"
+    if not labels.exists():
+        return out
+    for line in labels.read_text().splitlines():
+        if not line.strip():
+            continue
+        r = json.loads(line)
+        if r.get("preferred") in ("a", "b"):
+            out[r["pair_id"]] = r["preferred"]
+    return out
+
+
+def playable(pairs_dir: Path, pid: str) -> bool:
+    return all((pairs_dir / f"{pid}_{s}.mid").exists() for s in ("prompt", "a", "b"))
+
+
+def select(args) -> None:
+    sets = {k: Path(v) for k, v in DEFAULT_SETS.items()}
+    pool = []
+    for name, d in sets.items():
+        pairs_dir = d / "pairs"
+        got = [(name, str(pairs_dir), pid, win)
+               for pid, win in decided(d).items() if playable(pairs_dir, pid)]
+        print(f"[select] {name}: {len(got)} decided pairs with playable MIDI")
+        pool.append(got)
+
+    # stratified in proportion to each set's size, so the ceiling is measured
+    # on the same mix of models the judge is scored on
+    total = sum(len(g) for g in pool)
+    rng = random.Random(args.seed)
+    picked = []
+    for got in pool:
+        if not got:
+            continue
+        k = max(1, round(args.n * len(got) / total))
+        picked += rng.sample(got, min(k, len(got)))
+    rng.shuffle(picked)
+    picked = picked[:args.n]
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    manifest = out_dir / "manifest.jsonl"
+    with manifest.open("w") as f:
+        for name, pairs_dir, pid, win in picked:
+            f.write(json.dumps({"set": name, "pairs_dir": pairs_dir,
+                                "pair_id": pid, "original": win}) + "\n")
+    by_set: dict[str, int] = {}
+    for name, *_ in picked:
+        by_set[name] = by_set.get(name, 0) + 1
+    print(f"[select] wrote {len(picked)} pairs to {manifest}: {by_set}")
+
+
+# ---------------------------------------------------------------- serving
+
+def build_roll(pairs_dir: Path, pid: str, side: str, cache: Path) -> tuple[dict, str]:
+    """(roll JSON, url path of the MIDI to play) for one side.
+
+    Prefers the `_timeline.mid` written at generation time (prompt tail +
+    continuation). The older label sets have no timeline files, so there the
+    timeline is rebuilt from the prompt's last few beats plus the
+    continuation — the same construction label_app used.
+    """
+    from symusic import Score, Tempo
+
+    tl_path = pairs_dir / f"{pid}_{side}_timeline.mid"
+    cont_path = pairs_dir / f"{pid}_{side}.mid"
+    meta_path = pairs_dir / f"{pid}.json"
+    tempo = 120.0
+    if meta_path.exists():
+        tempo = float(json.loads(meta_path.read_text()).get("tempo_bpm") or 120.0)
+
+    if tl_path.exists():
+        tl = Score(str(tl_path))
+        tpq = max(tl.ticks_per_quarter, 1)
+        cont_end = max((n.start + n.duration
+                        for t in Score(str(cont_path)).tracks for n in t.notes),
+                       default=0)
+        tl_end = max((n.start + n.duration for t in tl.tracks for n in t.notes),
+                     default=0)
+        prompt_ticks = max(0, tl_end - cont_end)
+        url_name = f"{pid}_{side}_timeline.mid"
+        served_from = pairs_dir
+    else:
+        prompt = Score(str(pairs_dir / f"{pid}_prompt.mid"))
+        cont = Score(str(cont_path))
+        tpq = max(prompt.ticks_per_quarter, 1)
+        p_end = max((n.start + n.duration for t in prompt.tracks for n in t.notes),
+                    default=0)
+        tail0 = max(0, p_end - int(PROMPT_TAIL_BEATS * tpq))
+        prompt_ticks = p_end - tail0
+        tl = prompt.copy()
+        cont_by_prog = {(t.program, t.is_drum): t for t in cont.tracks}
+        for t in tl.tracks:
+            kept = [n for n in t.notes if n.start >= tail0]
+            for n in kept:
+                n.start -= tail0
+            ct = cont_by_prog.get((t.program, t.is_drum))
+            if ct is not None:
+                for n in ct.notes:
+                    m = n.copy()
+                    m.start = n.start + prompt_ticks
+                    kept.append(m)
+            t.notes = kept
+        cache.mkdir(parents=True, exist_ok=True)
+        url_name = f"{pid}_{side}_rebuilt.mid"
+        tl.tempos = [Tempo(time=0, qpm=tempo)]
+        tl.dump_midi(str(cache / url_name))
+        served_from = cache
+
+    spt = 60.0 / (tempo * tpq)
+    notes = []
+    for t in tl.tracks:
+        for n in t.notes:
+            notes.append({"s": round(n.start * spt, 3),
+                          "e": round((n.start + n.duration) * spt, 3),
+                          "p": int(n.pitch), "v": int(n.velocity),
+                          "d": bool(t.is_drum), "prompt": n.start < prompt_ticks})
+    roll = {"notes": notes, "prompt_end_s": round(prompt_ticks * spt, 3)}
+    return roll, f"{'pairs' if served_from is pairs_dir else 'cache'}/{url_name}"
+
+
+def build_app(args):
+    from flask import Flask, jsonify, request, send_from_directory
+
+    out_dir = Path(args.out).resolve()
+    cache_dir = out_dir / "timeline_cache"
+    labels_path = out_dir / "labels.jsonl"
+    manifest = [json.loads(l) for l in (out_dir / "manifest.jsonl").read_text().splitlines() if l.strip()]
+
+    already = set()
+    if labels_path.exists():
+        already = {json.loads(l)["pair_id"]
+                   for l in labels_path.read_text().splitlines() if l.strip()}
+    todo = [m for m in manifest if m["pair_id"] not in already]
+    random.Random(args.seed).shuffle(todo)
+    print(f"[relabel] {len(todo)} pairs left of {len(manifest)}")
+
+    app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
+
+    @app.route("/")
+    def index():
+        return send_from_directory(app.template_folder, "label.html")
+
+    @app.route("/api/next")
+    def next_pair():
+        if not todo:
+            return jsonify({"status": "done"}), 200
+        m = todo[0]
+        pairs_dir = Path(m["pairs_dir"])
+        pid = m["pair_id"]
+        try:
+            rolls, urls = {}, {}
+            for side in ("a", "b"):
+                rolls[side], urls[side] = build_roll(pairs_dir, pid, side, cache_dir)
+        except Exception as e:
+            print(f"[relabel] skipping {pid}: {type(e).__name__}: {e}")
+            todo.pop(0)
+            return jsonify({"status": "generating"}), 202
+        # sides re-randomised independently of the original session: a repeat
+        # that always showed the same way round would measure memory, not taste
+        left, right = ("a", "b") if random.random() < 0.5 else ("b", "a")
+        pair = {
+            "pair_id": pid,
+            "prompt_source": "repeat check",
+            "prompt_name": "",
+            "prompt_url": f"/midi/{m['set']}/pairs/{pid}_prompt.mid",
+            "left_url": f"/midi/{m['set']}/{urls[left]}",
+            "right_url": f"/midi/{m['set']}/{urls[right]}",
+            "left_timeline_url": f"/midi/{m['set']}/{urls[left]}",
+            "right_timeline_url": f"/midi/{m['set']}/{urls[right]}",
+            "left_roll": rolls[left], "right_roll": rolls[right],
+            "left_is": left, "right_is": right,
+            "left_model": "", "right_model": "",
+        }
+        return jsonify({"status": "ok", "pair": pair, "queued": len(todo) - 1})
+
+    @app.route("/api/vote", methods=["POST"])
+    def vote():
+        data = request.get_json(force=True)
+        choice = data.get("choice")
+        # the shared template can also post "drums_as_piano": a defect report
+        # about the pair, not a preference, so it is recorded as a non-vote
+        if choice not in ("left", "right", "tie", "bad", "skip", "bad_prompt",
+                          "drums_as_piano"):
+            return jsonify({"error": f"bad choice {choice!r}"}), 400
+        pid = data.get("pair_id", "")
+        rec = {
+            "ts": utcnow(), "session_id": data.get("session_id", ""),
+            "pair_id": pid, "choice": choice,
+            "left_is": data.get("left_is", ""), "right_is": data.get("right_is", ""),
+            "preferred": (data.get(f"{choice}_is", "")
+                          if choice in ("left", "right") else choice),
+            "replay": True,
+        }
+        with labels_path.open("a") as f:
+            f.write(json.dumps(rec) + "\n")
+        if todo and todo[0]["pair_id"] == pid:
+            todo.pop(0)
+        return jsonify({"ok": True})
+
+    @app.route("/api/stats")
+    def stats():
+        n = sum(1 for l in labels_path.read_text().splitlines() if l.strip()) \
+            if labels_path.exists() else 0
+        return jsonify({"total_labels": n, "queued": len(todo)})
+
+    @app.route("/midi/<set_name>/<kind>/<path:name>")
+    def serve_midi(set_name, kind, name):
+        if set_name not in DEFAULT_SETS or kind not in ("pairs", "cache"):
+            return "forbidden", 403
+        base = (cache_dir if kind == "cache"
+                else Path(DEFAULT_SETS[set_name]) / "pairs").resolve()
+        full = (base / name).resolve()
+        if base not in full.parents or full.suffix.lower() not in (".mid", ".midi"):
+            return "forbidden", 403
+        return send_from_directory(base, name)
+
+    return app
+
+
+# ---------------------------------------------------------------- scoring
+
+def score(args) -> None:
+    out_dir = Path(args.out)
+    manifest = {m["pair_id"]: m for m in
+                (json.loads(l) for l in (out_dir / "manifest.jsonl").read_text().splitlines() if l.strip())}
+    labels_path = out_dir / "labels.jsonl"
+    if not labels_path.exists():
+        raise SystemExit(f"no votes yet at {labels_path}")
+
+    repeats = {}
+    for line in labels_path.read_text().splitlines():
+        if line.strip():
+            r = json.loads(line)
+            repeats[r["pair_id"]] = r  # last vote wins
+
+    both, agree = [], 0
+    by_choice: dict[str, int] = {}
+    unusable = []  # both sides bad: the pair itself is not rankable
+    for pid, r in repeats.items():
+        m = manifest.get(pid)
+        if not m:
+            continue
+        if r.get("preferred") not in ("a", "b"):
+            choice = r.get("choice", "skip")
+            by_choice[choice] = by_choice.get(choice, 0) + 1
+            if choice == "bad":
+                unusable.append(pid)
+            continue
+        both.append(pid)
+        agree += r["preferred"] == m["original"]
+    # "both bad" is a verdict on the pair, not an abstention by the labeler:
+    # neither rater should be scored on a pair with no good answer, so those
+    # leave the denominator entirely rather than counting against anyone.
+    abstained = sum(n for c, n in by_choice.items() if c != "bad")
+
+    n = len(both)
+    if not n:
+        raise SystemExit("no pairs decided in both passes yet")
+    p = agree / n
+    se = (p * (1 - p) / n) ** 0.5
+    n_seen = n + abstained
+    skip_rate = abstained / n_seen if n_seen else 0.0
+
+    print(f"[ceiling] {n} pairs decided in both passes, {abstained} skipped on "
+          f"the repeat ({skip_rate:.0%}), {len(unusable)} both-bad (excluded)")
+    if by_choice:
+        print(f"[ceiling] repeat non-votes by kind: {by_choice}")
+    print(f"[ceiling] self-consistency: {p:.3f}  \u00b1{1.96 * se:.3f} (95% CI)")
+    print(f"[ceiling] this is the number to read against the judge: both are "
+          f"scored on what they were willing to decide")
+    # A skip on the repeat is a pair that was called once and could not be
+    # called again — evidence it is a coin flip, not evidence of a wrong
+    # answer. Counting them as disagreements is a floor, not the ceiling: it
+    # holds the labeler to a stricter rule than the judge, whose ties are
+    # likewise dropped rather than scored wrong.
+    print(f"[ceiling] pessimistic floor (skips counted as disagreement): "
+          f"{agree / n_seen:.3f} on {n_seen}")
+    print(f"[ceiling] abstention: labeler {skip_rate:.0%} vs judge 15% ties — "
+          f"if these track, the two raters find the same pairs too close")
+    result = {"n": n, "self_consistency": p, "se": se, "n_abstained": abstained,
+              "skip_rate": skip_rate, "floor_skips_as_disagreement": agree / n_seen,
+              "non_votes_by_kind": by_choice, "unusable_pairs": unusable,
+              "pairs": both}
+    if unusable:
+        (out_dir / "unusable_pairs.txt").write_text("\n".join(unusable) + "\n")
+        print(f"[ceiling] wrote {len(unusable)} both-bad pair ids to "
+              f"{out_dir / 'unusable_pairs.txt'} — drop these from judge scoring too")
+    (out_dir / "ceiling.json").write_text(json.dumps(result, indent=1))
+    print(f"[ceiling] wrote {out_dir / 'ceiling.json'}")
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    s = sub.add_parser("select", help="choose which already-voted pairs to redo")
+    s.add_argument("-n", type=int, default=60)
+    s.add_argument("--out", default="evals/ceiling")
+    s.add_argument("--seed", type=int, default=0)
+
+    v = sub.add_parser("serve", help="serve them blind for re-voting")
+    v.add_argument("--out", default="evals/ceiling")
+    v.add_argument("--port", type=int, default=7789)
+    v.add_argument("--seed", type=int, default=1)
+
+    c = sub.add_parser("score", help="agreement between the two passes")
+    c.add_argument("--out", default="evals/ceiling")
+
+    a = p.parse_args()
+    if a.cmd == "select":
+        select(a)
+    elif a.cmd == "score":
+        score(a)
+    else:
+        build_app(a).run(port=a.port, debug=False)
+
+
+if __name__ == "__main__":
+    main()
