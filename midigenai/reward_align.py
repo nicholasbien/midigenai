@@ -207,10 +207,17 @@ def build_diffs(pairs) -> tuple[np.ndarray, list[str], list[str]]:
 
 
 def fit_bt(diffs: np.ndarray, l2: float = 1.0, iters: int = 2000,
-           lr: float = 0.1) -> np.ndarray:
-    """Bradley–Terry MLE by gradient descent; every row is a win (y=1)."""
+           lr: float = 0.1, w0: np.ndarray | None = None) -> np.ndarray:
+    """Bradley–Terry MLE by gradient descent; every row is a win (y=1).
+
+    `w0` warm-starts the descent. The objective is convex, so this reaches
+    the same optimum — it just gets there sooner, which matters for
+    leave-one-group-out over a wide feature space: the probe's 769 features
+    across ~400 prompt groups is ~77x the work per iteration of the
+    10-feature metric fit.
+    """
     n, d = diffs.shape
-    w = np.zeros(d)
+    w = np.zeros(d) if w0 is None else np.array(w0, dtype=np.float64)
     for _ in range(iters):
         p = 1.0 / (1.0 + np.exp(-diffs @ w))
         grad = diffs.T @ (1.0 - p) / n - l2 * w / n

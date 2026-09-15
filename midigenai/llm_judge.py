@@ -334,8 +334,14 @@ def label(args) -> None:
         else:
             won_first = res["verdict"] == "1"
             preferred = ("a" if won_first else "b") if a_first else ("b" if won_first else "a")
+        # label_app's schema, which every downstream loader expects: `choice`
+        # is the SIDE that won ("left"/"right") and `preferred` resolves it to
+        # canonical a/b. reward_probe filters on choice, so writing "a"/"b"
+        # there made it skip every row.
+        choice = ("tie" if preferred == "tie"
+                  else "left" if preferred == "a" else "right")
         return {"ts": utcnow(), "pair_id": pid, "preferred": preferred,
-                "choice": preferred, "left_is": "a", "right_is": "b",
+                "choice": choice, "left_is": "a", "right_is": "b",
                 "judge_model": args.model, "judge_prompt": args.system_file or args.prompt,
                 "swap_consistent": res["consistent"], "a_shown_first": a_first,
                 "reason": res["reason"]}
