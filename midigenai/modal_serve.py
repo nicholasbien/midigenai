@@ -165,7 +165,13 @@ class MidiGen:
         top_k: int,
     ) -> list[list[int]]:
         """Decode n_samples continuations in one batch on the GPU — a second
-        sample rides along nearly free vs. two sequential generations."""
+        sample rides along nearly free vs. two sequential generations.
+
+        Sampling is hand-rolled here (Generator.generate_ids decodes one
+        sequence at a time), so the v4 handling it would have applied is
+        applied explicitly: `default_ban_ids` masks SEP / MASK / BOS out of
+        the logits, and `postprocess` trims the leading empty bars that
+        would otherwise reach the player as silence."""
         import torch
         gen = self.gen
         # Long uploads: cut the prompt so prompt + continuation fits the
@@ -173,6 +179,7 @@ class MidiGen:
         prompt_ids, max_new_tokens = gen.fit_to_context(prompt_ids, max_new_tokens)
         if gen.bos_id is not None and (not prompt_ids or prompt_ids[0] != gen.bos_id):
             prompt_ids = [gen.bos_id, *prompt_ids]
+        ban_ids = gen.default_ban_ids()
         model = gen.model
         ids = torch.tensor([prompt_ids] * n_samples, dtype=torch.long, device=gen.device)
         outs: list[list[int]] = [[] for _ in range(n_samples)]
@@ -181,6 +188,8 @@ class MidiGen:
             logits, caches = model(ids)
             for _ in range(max_new_tokens):
                 logits = logits[:, -1, :].float() / max(temperature, 1e-6)
+                if ban_ids:
+                    logits[:, ban_ids] = -float("inf")
                 if top_k is not None and top_k < logits.size(-1):
                     v, _ = torch.topk(logits, top_k)
                     logits[logits < v[:, [-1]]] = -float("inf")
@@ -188,14 +197,16 @@ class MidiGen:
                 next_ids = torch.multinomial(probs, num_samples=1)  # (B, 1)
                 for b, tid in enumerate(next_ids[:, 0].tolist()):
                     if not done[b]:
-                        if gen.eos_id is not None and tid == gen.eos_id:
+                        # stop_ids (EOS, and SEP/MASK/BOS on v4) end a sample;
+                        # postprocess drops them, so stopping here only saves work
+                        if tid in gen.stop_ids:
                             done[b] = True
                         else:
                             outs[b].append(tid)
                 if all(done):
                     break
                 logits, caches = model(next_ids, kv_caches=caches)
-        return outs
+        return [list(gen.postprocess(prompt_ids, out)) for out in outs]
 
     def _to_midi_bytes(self, full_ids: list[int], tempo_bpm: float) -> bytes:
         score = self.gen.tokenizer.decode(full_ids)
