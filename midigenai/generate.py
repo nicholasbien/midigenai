@@ -13,7 +13,7 @@ from __future__ import annotations
 import io
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 import torch
 
@@ -354,18 +354,52 @@ class Generator:
         follows is fine, so the fix is to start it at the downbeat we gave
         the model instead of several bars later.
         """
-        if ban_ids is None and self.v4:
-            ban_ids = sorted(t for t in (self.sp.sep, self.sp.mask, self.bos_id) if t is not None)
+        if ban_ids is None:
+            ban_ids = self.default_ban_ids()
         prompt_ids, max_new_tokens = self.fit_to_context(prompt_ids, max_new_tokens)
         if self._needs_bos(prompt_ids):
             prompt_ids = [self.bos_id, *prompt_ids]
         raw = self._generate_raw(prompt_ids, max_new_tokens, temperature, top_k,
                                  min_new_tokens, seed, ban_ids)
+        yield from self.postprocess(
+            prompt_ids, raw,
+            stop_after_bars=stop_after_bars,
+            trim_leading_bars=trim_leading_bars,
+        )
+
+    def default_ban_ids(self) -> list[int] | None:
+        """Ids never valid as continuation output (v4): SEP / MASK / BOS.
+        None for a pre-v4 checkpoint, which has no such tokens."""
+        if not self.v4:
+            return None
+        return sorted(t for t in (self.sp.sep, self.sp.mask, self.bos_id) if t is not None)
+
+    def postprocess(
+        self,
+        prompt_ids: list[int],
+        raw: Iterable[int],
+        stop_after_bars: int | None = None,
+        trim_leading_bars: bool = True,
+    ) -> Iterator[int]:
+        """Turn raw sampled ids into the continuation we hand a caller: stop
+        at EOS / SEP / MASK / BOS, drop leading empty bars, and honor
+        `stop_after_bars`. See `generate_ids` for what each one is for.
+
+        Split out of `generate_ids` so every decoder shares it — in
+        particular `modal_serve`, whose batched loop samples on its own and
+        would otherwise serve untrimmed output."""
         if not self.v4:
             yield from raw
             return
         bars = 1 if (stop_after_bars and self.ends_on_bar_line(prompt_ids)) else 0
         started = not trim_leading_bars
+        # A prompt that stops mid-bar needs one Bar to close it: Position is
+        # bar-relative, so dropping every leading Bar would date the first
+        # generated note to the bar the prompt is already part-way through,
+        # i.e. before the prompt ends. Hold that Bar (and the TimeSig right
+        # after it, which may be a meter change) and emit it with the note.
+        held: list[int] = []
+        held_open = self.v4 and not self.ends_on_bar_line(prompt_ids)
         for t in raw:
             if t == self.eos_id:
                 yield t
@@ -374,9 +408,20 @@ class Generator:
                 return
             if not started:
                 # swallow empty bars (and their TimeSig) until the first note
-                if t == self.bar_id or t in self.timesig_ids:
+                if t == self.bar_id:
+                    if held_open and not held:
+                        held = [t]
+                    continue
+                if t in self.timesig_ids:
+                    if len(held) == 1:
+                        held.append(t)
                     continue
                 started = True
+                for h in held:
+                    if stop_after_bars and h == self.bar_id:
+                        bars += 1
+                    yield h
+                held = []
             if stop_after_bars and t == self.bar_id:
                 bars += 1
                 if bars > stop_after_bars:

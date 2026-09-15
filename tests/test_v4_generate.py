@@ -79,11 +79,19 @@ def test_stop_after_bars_filters_stream(gen, monkeypatch):
                                 max_new_tokens=50, trim_leading_bars=False))
     assert out == fake[:4]
     # trim_leading_bars (default): empty bars before the first note are
-    # dropped and do not count toward the bar budget
+    # dropped. A prompt that ends mid-bar keeps ONE Bar, which closes it --
+    # without it the first generated Position would date to the prompt's own
+    # bar (see test_trim_leading_bars_keeps_the_prompts_bar_line).
     out = list(gen.generate_ids([gen.bos_id, pos, pitch], stop_after_bars=2,
                                 max_new_tokens=50))
-    assert out == fake[2:]            # the leading empty bar is gone,
-    assert gen.count_bars(out) == 2   # so both later bars fit the budget
+    assert out == fake[:8]
+    assert gen.count_bars(out) == 2
+    # a prompt already on a bar line has no open bar to close, so every
+    # leading empty bar is dropped; that bar line is bar 1 of the answer
+    out = list(gen.generate_ids([gen.bos_id, pos, pitch, bar, ts], stop_after_bars=2,
+                                max_new_tokens=50))
+    assert out == fake[2:8]
+    assert gen.count_bars(out) == 1   # plus the prompt's own bar line
     monkeypatch.setattr(gen, "_generate_raw", lambda *a, **k: iter([pos, pitch, gen.sp.sep, pitch]))
     assert list(gen.generate_ids([gen.bos_id, pos], max_new_tokens=50)) == [pos, pitch]
 
@@ -124,3 +132,36 @@ def test_accompany_and_infill_run(gen):
     legacy.v4 = False
     with pytest.raises(RuntimeError):
         Generator._require_v4(legacy, "accompany")
+
+
+def test_trim_leading_bars_keeps_the_prompts_bar_line(gen, monkeypatch):
+    """Position is bar-relative, so a continuation that opens with `Bar` needs
+    that Bar kept when the prompt stops mid-bar: dropping it decodes the first
+    generated note into the bar the prompt is already part-way through, i.e.
+    before the prompt ends. Checked on decoded times, not token ids."""
+    bar, ts = gen.bar_id, gen.tokenizer.vocab["TimeSig_4/4"]
+    v = gen.tokenizer.vocab
+
+    def note(position, pitch):
+        return [v[f"Position_{position}"], v["Program_0"], v[f"Pitch_{pitch}"],
+                v["Velocity_79"], v["Duration_1.0.8"]]
+
+    # prompt: notes on beats 0 and 2 of a 4/4 bar -> ends mid-bar
+    prompt = [gen.bos_id, bar, ts, *note(0, 60), *note(16, 62)]
+    fake = [bar, ts, *note(0, 67)]
+    monkeypatch.setattr(gen, "_generate_raw", lambda *a, **k: iter(fake))
+    new_ids = list(gen.generate_ids(prompt, max_new_tokens=50))
+
+    score = gen.tokenizer.decode(prompt + new_ids)
+    tpq = max(score.ticks_per_quarter, 1)
+    beats = sorted(n.time / tpq for tr in score.tracks for n in tr.notes)
+    assert beats == [0.0, 2.0, 4.0]   # the generated note lands on the next bar
+
+    # a prompt already on a bar line has no open bar to close: the empty bar
+    # the model offers is dropped and the note lands on the bar line we gave it
+    on_line = prompt + [bar, ts]
+    monkeypatch.setattr(gen, "_generate_raw", lambda *a, **k: iter(fake))
+    score = gen.tokenizer.decode(on_line + list(gen.generate_ids(on_line, max_new_tokens=50)))
+    tpq = max(score.ticks_per_quarter, 1)
+    beats = sorted(n.time / tpq for tr in score.tracks for n in tr.notes)
+    assert beats == [0.0, 2.0, 4.0]
