@@ -143,7 +143,7 @@ def make_pair(gen, prompt_file: Path, cfg: PairConfig,
             return None
         cont.tempos = [Tempo(time=0, qpm=tempo)]
         sides[name] = {"bytes": _dumps_midi(cont), "seed": seed, "n_new": len(new_ids),
-                       "n_notes": kept}
+                       "n_notes": kept, "ids": new_ids}
 
     meta = {
         "pair_id": pair_id,
@@ -157,6 +157,9 @@ def make_pair(gen, prompt_file: Path, cfg: PairConfig,
         "max_new_tokens": cfg.max_new_tokens,
         "seed_a": sides["a"]["seed"], "seed_b": sides["b"]["seed"],
         "n_notes_a": sides["a"]["n_notes"], "n_notes_b": sides["b"]["n_notes"],
+        # reward_align's drift features split these in half; without them it
+        # falls back to re-tokenising the MIDI, which is a round trip
+        "cont_a_ids": sides["a"]["ids"], "cont_b_ids": sides["b"]["ids"],
         **cfg.extra,
     }
     return {"pair_id": pair_id, "meta": meta,
