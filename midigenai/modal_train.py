@@ -7,17 +7,17 @@ Cost reference (Modal pricing as of 2026-05):
     A10G  ~$1.10/hr  — only worth it for tiny models
 
 Volumes:
-    openmusenet2-v2-corpus  — read-only training data (shards + tokenizer + manifest)
-    openmusenet2-v2-runs    — checkpoints + train logs
+    midigenai-corpus  — read-only training data (shards + tokenizer + manifest)
+    midigenai-runs    — checkpoints + train logs
 
 Upload corpus once (from wherever the shards live, e.g. Lambda):
-    modal volume put openmusenet2-v2-corpus /home/ubuntu/data/v2_corpus_full /
+    modal volume put midigenai-corpus /home/ubuntu/data/v2_corpus_full /
 
 Launch training:
     modal run midigenai/modal_train.py --size medium --max-steps 15000 --gpu H100
 
 Pull a checkpoint back:
-    modal volume get openmusenet2-v2-runs <run-name>/ckpt_final.pt ./
+    modal volume get midigenai-runs <run-name>/ckpt_final.pt ./
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ import modal
 from modal import Image, Volume
 
 
-CORPUS_VOLUME_NAME = "openmusenet2-v2-corpus"
-RUNS_VOLUME_NAME = "openmusenet2-v2-runs"
+CORPUS_VOLUME_NAME = "midigenai-corpus"
+RUNS_VOLUME_NAME = "midigenai-runs"
 
 # GPU is baked into the function decorator at import time; override per launch:
 #   MIDIGENAI_TRAIN_GPU=A10G modal run midigenai/modal_train.py --size pilot ...
@@ -119,7 +119,7 @@ def train(
     os.system("ls -la /corpus/ /corpus/shards/ 2>/dev/null | head -20")
 
     # corpus subdir on the volume (upload with:
-    #   modal volume put openmusenet2-v2-corpus <local> /<corpus-name>)
+    #   modal volume put midigenai-corpus <local> /<corpus-name>)
     data_dir = Path(f"/corpus/{corpus}")
     if not (data_dir / "shards").exists():
         for fallback in ("/corpus/v2_corpus_full", "/corpus"):

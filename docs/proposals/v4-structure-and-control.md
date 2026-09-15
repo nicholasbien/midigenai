@@ -171,7 +171,7 @@ Code: `tokenizer.py` (scheme), `attributes.py` (header), `sequence_format.py`
 the new `vocab_size`.
 
 Pilot launch (25M, H100, ~2500 steps at block 2048, lr 6e-4 per the v2
-sweep), after `modal volume put openmusenet2-v2-corpus <local> /<name>`:
+sweep), after `modal volume put midigenai-corpus <local> /<name>`:
 
 ```
 modal run midigenai/modal_train.py --size pilot --compile --block-size 2048 \

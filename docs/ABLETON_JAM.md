@@ -172,9 +172,9 @@ auto-created "midigenai" track and fires on Live's launch quantization
 ## Using a mid-training checkpoint
 
 ```bash
-env/bin/modal volume ls openmusenet2-v2-runs <run_name>        # find latest ckpt
-env/bin/modal volume get openmusenet2-v2-runs <run>/ckpt_NNN.pt runs/<run>/
-env/bin/modal volume get openmusenet2-v2-corpus corpus_full/tokenizer.json runs/<run>/
+env/bin/modal volume ls midigenai-runs <run_name>        # find latest ckpt
+env/bin/modal volume get midigenai-runs <run>/ckpt_NNN.pt runs/<run>/
+env/bin/modal volume get midigenai-corpus corpus_full/tokenizer.json runs/<run>/
 ```
 Checkpoints are written atomically every 1,000 steps, so mid-run grabs are
 safe. Training checkpoints include optimizer state (~3x larger); loading is
