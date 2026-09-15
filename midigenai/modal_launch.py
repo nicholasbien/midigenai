@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 
 APP_NAME = "midigenai-train"
-RUNS_VOLUME = "openmusenet2-v2-runs"
+RUNS_VOLUME = "midigenai-runs"
 
 
 def deploy() -> None:

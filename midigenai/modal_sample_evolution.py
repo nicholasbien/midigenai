@@ -20,7 +20,7 @@ from __future__ import annotations
 import modal
 from modal import Image, Volume
 
-runs_volume = Volume.from_name("openmusenet2-v2-runs")
+runs_volume = Volume.from_name("midigenai-runs")
 
 image = (
     Image.debian_slim(python_version="3.11")

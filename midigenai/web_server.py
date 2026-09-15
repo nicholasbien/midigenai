@@ -30,6 +30,9 @@ from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
+# The version allowlist lives with the Modal app so the two can't drift.
+from midigenai.modal_serve import SERVED_VERSIONS, resolve_version
+
 env = os.environ.get("ENV", "dev")
 
 # Absolute paths: Flask's send_from_directory resolves relative dirs against
@@ -43,7 +46,16 @@ for folder in (UPLOAD_FOLDER, GENERATED_FOLDER):
     os.makedirs(folder, exist_ok=True)
 
 # Inference: looked up by name so the Modal app needn't run locally.
-midi_gen = _modal.Cls.from_name("midigenai-serve", "MidiGen")()
+# One handle per served version; each maps to its own Modal container pool.
+_MidiGen = _modal.Cls.from_name("midigenai-serve", "MidiGen")
+_gen_handles: dict[str, object] = {}
+
+
+def _generator(version: str):
+    """Modal handle for one model version, created once and reused."""
+    if version not in _gen_handles:
+        _gen_handles[version] = _MidiGen(version=version)
+    return _gen_handles[version]
 
 app = Flask(__name__)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
@@ -59,10 +71,10 @@ def _unique_string() -> str:
 
 
 def _generate_n(midi_bytes: bytes, temperature: float, top_k: int,
-                max_new_tokens: int, n_samples: int) -> list[bytes]:
+                max_new_tokens: int, n_samples: int, version: str) -> dict:
     """n continuations in ONE Modal call, batched on the GPU — one round trip
     and a shared prefill instead of n sequential generations."""
-    result = midi_gen.generate_batch.remote(
+    result = _generator(version).generate_batch.remote(
         midi_bytes, max_new_tokens=max_new_tokens,
         temperature=temperature, top_k=top_k, n_samples=n_samples,
     )
@@ -81,8 +93,9 @@ def _prompt_fields(result: dict) -> dict:
     }
 
 
-def _save_midi(midi_bytes: bytes, base_name: str, suffix: str) -> str:
-    filename = f"v2_{base_name}_{suffix}.mid"
+def _save_midi(midi_bytes: bytes, base_name: str, suffix: str,
+               version: str = "model") -> str:
+    filename = f"{version}_{base_name}_{suffix}.mid"
     out_path = os.path.join(GENERATED_FOLDER, filename)
     with open(out_path, "wb") as f:
         f.write(midi_bytes)
@@ -103,16 +116,18 @@ def _read_upload():
     return file.read(), os.path.splitext(secure_filename(file.filename))[0]
 
 
-def _two_samples_response(midi_bytes: bytes, base: str,
-                          temperature: float, top_k: int, max_new_tokens: int):
+def _two_samples_response(midi_bytes: bytes, base: str, temperature: float,
+                          top_k: int, max_new_tokens: int, version: str):
     unique_str = _unique_string()
-    result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens, n_samples=2)
+    result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens,
+                         n_samples=2, version=version)
     out_paths = [
-        _save_midi(m, f"{base}_{unique_str}", str(i))
+        _save_midi(m, f"{base}_{unique_str}", str(i), version)
         for i, m in enumerate(result["midis"])
     ]
     return jsonify({
         "message": "MIDI file generated successfully",
+        "model": version,
         "midiUrl1": url_for("serve_user_midi",
                             filename=os.path.basename(out_paths[0]), _external=True),
         "midiUrl2": url_for("serve_user_midi",
@@ -129,9 +144,24 @@ def _gen_params():
     )
 
 
+def _model_version() -> str:
+    """The checkpoint the request asked for.
+
+    The site's dropdown sends `model=v2|v3|v4`; anything unrecognized falls
+    back to the default rather than erroring, so an old cached frontend keeps
+    working. The returned value is a volume subfolder, not raw user input.
+    """
+    asked = request.args.get("model") or request.form.get("model")
+    return resolve_version(asked)
+
+
 @app.route("/")
 def health():
-    return "midigenai api"
+    return jsonify({
+        "service": "midigenai api",
+        "models": sorted(SERVED_VERSIONS),
+        "default_model": resolve_version(None),
+    })
 
 
 # ---------- generation ---------- #
@@ -142,12 +172,14 @@ def health():
 @app.route("/api/upload_midi_v2", methods=["POST"])
 def upload_midi():
     temperature, top_k, max_new_tokens = _gen_params()
+    version = _model_version()
     upload = _read_upload()
     if isinstance(upload, Response):
         return upload
     midi_bytes, base = upload
     try:
-        return _two_samples_response(midi_bytes, base, temperature, top_k, max_new_tokens)
+        return _two_samples_response(midi_bytes, base, temperature, top_k,
+                                     max_new_tokens, version)
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -157,6 +189,7 @@ def upload_midi():
 @app.route("/api/generate_from_selected_v2/<filename>")
 def generate_from_selected(filename):
     temperature, top_k, max_new_tokens = _gen_params()
+    version = _model_version()
     filename = secure_filename(filename)
     input_filepath = os.path.join(app.config["PRESELECTED_FOLDER"], filename)
     if not os.path.exists(input_filepath):
@@ -165,7 +198,8 @@ def generate_from_selected(filename):
         with open(input_filepath, "rb") as fh:
             midi_bytes = fh.read()
         base = os.path.splitext(filename)[0]
-        return _two_samples_response(midi_bytes, base, temperature, top_k, max_new_tokens)
+        return _two_samples_response(midi_bytes, base, temperature, top_k,
+                                     max_new_tokens, version)
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -176,6 +210,7 @@ def upload_midi_ab():
     """Two samples from the current model, position-randomized; the pair is
     logged so preferences remain usable for reward-model training."""
     temperature, top_k, max_new_tokens = _gen_params()
+    version = _model_version()
     upload = _read_upload()
     if isinstance(upload, Response):
         return upload
@@ -186,20 +221,22 @@ def upload_midi_ab():
     with open(input_path, "wb") as f:
         f.write(midi_bytes)
 
-    result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens, n_samples=2)
+    result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens,
+                         n_samples=2, version=version)
     paths = [
-        _save_midi(m, f"{base}_{unique_str}", f"ab{i}")
+        _save_midi(m, f"{base}_{unique_str}", f"ab{i}", version)
         for i, m in enumerate(result["midis"])
     ]
     if random.random() < 0.5:
         paths.reverse()
 
     with open(os.path.join(DATA_DIR, "ab_pairs.csv"), "a") as f:
-        f.write(f"{unique_str},{base},v2,v2\n")
+        f.write(f"{unique_str},{base},{version},{version}\n")
 
     return jsonify({
         "message": "A/B MIDI generated",
         "requestId": unique_str,
+        "model": version,
         "midiUrl1": url_for("serve_user_midi",
                             filename=os.path.basename(paths[0]), _external=True),
         "midiUrl2": url_for("serve_user_midi",

@@ -5,41 +5,113 @@ Deploys as app `midigenai-serve`, class `MidiGen`:
 - generate_batch(): one-shot, returns full prompt+continuation MIDI bytes
 - stream_notes():   yields JSON-line note dicts as the model emits events
 
-The checkpoint + tokenizer live in the existing `openmusenet2-v2` Modal Volume
-(kept: it's just storage, and it already holds the deployed weights). On
-retrain, upload the new files:
-    modal volume put openmusenet2-v2 ckpt_final.pt
-    modal volume put openmusenet2-v2 tokenizer.json
+Checkpoints live in the `midigenai-models` Modal Volume, one subfolder per
+version, mirroring the Hugging Face repo layout:
+
+    /models/v4/ckpt_final.pt   /models/v4/tokenizer.json
+    /models/v3/ckpt_final.pt   /models/v3/tokenizer.json
+
+`MidiGen` takes the version as a Modal class parameter, so each version gets
+its own container pool and its own memory snapshot. Callers pick one with
+`Cls.from_name("midigenai-serve", "MidiGen")(version="v3")`; the default is
+DEFAULT_VERSION.
+
+Populate the volume straight from Hugging Face (server-side, no local
+upload) after publishing a new version:
+    modal run midigenai/modal_serve.py::sync_from_hub --version v4
 
 Deploy:
     modal deploy midigenai/modal_serve.py
 """
 
-from __future__ import annotations
+# NOTE: no `from __future__ import annotations` here. Modal resolves
+# `modal.parameter()` annotations at decoration time and cannot read them
+# once PEP 563 turns them into strings. Union syntax below needs 3.10+,
+# which both the image and every supported local interpreter satisfy.
 
 import json
 
 import modal
 from modal import Image, Volume
 
-VOLUME_NAME = "openmusenet2-v2"  # storage name predates the repo rename
-CKPT_PATH = "/models/ckpt_final.pt"
-TOKENIZER_PATH = "/models/tokenizer.json"
+VOLUME_NAME = "midigenai-models"
+MODELS_ROOT = "/models"
+CKPT_FILENAME = "ckpt_final.pt"
+TOKENIZER_FILENAME = "tokenizer.json"
+
+DEFAULT_VERSION = "v4"
+
+# Versions this deployment will serve, keyed by the name the site sends as
+# `model=`. The value is the subfolder in both the Hub repo and the volume.
+# Anything not listed here is rejected rather than passed through, so a
+# stray query param can't make the server look for an arbitrary path.
+SERVED_VERSIONS = {
+    "v4": "v4",
+    "v3": "v3",
+    "v2": "v2-100m",
+}
+
+
+def resolve_version(name: str | None) -> str:
+    """Map a `model=` value to a volume subfolder, falling back to the default."""
+    return SERVED_VERSIONS.get((name or "").strip(), SERVED_VERSIONS[DEFAULT_VERSION])
 
 app = modal.App("midigenai-serve")
 
 volume = Volume.from_name(VOLUME_NAME, create_if_missing=True)
 
-image = (
-    Image.debian_slim(python_version="3.11")
-    .pip_install(
-        "torch",
-        "miditok",
-        "symusic",
-        "numpy",
-    )
-    .add_local_python_source("midigenai")
+_base = Image.debian_slim(python_version="3.11").pip_install(
+    "torch",
+    "miditok",
+    "symusic",
+    "numpy",
 )
+# add_local_python_source has to come last in a chain, so the Hub variant
+# branches off the shared base rather than extending the finished image.
+image = _base.add_local_python_source("midigenai")
+hub_image = _base.pip_install("huggingface_hub").add_local_python_source("midigenai")
+
+
+@app.function(
+    image=hub_image,
+    volumes={MODELS_ROOT: volume},
+    secrets=[modal.Secret.from_name("huggingface")],
+    timeout=1800,
+)
+def sync_from_hub(version: str = DEFAULT_VERSION, repo_id: str = "nicholasbien/midigenai"):
+    """Copy one version's checkpoint + tokenizer from the Hub into the volume.
+
+    Runs inside Modal, so the weights go Hub -> Modal directly and never
+    travel through the local machine. Safe to re-run: it overwrites the
+    version's folder in place.
+    """
+    import os
+    import shutil
+    from huggingface_hub import hf_hub_download
+
+    subfolder = SERVED_VERSIONS.get(version, version)
+    dest = os.path.join(MODELS_ROOT, subfolder)
+    os.makedirs(dest, exist_ok=True)
+    for filename in (CKPT_FILENAME, TOKENIZER_FILENAME):
+        src = hf_hub_download(repo_id, filename, subfolder=subfolder)
+        out = os.path.join(dest, filename)
+        shutil.copyfile(src, out)
+        print(f"{subfolder}/{filename}: {os.path.getsize(out) / 1e6:.1f} MB")
+    volume.commit()
+    return sorted(os.listdir(dest))
+
+
+@app.function(image=image, volumes={MODELS_ROOT: volume})
+def list_versions() -> dict:
+    """What the volume actually holds, so a deploy can be checked without SSH."""
+    import os
+    out = {}
+    for name in sorted(os.listdir(MODELS_ROOT)):
+        folder = os.path.join(MODELS_ROOT, name)
+        if os.path.isdir(folder):
+            out[name] = {f: os.path.getsize(os.path.join(folder, f))
+                         for f in sorted(os.listdir(folder))}
+    return out
 
 
 @app.cls(
@@ -53,16 +125,27 @@ image = (
     enable_memory_snapshot=True,
 )
 class MidiGen:
+    # One container pool and one memory snapshot per version.
+    version: str = modal.parameter(default=SERVED_VERSIONS[DEFAULT_VERSION])
+
     @modal.enter(snap=True)
     def load_cpu(self):
-        """Runs once, then is checkpointed into the memory snapshot: later cold
-        starts restore the loaded model instead of re-importing torch and
-        re-reading the checkpoint."""
+        """Runs once per version, then is checkpointed into the memory
+        snapshot: later cold starts restore the loaded model instead of
+        re-importing torch and re-reading the checkpoint."""
+        import os
         from midigenai.generate import Generator
         import torch
+        ckpt = os.path.join(MODELS_ROOT, self.version, CKPT_FILENAME)
+        tokenizer = os.path.join(MODELS_ROOT, self.version, TOKENIZER_FILENAME)
+        if not os.path.exists(ckpt):
+            raise FileNotFoundError(
+                f"no checkpoint for version {self.version!r} at {ckpt}. "
+                f"Run: modal run midigenai/modal_serve.py::sync_from_hub "
+                f"--version {self.version}")
         self.gen = Generator(
-            checkpoint_path=CKPT_PATH,
-            tokenizer_path=TOKENIZER_PATH,
+            checkpoint_path=ckpt,
+            tokenizer_path=tokenizer,
             device=torch.device("cpu"),  # snapshot is CPU-only; GPU attaches after restore
         )
 
