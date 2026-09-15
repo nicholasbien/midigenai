@@ -99,7 +99,7 @@ def test_control_scorecard_asks_for_every_bucket(ckpt, tmp_path):
                                temperature=1.0, top_k=50, seed=0, mode="control")
 
     assert card["mode"] == "control"
-    # 2 prompts x (4 density + 3 poly + 3 range) buckets
+    # 2 prompts x (4 density + 3 poly + 3 range) buckets x 1 generation
     assert card["n_generations"] == 20
     assert set(card["families"]) <= {"density", "poly", "pitch_range"}
     for family, fam in card["families"].items():
@@ -110,6 +110,12 @@ def test_control_scorecard_asks_for_every_bucket(ckpt, tmp_path):
         assert len(fam["mean_realized_by_request"]) == n
     assert {r["family"] for r in card["rows"]} <= {"density", "poly", "pitch_range"}
     assert {r["requested"] for r in card["rows"] if r["family"] == "density"} == {0, 1, 2, 3}
+
+    repeated = evaluate_checkpoint(str(ckpt / "ckpt.pt"), str(ckpt / "tokenizer.json"),
+                                   prompts, n_prompts=1, gens_per_prompt=2,
+                                   prompt_tokens=128, max_new_tokens=24,
+                                   temperature=1.0, top_k=50, seed=0, mode="control")
+    assert repeated["n_generations"] == 20        # 1 prompt x 10 buckets x 2
 
 
 def test_control_mode_refuses_a_non_v4_checkpoint(tmp_path):

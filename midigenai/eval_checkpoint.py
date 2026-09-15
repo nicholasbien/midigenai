@@ -132,9 +132,9 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
                                    bars, temperature, top_k, seed, checkpoint,
                                    prompt_set=prompt_set)
     if mode == "control":
-        return _evaluate_control(gen, prompts_dir, n_prompts, prompt_tokens,
-                                 max_new_tokens, temperature, top_k, seed,
-                                 checkpoint, prompt_set=prompt_set)
+        return _evaluate_control(gen, prompts_dir, n_prompts, gens_per_prompt,
+                                 prompt_tokens, max_new_tokens, temperature,
+                                 top_k, seed, checkpoint, prompt_set=prompt_set)
 
     pool = _prompt_pool(prompts_dir, prompt_set)
     rng = random.Random(seed)
@@ -278,8 +278,8 @@ def _rank_corr(xs: list[float], ys: list[float]) -> float:
     return num / den if den else float("nan")
 
 
-def _evaluate_control(gen, prompts_dir, n_prompts, prompt_tokens, max_new_tokens,
-                      temperature, top_k, seed, checkpoint,
+def _evaluate_control(gen, prompts_dir, n_prompts, gens_per_prompt, prompt_tokens,
+                      max_new_tokens, temperature, top_k, seed, checkpoint,
                       prompt_set: dict | None = None) -> dict:
     """v4 control-adherence scorecard: ask for a bucket, measure what arrives.
 
@@ -323,25 +323,26 @@ def _evaluate_control(gen, prompts_dir, n_prompts, prompt_tokens, max_new_tokens
         for family, n_buckets in FAMILY_SIZES.items():
             for requested in range(n_buckets):
                 header = gen.make_header(f, **{family: requested})
-                new_ids = list(gen.generate_ids(
-                    [*header, *ids], max_new_tokens=max_new_tokens,
-                    temperature=temperature, top_k=top_k))
-                try:
-                    cont, _grid, _cut = _continuation_score(gen, ids, new_ids)
-                except Exception:
-                    continue
-                n_notes = sum(len(t.notes) for t in cont.tracks)
-                row = {"prompt": f.name, "prompt_sha": sha[:12],
-                       "family": family, "requested": requested,
-                       "prompt_bucket": prompt_buckets.get(family),
-                       "gen_tokens": len(new_ids), "gen_notes": n_notes}
-                if n_notes >= 4:
-                    got = realized_buckets(cont).get(family)
-                    if got is not None:
-                        row["realized"] = got
-                        row["hit"] = 1.0 if got == requested else 0.0
-                        row["adjacent"] = 1.0 if abs(got - requested) <= 1 else 0.0
-                rows.append(row)
+                for g in range(gens_per_prompt):
+                    new_ids = list(gen.generate_ids(
+                        [*header, *ids], max_new_tokens=max_new_tokens,
+                        temperature=temperature, top_k=top_k))
+                    try:
+                        cont, _grid, _cut = _continuation_score(gen, ids, new_ids)
+                    except Exception:
+                        continue
+                    n_notes = sum(len(t.notes) for t in cont.tracks)
+                    row = {"prompt": f.name, "prompt_sha": sha[:12], "gen": g,
+                           "family": family, "requested": requested,
+                           "prompt_bucket": prompt_buckets.get(family),
+                           "gen_tokens": len(new_ids), "gen_notes": n_notes}
+                    if n_notes >= 4:
+                        got = realized_buckets(cont).get(family)
+                        if got is not None:
+                            row["realized"] = got
+                            row["hit"] = 1.0 if got == requested else 0.0
+                            row["adjacent"] = 1.0 if abs(got - requested) <= 1 else 0.0
+                    rows.append(row)
 
     families = {}
     for family, n_buckets in FAMILY_SIZES.items():
@@ -522,8 +523,9 @@ def main():
     p.add_argument("--mode", choices=["continue", "accompany", "control"],
                    default="continue",
                    help="accompany: v4 accompaniment scorecard; control: v4 "
-                        "control-adherence scorecard (10 generations per "
-                        "prompt, so use a smaller --n-prompts)")
+                        "control-adherence scorecard (10 buckets x "
+                        "--gens-per-prompt generations per prompt, so use a "
+                        "smaller --n-prompts)")
     p.add_argument("--bars", type=int, default=8, help="accompany: window length")
     p.add_argument("--pad-to-bar", action="store_true",
                    help="continue (v4): pad the prompt to its bar line first")

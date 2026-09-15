@@ -64,7 +64,8 @@ clicks were unusable.
 The layout is the one `reward_align` already reads, so site votes and
 labeling-app votes merge with no converter:
 
-    modal volume get ...          # or: railway ssh / volume download
+    # pull site_pairs/ off the Railway volume (railway ssh, or whatever
+    # copy mechanism the service is set up with), then:
     python -m midigenai.reward_align --labels site_pairs/labels.jsonl \
         --out evals/reward/reward_site.json
 

@@ -93,7 +93,8 @@ def _storage_marker() -> dict:
             json.dump(marker, f)
         marker["reused"] = False
         return marker
-    except OSError as e:
+    except (OSError, ValueError) as e:
+        # unreadable or corrupt: report it, never fail to boot over it
         return {"id": None, "error": str(e)}
 
 
