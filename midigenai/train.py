@@ -18,8 +18,8 @@ Run examples:
     python -m midigenai.train --data /data/v2_corpus --size pilot \\
         --batch-size 16 --grad-accum 4 --max-steps 5000
 
-    # production
-    python -m midigenai.train --data /data/v2_corpus --size production \\
+    # large
+    python -m midigenai.train --data /data/v2_corpus --size large \\
         --batch-size 8 --grad-accum 16 --max-steps 200000
 """
 
@@ -43,7 +43,7 @@ from midigenai.model import ModelConfig, MusicTransformer
 class TrainConfig:
     data_dir: Path
     out_dir: Path
-    size: str = "pilot"            # "pilot" | "medium" | "production"
+    size: str = "pilot"            # "pilot" (25M) | "medium" (113M) | "large" (200M)
     batch_size: int = 16
     grad_accum: int = 4
     block_size: int = 1024
@@ -342,8 +342,8 @@ def train(cfg: TrainConfig) -> None:
         model_cfg = ModelConfig.pilot(vocab_size)
     elif cfg.size == "medium":
         model_cfg = ModelConfig.medium(vocab_size)
-    elif cfg.size == "production":
-        model_cfg = ModelConfig.production(vocab_size)
+    elif cfg.size in ("large", "production"):   # "production" is the old name
+        model_cfg = ModelConfig.large(vocab_size)
     else:
         raise ValueError(f"unknown size: {cfg.size}")
     model_cfg.max_seq_len = max(model_cfg.max_seq_len, cfg.block_size)
@@ -476,7 +476,8 @@ def parse_args() -> TrainConfig:
     p = argparse.ArgumentParser()
     p.add_argument("--data", dest="data_dir", type=Path, required=True)
     p.add_argument("--out", dest="out_dir", type=Path, required=True)
-    p.add_argument("--size", choices=["pilot", "medium", "production"], default="pilot")
+    p.add_argument("--size", choices=["pilot", "medium", "large", "production"],
+                   default="pilot", help='"production" is a deprecated alias for "large"')
     p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--grad-accum", type=int, default=4)
     p.add_argument("--block-size", type=int, default=1024)

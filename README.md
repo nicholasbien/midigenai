@@ -48,7 +48,7 @@ and [docs/jam-timing.md](docs/jam-timing.md). The Live socket client moved to
 | | |
 |---|---|
 | Architecture | decoder-only transformer: RoPE, SwiGLU, RMSNorm, SDPA (FlashAttention-2), tied embeddings |
-| Parameters | 113M (`medium`; 25M `pilot` and 200M `production` configs in `model.py`) |
+| Parameters | 113M (`medium`; 25M `pilot` and 200M `large` configs in `model.py`) |
 | Vocabulary | 590 event tokens ([MidiTok REMI](https://github.com/Natooz/MidiTok)): Bar/Position/Duration, 32 velocity bins, plus an attribute header |
 | Context | 2048 tokens trained, longer at inference (RoPE extrapolates) |
 | Timing | beat-relative ticks; tempo stripped at training, re-applied at decode (tempo-invariant learning) |
@@ -58,18 +58,15 @@ and [docs/jam-timing.md](docs/jam-timing.md). The Live socket client moved to
 
 | Tag | Params | Final loss | Best sampling | HF |
 |---|---|---|---|---|
-| `v2-pilot` | 25M | 0.97 | t=1.0, top_k=50 | [tree/main/v2-pilot](https://huggingface.co/nicholasbien/midigenai/tree/main/v2-pilot) |
-| `v2-production` | 25M | 0.93 | t=1.0, top_k=50 | [tree/main/v2-production](https://huggingface.co/nicholasbien/midigenai/tree/main/v2-production) |
-| `v2-100m` | 113M | 0.71 | t=1.2, top_k=50 | [tree/main/v2-100m](https://huggingface.co/nicholasbien/midigenai/tree/main/v2-100m) |
-| `v3` | 113M | 0.75 val | t=1.1, top_k=50 | [tree/main/v3](https://huggingface.co/nicholasbien/midigenai/tree/main/v3) |
-| **`v4`** ← default | **113M** | **0.64 val** | **t=1.0, top_k=50** | [tree/main/v4](https://huggingface.co/nicholasbien/midigenai/tree/main/v4) |
+| `v4` ← default | 113M (`medium`) | 0.64 val | t=1.0, top_k=50 | [tree/main/v4](https://huggingface.co/nicholasbien/midigenai/tree/main/v4) |
 
-Select with `load_from_hub(version=...)` or `MIDIGENAI_VERSION`.
+Earlier versions stay on the Hub and load with `load_from_hub(version=...)`
+or `MIDIGENAI_VERSION`, but v4 is the one to use.
 
 ## Performance
 
 Inference is fast enough that playback, not generation, is the bottleneck
-(113M model on an M3 Max, fp16; measured on v2-100m, and v3 is the same architecture):
+(113M model on an M3 Max, fp16; the 113M checkpoints all share this architecture):
 
 | | decode | TTFT @ 2048-token prompt |
 |---|---|---|
@@ -87,7 +84,7 @@ float16 (default) / bfloat16 / float32.
 
 ```
 midigenai/
-├─ model.py           # the transformer (+ pilot/medium/production configs)
+├─ model.py           # the transformer (+ pilot/medium/large configs)
 ├─ model_mlx.py       # MLX (Apple-silicon GPU) implementation of the same
 ├─ tokenizer.py       # MidiTok MIDILike wrapper
 ├─ generate.py        # Generator: streaming inference, KV cache, tempo plumbing

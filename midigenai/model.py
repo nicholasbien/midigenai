@@ -9,9 +9,10 @@ Design:
   (uses FlashAttention-2 on supported hardware automatically)
 - Tied embedding/output projection (saves params, fine for next-token loss)
 
-Two configs:
-- ModelConfig.pilot()      ~25M params  — validate the pipeline
-- ModelConfig.production() ~200M params — full run
+Three configs:
+- ModelConfig.pilot()  ~25M params  — validate the pipeline
+- ModelConfig.medium() ~113M params — the shipped checkpoints
+- ModelConfig.large()  ~200M params — full run
 """
 
 from __future__ import annotations
@@ -50,7 +51,7 @@ class ModelConfig:
 
     @classmethod
     def medium(cls, vocab_size: int = 641) -> "ModelConfig":
-        # ~113M params: middle ground between pilot (25M) and production (200M).
+        # ~113M params: middle ground between pilot (25M) and large (200M).
         return cls(
             vocab_size=vocab_size,
             d_model=768, n_layers=12, n_heads=12, d_ff=3072,
@@ -58,7 +59,7 @@ class ModelConfig:
         )
 
     @classmethod
-    def production(cls, vocab_size: int = 641) -> "ModelConfig":
+    def large(cls, vocab_size: int = 641) -> "ModelConfig":
         return cls(
             vocab_size=vocab_size,
             d_model=1024, n_layers=12, n_heads=16, d_ff=4096,
@@ -277,7 +278,9 @@ def build_model(cfg: ModelConfig | None = None) -> MusicTransformer:
 
 
 if __name__ == "__main__":
-    for name, cfg in [("pilot", ModelConfig.pilot()), ("production", ModelConfig.production())]:
+    for name, cfg in [("pilot", ModelConfig.pilot()),
+                      ("medium", ModelConfig.medium()),
+                      ("large", ModelConfig.large())]:
         m = build_model(cfg)
         n_total = m.num_params()
         n_no_embed = m.num_params(exclude_embedding=True)

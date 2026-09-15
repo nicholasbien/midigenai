@@ -9,10 +9,10 @@ The repo is laid out as one subfolder per trained model:
 
     nicholasbien/midigenai
     ├── README.md
-    ├── v2-pilot/             # current default
+    ├── v4/                   # current default
     │   ├── ckpt_final.pt
     │   └── tokenizer.json
-    └── v2/                   # future
+    └── v3/                   # earlier versions stay available
         ├── ckpt_final.pt
         └── tokenizer.json
 
@@ -26,15 +26,15 @@ from midigenai import load_from_hub, list_hub_versions
 gen = load_from_hub()
 
 # explicit version
-gen = load_from_hub(version="v2-100m")   # pin an older checkpoint; default is v3
+gen = load_from_hub(version="v3")        # pin an older checkpoint; default is v4
 
 # discover what's available on the hub
-print(list_hub_versions())   # ["v2-pilot", "v2", ...]
+print(list_hub_versions())   # ["v4", "v3", ...]
 ```
 
 To change the default for a whole shell session without code edits:
 
-    export MIDIGENAI_VERSION=v2
+    export MIDIGENAI_VERSION=v3
 
 Files are cached at `~/.cache/huggingface/` after the first download.
 """
