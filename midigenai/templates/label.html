@@ -5,36 +5,85 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>midigenai — preference labeling</title>
 <script src="https://cdn.jsdelivr.net/combine/npm/tone@14.7.58,npm/@magenta/music@1.23.1/es6/core.js,npm/focus-visible@5,npm/html-midi-player@1.5.0"></script>
+<script>
+(function () {
+  // runs before paint: a remembered dark theme must not flash white first
+  try {
+    var t = localStorage.getItem('labelTheme');
+    if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', t);
+  } catch (e) {}
+})();
+</script>
 <style>
-  body { font-family: -apple-system, system-ui, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: #222; }
+  /* Light is the default; dark is opt-in via the OS setting or the toggle.
+     Every colour goes through a variable so the two themes cannot drift. */
+  :root {
+    --bg: #fff;          --fg: #222;        --muted: #666;      --faint: #888;
+    --card: #fafafa;     --card-br: #ddd;   --opt: #fff;        --opt-br: #ddd;
+    --roll: #fff;        --roll-br: #e5e5e5;
+    --btn: #fff;         --btn-br: #ccc;    --btn-hover: #f0f0f0;
+    --kbd: #eee;
+    --accent: #4f46e5;   --playing: #10b981; --cut: #dc2626;
+    --chip: #666;        --chip-on-bg: #fef3c7; --chip-on-br: #f59e0b; --chip-on-fg: #92400e;
+    --shade: #111;       --shade-op: .07;
+    --flash: #ecfdf5;
+    --note: #6b6b6b;     --note-active: #4f46e5;
+    --warn: #b45309;    --warn-br: #d97706;
+    --scrim: rgba(250,250,250,.97);
+  }
+  :root[data-theme="dark"] {
+    --bg: #14161a;       --fg: #e6e6e6;     --muted: #9aa0a8;   --faint: #7d838b;
+    --card: #1b1e24;     --card-br: #2c3037; --opt: #21252c;    --opt-br: #343941;
+    --roll: #12151a;     --roll-br: #2c3037;
+    --btn: #262b33;      --btn-br: #3a404a; --btn-hover: #31374180;
+    --kbd: #2f353e;
+    --accent: #818cf8;   --playing: #34d399; --cut: #f87171;
+    --chip: #9aa0a8;     --chip-on-bg: #43350f; --chip-on-br: #b45309; --chip-on-fg: #fcd34d;
+    --shade: #fff;       --shade-op: .10;
+    --flash: #16302a;
+    --note: #9aa4b2;     --note-active: #818cf8;
+    --warn: #fbbf24;    --warn-br: #b45309;
+    --scrim: rgba(20,22,26,.97);
+  }
+  html { color-scheme: light; }
+  html[data-theme="dark"] { color-scheme: dark; }
+
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 860px; margin: 24px auto; padding: 0 16px; color: var(--fg); background: var(--bg); }
   h1 { font-size: 20px; margin-bottom: 2px; }
-  .sub { color: #666; font-size: 13px; margin-bottom: 16px; }
-  .card { border: 1px solid #ddd; border-radius: 8px; padding: 16px; background: #fafafa; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 16px; }
+  .card { border: 1px solid var(--card-br); border-radius: 8px; padding: 16px; background: var(--card); }
   .prompt { margin-bottom: 12px; }
-  .prompt h3, .opt h3 { margin: 0 0 6px 0; font-size: 13px; color: #555; font-weight: 600; }
+  .prompt h3, .opt h3 { margin: 0 0 6px 0; font-size: 13px; color: var(--muted); font-weight: 600; }
   .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .opt { background: white; border: 2px solid #ddd; border-radius: 6px; padding: 12px; }
-  .opt.chosen { border-color: #4f46e5; }
+  .opt { background: var(--opt); border: 2px solid var(--opt-br); border-radius: 6px; padding: 12px; }
+  .opt.chosen { border-color: var(--accent); }
   midi-player { width: 100%; }
-  .rollwrap { overflow-x: auto; background: #fff; border: 1px solid #e5e5e5; border-radius: 4px; padding: 2px 0; }
+  .rollwrap { overflow-x: auto; background: var(--roll); border: 1px solid var(--roll-br); border-radius: 4px; padding: 2px 0; }
   .rollinner { position: relative; display: inline-block; min-width: 100%; }
   midi-visualizer { display: block; }
-  .shade { position: absolute; left: 0; top: 0; bottom: 0; background: #111; opacity: .07; pointer-events: none; }
-  .cutline { position: absolute; top: 0; bottom: 0; width: 2px; background: #dc2626; pointer-events: none; }
-  .cutlabel { position: absolute; top: 0; font-size: 10px; color: #dc2626; background: #fff; padding: 0 3px; pointer-events: none; }
-  .opt.playing { border-color: #10b981; }
+  /* the visualizer paints notes with a fill attribute; a CSS fill outranks it */
+  midi-visualizer svg rect.note { fill: var(--note); }
+  midi-visualizer svg rect.note.active { fill: var(--note-active); }
+  midi-player::part(control-panel) { background: var(--opt); border-color: var(--opt-br); }
+  midi-player::part(time), midi-player::part(play-button) { color: var(--fg); }
+  .shade { position: absolute; left: 0; top: 0; bottom: 0; background: var(--shade); opacity: var(--shade-op); pointer-events: none; }
+  .cutline { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--cut); pointer-events: none; }
+  .cutlabel { position: absolute; top: 0; font-size: 10px; color: var(--cut); background: var(--roll); padding: 0 3px; pointer-events: none; }
+  .opt.playing { border-color: var(--playing); }
   .rows .opt { margin-bottom: 10px; }
-  .legend { font-size: 11px; color: #777; margin: 4px 0 8px; }
+  .legend { font-size: 11px; color: var(--faint); margin: 4px 0 8px; }
   .buttons { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
-  button { padding: 9px 14px; border: 1px solid #ccc; background: white; border-radius: 6px; cursor: pointer; font-size: 13px; }
-  button:hover { background: #f0f0f0; }
-  kbd { background: #eee; border-radius: 3px; padding: 1px 5px; font-size: 11px; margin-left: 6px; }
+  button { padding: 9px 14px; border: 1px solid var(--btn-br); background: var(--btn); color: var(--fg); border-radius: 6px; cursor: pointer; font-size: 13px; }
+  button:hover { background: var(--btn-hover); }
+  kbd { background: var(--kbd); border-radius: 3px; padding: 1px 5px; font-size: 11px; margin-left: 6px; }
   .chips { margin-top: 8px; display: flex; gap: 6px; }
-  .chip { padding: 4px 10px; font-size: 12px; border-radius: 12px; color: #666; }
-  .chip.on { background: #fef3c7; border-color: #f59e0b; color: #92400e; }
-  .statusbar { display: flex; justify-content: space-between; font-size: 13px; color: #444; margin: 10px 0; }
-  .waiting { text-align: center; color: #888; padding: 40px 0; font-size: 14px; }
+  .chip { padding: 4px 10px; font-size: 12px; border-radius: 12px; color: var(--chip); }
+  .chip.on { background: var(--chip-on-bg); border-color: var(--chip-on-br); color: var(--chip-on-fg); }
+  .statusbar { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin: 10px 0; }
+  .waiting { text-align: center; color: var(--faint); padding: 40px 0; font-size: 14px; }
   .flash { animation: flash 0.4s; }
+  #theme { padding: 4px 9px; font-size: 12px; }
   /* phone: thumb-sized targets, no hover-only affordances, no key hints */
   @media (max-width: 760px) {
     body { margin: 6px auto; padding: 0 8px; }
@@ -56,11 +105,11 @@
   .rowplay { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
   .rowplay button { padding: 8px 12px; font-size: 12px; }
   @media (max-width: 760px) { .rowplay button { flex: 1; padding: 12px 6px; font-size: 13px; } }
-  #tapstart { position: fixed; inset: 0; background: rgba(250,250,250,.97); z-index: 50;
+  #tapstart { position: fixed; inset: 0; background: var(--scrim); z-index: 50;
     display: none; align-items: center; justify-content: center; text-align: center;
-    font-size: 17px; color: #444; padding: 24px; }
+    font-size: 17px; color: var(--fg); padding: 24px; }
   #tapstart b { display: block; font-size: 20px; margin-bottom: 8px; }
-  @keyframes flash { 0% { background: #ecfdf5; } 100% { background: #fafafa; } }
+  @keyframes flash { 0% { background: var(--flash); } 100% { background: var(--card); } }
 </style>
 </head>
 <body>
@@ -69,11 +118,12 @@
     <kbd>1</kbd> left &nbsp;<kbd>2</kbd> right &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip
     &nbsp;·&nbsp; flags (before voting): <kbd>q</kbd>/<kbd>w</kbd> degrades &nbsp;<kbd>e</kbd>/<kbd>r</kbd> too long</div>
   <div class="statusbar" style="align-items:center">
-    <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:#555">
+    <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)">
       volume <input id="vol" type="range" min="-20" max="24" step="1" value="10"
         oninput="setVolume(this.value)" style="width:150px">
       <span id="voldb">+10 dB</span>
     </label>
+    <button id="theme" onclick="toggleTheme()" title="light / dark (n)">🌙</button>
   </div>
   <div class="statusbar"><span id="count">0 labeled this session</span><span id="queue"></span></div>
   <div id="tapstart"><div><b>Tap to start</b>Phone browsers block audio until you touch the page.</div></div>
@@ -81,6 +131,18 @@
 
 <script>
 const SESSION_ID = crypto.randomUUID();
+
+function applyTheme(t) {
+  document.documentElement.setAttribute('data-theme', t);
+  try { localStorage.setItem('labelTheme', t); } catch (e) {}
+  const b = document.getElementById('theme');
+  if (b) b.textContent = t === 'dark' ? '☀️' : '🌙';
+}
+
+function toggleTheme() {
+  const now = document.documentElement.getAttribute('data-theme');
+  applyTheme(now === 'dark' ? 'light' : 'dark');
+}
 
 function setVolume(db) {
   db = Number(db);
@@ -225,8 +287,8 @@ function render() {
   const lo = Math.max(0, Math.min(48, ...allP) - 2), hi = Math.min(127, Math.max(72, ...allP) + 2);
   p.left_roll.url = p.left_timeline_url; p.right_roll.url = p.right_timeline_url;
   stage.innerHTML = `
-    <div class="legend">Prompt <span style="font-weight:400;color:#4f46e5">· ${p.prompt_source || ''}</span> <span style="color:#999">${p.prompt_name || ''}</span>
-      <span id="loadnote" style="color:#b45309"></span>
+    <div class="legend">Prompt <span style="font-weight:400;color:var(--accent)">· ${p.prompt_source || ''}</span> <span style="color:var(--faint)">${p.prompt_name || ''}</span>
+      <span id="loadnote" style="color:var(--warn)"></span>
       &nbsp;·&nbsp; shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays 1 with the prompt, then 2 from the red line on; <kbd>space</kbd> replays both, <kbd>a</kbd> replays 1 with the prompt, <kbd>b</kbd> replays 2.</div>
     <div class="rows">
       <div class="opt" id="opt-left">
@@ -260,8 +322,8 @@ function render() {
       <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
       <button onclick="vote('bad')">Both bad<kbd>x</kbd></button>
       <button onclick="vote('skip')">Skip<kbd>s</kbd></button>
-      <button class="wide" onclick="vote('drums_as_piano')" style="border-color:#d97706;color:#b45309">Drums playing as piano<kbd>d</kbd></button>
-      <button class="wide" onclick="vote('bad_prompt')" style="border-color:#dc2626;color:#dc2626">Bad prompt — exclude from data<kbd>p</kbd></button>
+      <button class="wide" onclick="vote('drums_as_piano')" style="border-color:var(--warn-br);color:var(--warn)">Drums playing as piano<kbd>d</kbd></button>
+      <button class="wide" onclick="vote('bad_prompt')" style="border-color:var(--cut);color:var(--cut)">Bad prompt — exclude from data<kbd>p</kbd></button>
     </div>
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
   `;
@@ -349,11 +411,13 @@ document.addEventListener('keydown', (e) => {
   if (e.key === ' ') { e.preventDefault(); playSequence('both'); return; }
   if (e.key === 'a') { e.preventDefault(); playSequence('left'); return; }
   if (e.key === 'b') { e.preventDefault(); playSequence('right'); return; }
+  if (e.key === 'n') { e.preventDefault(); toggleTheme(); return; }
   const flagMap = { q: ['left', 'degrades'], w: ['right', 'degrades'],
                     e: ['left', 'too_long'], r: ['right', 'too_long'] };
   if (flagMap[e.key]) { e.preventDefault(); toggleFlag(...flagMap[e.key]); }
 });
 
+applyTheme(document.documentElement.getAttribute('data-theme') || 'light');
 const savedVol = localStorage.getItem('labelVolumeDb') || 10;
 document.getElementById('vol').value = savedVol;
 setVolume(savedVol);

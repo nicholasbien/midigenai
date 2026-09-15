@@ -293,8 +293,15 @@ def validate(args) -> None:
     print(f"[judge] swap consistency: {out['swap_consistency']:.3f}   "
           f"picks side 1 first pass: {out['position_bias_pick_first']:.3f}   "
           f"ties: {out['tie_rate']:.3f}")
-    print("[judge] reference: 10-metric reward 0.658, model log-prob 0.717, "
-          "labeler ceiling 0.88")
+    ceiling = Path("evals/ceiling/ceiling.json")
+    if ceiling.exists():
+        c = json.loads(ceiling.read_text())
+        print(f"[judge] reference: 10-metric reward 0.658, model log-prob 0.717, "
+              f"labeler ceiling {c['self_consistency']:.3f} "
+              f"(measured on {c['n']} blind repeats, {ceiling})")
+    else:
+        print("[judge] reference: 10-metric reward 0.658, model log-prob 0.717; "
+              "labeler ceiling unmeasured — run midigenai.relabel_app")
     if args.out:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         Path(args.out).write_text(json.dumps(out, indent=1))
