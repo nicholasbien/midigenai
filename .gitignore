@@ -21,3 +21,14 @@ data/v2_corpus*/
 
 # explorer sample cache
 evals/dataset_samples/
+
+# Generated eval artifacts (MIDI, audio, app logs) — derived data, not source
+evals/prompts_heldout/
+evals/prompts_val/
+evals/progress_v4/
+evals/labeling*/pairs/
+evals/**/*.log
+evals/*.log
+evals/**/*.mp3
+evals/**/*.wav
+evals/samples*/
