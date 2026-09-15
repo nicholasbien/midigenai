@@ -39,7 +39,7 @@ import torch.nn.functional as F
 
 from midigenai.model import ModelConfig, MusicTransformer
 from midigenai.reward import Reward
-from midigenai.tokenizer import load_tokenizer, normalize_drums
+from midigenai.tokenizer import is_v4, load_tokenizer, normalize_drums
 
 
 @dataclass
@@ -61,6 +61,9 @@ class GRPOConfig:
     grad_clip: float = 1.0
     save_every: int = 50
     log_every: int = 1
+    eval_every: int = 10           # 0 disables
+    eval_prompts: int = 8
+    eval_samples: int = 4
     seed: int = 0
     device: str = ""
 
@@ -73,6 +76,61 @@ def _device(name: str) -> torch.device:
     if torch.backends.mps.is_available():
         return torch.device("mps")
     return torch.device("cpu")
+
+
+class PromptSpec:
+    """Prompts and sampling rules for the checkpoint being optimised.
+
+    A v4 checkpoint is never prompted with bare note tokens: production and
+    the pair generator both prepend an attribute header describing the music
+    (instruments, density, polyphony, range), and both ban SEP / MASK / BOS,
+    which are structural tokens and never valid continuation output. GRPO
+    that skips this optimises the policy on prompts shaped like nothing it
+    will ever see — including the pairs its own reward model was fit on.
+
+    This mirrors `Generator.make_header` without loading a second copy of the
+    model: the header only needs the tokenizer and the special-token table.
+    """
+
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+        self.v4 = is_v4(tokenizer)
+        self.sp = None
+        vocab = tokenizer.vocab
+        self.eos_id = vocab.get("EOS_None")
+        self.ban_ids: list[int] = []
+        if self.v4:
+            from midigenai.sequence_format import Specials
+            self.sp = Specials.from_tokenizer(tokenizer)
+            self.ban_ids = [i for i in (self.sp.sep, self.sp.mask, self.sp.bos)
+                            if i is not None]
+
+    def header_for(self, path: Path) -> list[int]:
+        if not self.v4:
+            return []
+        from symusic import Score
+        from midigenai.attributes import HEADER_PREFIXES, header_for_score
+        names = header_for_score(Score(str(path)))
+        rank = {pre: i for i, pre in enumerate(HEADER_PREFIXES)}
+        names.sort(key=lambda n: rank[next(pre for pre in HEADER_PREFIXES
+                                           if n.startswith(pre))])
+        return self.sp.header_ids_for(self.tokenizer, names)
+
+    def prompt_ids(self, path: Path, max_tokens: int) -> list[int] | None:
+        """Header + a prompt slice. The header is never truncated away: it is
+        the conditioning, not content."""
+        from symusic import Score
+        try:
+            sc = Score(str(path))
+        except Exception:
+            return None
+        normalize_drums(sc, path.name)
+        ids = self.tokenizer(sc).ids
+        if len(ids) < 32:
+            return None
+        head = self.header_for(path)
+        room = max(16, max_tokens - len(head))
+        return [*head, *ids[:room]]
 
 
 def load_policy(path: Path, device: torch.device) -> tuple[MusicTransformer, ModelConfig]:
@@ -93,14 +151,31 @@ def token_logprobs(model: MusicTransformer, seq: torch.Tensor,
     return picked[:, n_prompt - 1:]          # only the sampled tokens
 
 
-def sample_group(model, prompt_ids, cfg: GRPOConfig, device) -> list[list[int]]:
+def sample_group(model, prompt_ids, cfg: GRPOConfig, device,
+                 spec: "PromptSpec | None" = None) -> list[list[int]]:
+    """`group_size` continuations of one prompt.
+
+    `eos_id` and `ban_ids` are not optional decoration: without eos_id the
+    stop branch in model.generate is dead code, every sample runs the full
+    max_new_tokens, and a sampled EOS is followed by whatever the model emits
+    afterwards — which the reward then scores as if it were music.
+    """
     model.eval()
-    out = []
+    eos_id = spec.eos_id if spec else None
+    ban_ids = (spec.ban_ids if spec else None) or None
+    x = torch.tensor([prompt_ids], dtype=torch.long, device=device)
+    kw = dict(max_new_tokens=cfg.max_new_tokens, temperature=cfg.temperature,
+              top_k=cfg.top_k, eos_id=eos_id, ban_ids=ban_ids)
     with torch.no_grad():
+        if hasattr(model, "generate_batch"):
+            # the whole group decodes in one pass; generate_batch already
+            # drops the EOS it stopped on
+            return model.generate_batch(x, cfg.group_size, **kw)
+        out = []
         for _ in range(cfg.group_size):
-            x = torch.tensor([prompt_ids], dtype=torch.long, device=device)
-            new = list(model.generate(x, max_new_tokens=cfg.max_new_tokens,
-                                      temperature=cfg.temperature, top_k=cfg.top_k))
+            new = list(model.generate(x, **kw))
+            if eos_id is not None and new and new[-1] == eos_id:
+                new = new[:-1]          # a terminator, not content to score
             out.append(new)
     return out
 
@@ -114,41 +189,105 @@ def train(cfg: GRPOConfig) -> None:
         json.dumps({k: str(v) for k, v in asdict(cfg).items()}, indent=2))
 
     tokenizer = load_tokenizer(cfg.tokenizer)
-    reward = Reward.load(cfg.reward)
-    print(f"[grpo] reward: {len(reward.features)} features, held-out "
-          f"{reward.heldout_accuracy:.2f} vs labeler {reward.self_consistency:.2f}")
+    spec = json.loads(cfg.reward.read_text())
 
     policy, model_cfg = load_policy(cfg.checkpoint, device)
     ref, _ = load_policy(cfg.checkpoint, device)
     ref.eval()
     for p in ref.parameters():
         p.requires_grad_(False)
+
+    if spec.get("kind") == "probe":
+        # Features come from the FROZEN reference, never the policy. The
+        # probe's weights were fitted on activations of this checkpoint, so
+        # reading them off a policy that RL is actively moving would let the
+        # policy raise its own reward by shifting its hidden states rather
+        # than by playing better music — the reward would drift along with
+        # the thing it is supposed to judge.
+        from midigenai.reward_probe import ProbeReward
+        # Identity is the file's content, not its path: the same checkpoint
+        # lives at a different path on a GPU box than on the machine that
+        # fitted the probe, and refusing on a path mismatch would refuse
+        # every remote run.
+        want_sha = spec.get("checkpoint_sha256_8mb")
+        want_bytes = spec.get("checkpoint_bytes")
+        if want_sha or want_bytes:
+            import hashlib
+            h = hashlib.sha256()
+            with open(cfg.checkpoint, "rb") as fh:
+                h.update(fh.read(8 << 20))
+            got_sha = h.hexdigest()
+            got_bytes = cfg.checkpoint.stat().st_size
+            if (want_sha and got_sha != want_sha) or (want_bytes and got_bytes != want_bytes):
+                raise SystemExit(
+                    f"probe was fitted on a different checkpoint than {cfg.checkpoint} "
+                    f"(sha {got_sha[:12]} vs {str(want_sha)[:12]}, "
+                    f"{got_bytes} vs {want_bytes} bytes): probe features are a "
+                    "property of the checkpoint that produced them")
+        else:
+            print(f"[grpo] WARNING: probe spec records no checkpoint hash "
+                  f"(fitted at {spec.get('checkpoint')}); cannot verify it "
+                  f"matches {cfg.checkpoint}", flush=True)
+        reward = ProbeReward(spec, ref, device)
+        print(f"[grpo] reward: probe on {spec['d_model']}-d hidden states of the "
+              f"frozen reference, held-out {spec['heldout_accuracy']:.3f}")
+    else:
+        reward = Reward.load(cfg.reward)
+        print(f"[grpo] reward: {len(reward.features)} features, held-out "
+              f"{reward.heldout_accuracy:.2f} vs labeler {reward.self_consistency:.2f}")
     opt = torch.optim.AdamW(policy.parameters(), lr=cfg.lr, betas=(0.9, 0.95),
                             weight_decay=0.0)
     print(f"[grpo] policy {policy.num_params()/1e6:.1f}M on {device}")
 
-    from symusic import Score
     files = sorted(cfg.prompts.glob("*.mid"))
     if not files:
         raise SystemExit(f"no prompts in {cfg.prompts}")
+    spec = PromptSpec(tokenizer)
+    print(f"[grpo] prompts: v4={spec.v4}, header={'yes' if spec.v4 else 'n/a'}, "
+          f"eos_id={spec.eos_id}, banned={spec.ban_ids or 'none'}")
 
     def prompt_of(f: Path) -> list[int] | None:
+        return spec.prompt_ids(f, cfg.prompt_tokens)
+
+    # A held-out set of prompts, fixed for the whole run and scored with a
+    # fixed seed. The per-step reward_mean cannot answer "is this working":
+    # every step samples different prompts, and prompts differ far more in
+    # baseline reward than training moves any one of them (observed -2.8 to
+    # -5.4 on consecutive steps of an untrained loop). Group-relative
+    # advantage cancels that inside a step; the logged average does not.
+    eval_files = [f for f in files[::max(1, len(files) // max(cfg.eval_prompts, 1))]
+                  ][:cfg.eval_prompts]
+    eval_prompts = [ids for ids in (prompt_of(f) for f in eval_files) if ids]
+
+    def eval_reward() -> float | None:
+        if not eval_prompts:
+            return None
+        ecfg = GRPOConfig(**{**asdict(cfg), "group_size": cfg.eval_samples})
+        ecfg.checkpoint, ecfg.tokenizer = cfg.checkpoint, cfg.tokenizer
+        ecfg.reward, ecfg.prompts, ecfg.out_dir = cfg.reward, cfg.prompts, cfg.out_dir
+        state = torch.random.get_rng_state()
+        torch.manual_seed(cfg.seed)          # same draws every time it is called
         try:
-            sc = Score(str(f))
-        except Exception:
-            return None
-        normalize_drums(sc, f.name)
-        ids = tokenizer(sc).ids
-        if len(ids) < 32:
-            return None
-        if len(ids) > cfg.prompt_tokens:
-            ids = ids[:cfg.prompt_tokens]
-        return ids
+            scores = []
+            for pids in eval_prompts:
+                for smp in sample_group(policy, pids, ecfg, device, spec):
+                    r = reward.score(tokenizer, smp, prompt_ids=pids)
+                    if r is not None:
+                        scores.append(r)
+        finally:
+            torch.random.set_rng_state(state)
+            policy.train()
+        return st.mean(scores) if scores else None
 
     metrics_path = cfg.out_dir / "metrics.csv"
     if not metrics_path.exists():
-        metrics_path.write_text("step,reward_mean,reward_std,kl,loss,n_scored,elapsed_s\n")
+        metrics_path.write_text(
+            "step,reward_mean,reward_std,kl,loss,n_scored,eval_reward,elapsed_s\n")
     t0 = time.time()
+    base_eval = eval_reward() if cfg.eval_every else None
+    if base_eval is not None:
+        print(f"[grpo] eval reward before training: {base_eval:+.4f} "
+              f"({len(eval_prompts)} fixed prompts x {cfg.eval_samples} samples)")
 
     for step in range(1, cfg.steps + 1):
         policy.train()
@@ -164,7 +303,7 @@ def train(cfg: GRPOConfig) -> None:
                     break
             if not prompt_ids:
                 continue
-            samples = sample_group(policy, prompt_ids, cfg, device)
+            samples = sample_group(policy, prompt_ids, cfg, device, spec)
             scored = [(s, reward.score(tokenizer, s, prompt_ids=prompt_ids))
                       for s in samples]
             scored = [(s, r) for s, r in scored if r is not None and len(s) > 1]
@@ -195,12 +334,21 @@ def train(cfg: GRPOConfig) -> None:
             rm = st.mean(step_rewards)
             rs_ = st.pstdev(step_rewards) if len(step_rewards) > 1 else 0.0
             kl_m = st.mean(step_kls)
+            ev = (eval_reward() if cfg.eval_every and step % cfg.eval_every == 0
+                  else None)
             with metrics_path.open("a") as f:
                 f.write(f"{step},{rm:.4f},{rs_:.4f},{kl_m:.5f},{st.mean(losses):.4f},"
-                        f"{len(step_rewards)},{time.time()-t0:.0f}\n")
+                        f"{len(step_rewards)},{'' if ev is None else f'{ev:.4f}'},"
+                        f"{time.time()-t0:.0f}\n")
             if step % cfg.log_every == 0:
+                extra = ""
+                if ev is not None:
+                    extra = f"  EVAL {ev:+.4f}"
+                    if base_eval is not None:
+                        extra += f" ({ev - base_eval:+.4f} vs start)"
                 print(f"[grpo] step {step:4d}  reward {rm:+.3f} (sd {rs_:.3f})  "
-                      f"KL {kl_m:.4f}  groups {groups_used}  {time.time()-t0:.0f}s", flush=True)
+                      f"KL {kl_m:.5f}  groups {groups_used}  "
+                      f"{time.time()-t0:.0f}s{extra}", flush=True)
         else:
             # every sample in every group was rejected by the reward (all
             # degenerate, or too short to score) — no update, but the run must
@@ -227,7 +375,8 @@ def main() -> None:
                                ("max-new-tokens", int, 192), ("temperature", float, 1.0),
                                ("top-k", int, 50), ("lr", float, 1e-6),
                                ("beta", float, 0.04), ("save-every", int, 50),
-                               ("seed", int, 0)):
+                               ("eval-every", int, 10), ("eval-prompts", int, 8),
+                               ("eval-samples", int, 4), ("seed", int, 0)):
         p.add_argument(f"--{name}", type=typ, default=default)
     p.add_argument("--device", default="")
     a = p.parse_args()
@@ -236,7 +385,9 @@ def main() -> None:
                      prompts_per_step=a.prompts_per_step, group_size=a.group_size,
                      prompt_tokens=a.prompt_tokens, max_new_tokens=a.max_new_tokens,
                      temperature=a.temperature, top_k=a.top_k, lr=a.lr, beta=a.beta,
-                     save_every=a.save_every, seed=a.seed, device=a.device))
+                     save_every=a.save_every, eval_every=a.eval_every,
+                     eval_prompts=a.eval_prompts, eval_samples=a.eval_samples,
+                     seed=a.seed, device=a.device))
 
 
 if __name__ == "__main__":

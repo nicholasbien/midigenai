@@ -159,7 +159,7 @@ def train(
               f"({'inflated' if compressed else 'copied'}) in {_time.time()-t0:.0f}s")
         data_dir = staged
 
-    cfg = TrainConfig(
+    cfg = TrainConfig(corpus_name=corpus, 
         data_dir=data_dir,
         out_dir=out_dir,
         size=size,

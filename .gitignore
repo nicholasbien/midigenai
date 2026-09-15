@@ -57,3 +57,4 @@ generated/
 tests/tmp/
 midigenai.egg-info/
 .claude/
+evals/autolabel/pairs/

@@ -90,16 +90,42 @@ def load_pairs(labels_path: Path):
                     m.get(f"prompt_ids_{lose}") or m["prompt_ids"],
                     m[f"cont_{lose}_ids"],
                     Path(m["prompt_file"]).name))
+    if not out:
+        # Every row was filtered. The usual causes are a labels file whose
+        # `choice` is not left/right (label_app's schema) and pair metas
+        # without cont_<side>_ids. Loading zero pairs and fitting on an empty
+        # array fails far from the cause, so say it here.
+        raise SystemExit(
+            f"no usable pairs from {labels_path}: needs rows with "
+            "choice in (left, right) and pair metas carrying prompt_ids and "
+            "cont_<side>_ids")
     return out
 
 
 def logo_accuracy(diffs: np.ndarray, groups: list[str], l2: float) -> float:
+    """Leave-one-prompt-out accuracy, warm-started from the full-data fit.
+
+    One refit per prompt group over d_model+1 features is the slowest part of
+    a probe fit — measured at tens of minutes for 769 features and ~400
+    groups, and it scales with d_model, so a larger checkpoint is worse. The
+    fit is convex, so each fold can start from the all-data solution and
+    take a fraction of the iterations to land in the same place.
+    """
+    import time
     garr = np.array(groups)
+    uniq = sorted(set(groups))
+    full = fit_bt(diffs, l2=l2)
     correct = 0
-    for g in sorted(set(groups)):
+    t0 = time.time()
+    for i, g in enumerate(uniq, 1):
         test = garr == g
-        w = fit_bt(diffs[~test], l2=l2)
+        w = fit_bt(diffs[~test], l2=l2, iters=400, w0=full)
         correct += int(((diffs[test] @ w) > 0).sum())
+        if i % 50 == 0 or i == len(uniq):
+            el = time.time() - t0
+            print(f"[probe]   cross-validation {i}/{len(uniq)} groups  "
+                  f"{el:.0f}s elapsed, ~{(len(uniq) - i) * el / i:.0f}s left",
+                  flush=True)
     return correct / len(diffs)
 
 
@@ -115,9 +141,15 @@ def fit(args) -> None:
     pairs = load_pairs(args.labels)
     print(f"[probe] {len(pairs)} decided pairs")
     diffs, groups = [], []
-    for pw, cw, pl, cl, g in pairs:
+    import time
+    t0 = time.time()
+    for i, (pw, cw, pl, cl, g) in enumerate(pairs, 1):
         fw = feature_vector(model, pw, cw, device)
         fl = feature_vector(model, pl, cl, device)
+        if i % 200 == 0:
+            el = time.time() - t0
+            print(f"[probe] features {i}/{len(pairs)} pairs  {el:.0f}s elapsed, "
+                  f"~{(len(pairs) - i) * el / i:.0f}s left", flush=True)
         if fw is None or fl is None:
             continue
         diffs.append(fw - fl)
@@ -143,7 +175,15 @@ def fit(args) -> None:
     train_acc = float(((diffs @ w) > 0).mean())
     print(f"[probe] best l2={l2:g}: held-out {acc:.3f}, train {train_acc:.3f}")
 
+    import hashlib
+    h = hashlib.sha256()
+    with open(args.checkpoint, "rb") as fh:            # 8 MB is plenty to identify
+        h.update(fh.read(8 << 20))
     spec = {"kind": "probe", "checkpoint": str(Path(args.checkpoint).resolve()),
+            # the path is where it was fitted; the hash is what it was fitted
+            # ON, and only the hash survives being copied to a GPU box
+            "checkpoint_sha256_8mb": h.hexdigest(),
+            "checkpoint_bytes": Path(args.checkpoint).stat().st_size,
             "d_model": int(diffs.shape[1] - 1), "l2": l2,
             "weights": w.tolist(), "diff_std": std.tolist(),
             "heldout_accuracy": acc, "train_accuracy": train_acc,

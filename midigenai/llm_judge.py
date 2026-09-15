@@ -31,63 +31,30 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-PROMPTS: dict[str, str] = {}
+# The rubrics are plain text files, not code: they are what the judge was
+# validated with, and reviewing a prompt means reading it, not reconstructing
+# it from three chained .replace() calls. Nothing in them is interpolated —
+# the rubric is a static system prompt and the music goes in the user message
+# (see build_prompt). Editing a file changes the judge; the agreement figures
+# in docs/LLM_JUDGE.md only describe the text as committed.
+#
+#   judge_base.txt      the rubric: fit, then musicality, then defects
+#   judge_taste.txt     base + what the labeler's own votes revealed
+#                       (restraint over busyness, groove over scattering)
+#   judge_strict.txt    taste + "abstain rather than guess"  <- THE DEFAULT,
+#                       0.816 against the labeler, at their 0.881 ceiling
+#   judge_fit_only.txt  ablation: judge only whether it belongs to the piece
+PROMPT_DIR = Path(__file__).parent / "prompts"
+DEFAULT_PROMPT = "strict"
 
-PROMPTS["base"] = """You judge short continuations of a musical phrase, written in symbolic notation.
+PROMPTS: dict[str, str] = {
+    f.stem[len("judge_"):]: f.read_text().rstrip()
+    for f in sorted(PROMPT_DIR.glob("judge_*.txt"))
+}
+if DEFAULT_PROMPT not in PROMPTS:
+    raise RuntimeError(f"missing {PROMPT_DIR}/judge_{DEFAULT_PROMPT}.txt")
 
-You are given a PROMPT (the phrase a musician played) and two candidate
-CONTINUATIONS produced by a music model. Pick the one a working musician
-would rather hear as the next few seconds of that phrase.
-
-Weigh, in order:
-1. Fit with the prompt — key, mode, harmonic direction, groove, register,
-   and density that follow from what came before.
-2. Internal musicality — phrasing that goes somewhere, coherent rhythm,
-   no aimless wandering.
-3. Absence of defects — near-silence, a single pitch hammered, an exact loop,
-   notes crammed into noise.
-
-Ignore genre preference: a well-made polka beats a sloppy nocturne. Ignore
-length. If they are genuinely equal, say "tie" — do not guess.
-
-Reply with JSON only: {"winner": "1" | "2" | "tie", "reason": "<12 words>"}"""
-
-# What the labeler's own votes revealed (Bradley-Terry fit over 120 pairs,
-# 2026-09-14): the strongest weights are *negative* on rhythmic entropy
-# (-0.84) and note density (-0.43), mildly positive on repetition. In plain
-# terms this labeler picks the calmer, steadier, more groove-like take over
-# the busier one. "taste" states that; "strict" adds an abstention rule,
-# since a judge that guesses on coin-flips only adds noise to the data.
-PROMPTS["taste"] = PROMPTS["base"].replace(
-    "Ignore genre preference:",
-    """Two tendencies of the listener you stand in for, when the choice is close:
-  * restraint beats busyness \u2014 fewer, better-placed notes over a flurry;
-  * a steady, repeating groove beats rhythmic scattering. Repetition with
-    intent is a strength here, not a weakness.
-These break ties; they never outrank fit with the prompt or obvious defects.
-
-Ignore genre preference:""")
-
-PROMPTS["strict"] = PROMPTS["taste"].replace(
-    "If they are genuinely equal, say \"tie\" \u2014 do not guess.",
-    """Answer "tie" whenever you would be guessing: an abstention costs nothing,
-a coin-flip verdict poisons the data. Name a winner only if you could defend
-it in one sentence to the musician who played the prompt.""")
-
-PROMPTS["fit_only"] = """You judge short continuations of a musical phrase, written in symbolic notation.
-
-You are given a PROMPT (the phrase a musician played) and two candidate
-CONTINUATIONS. Judge one thing: which one sounds like it belongs to the same
-piece of music as the prompt?
-
-Same key and harmony, same groove and subdivision, same register and density,
-the instruments behaving as they behaved. A continuation that is pleasant on
-its own but unrelated to the prompt loses to a plainer one that clearly
-belongs.
-
-Reply with JSON only: {"winner": "1" | "2" | "tie", "reason": "<12 words>"}"""
-
-SYSTEM = PROMPTS["base"]
+SYSTEM = PROMPTS[DEFAULT_PROMPT]
 
 
 PITCH_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
@@ -308,6 +275,106 @@ def validate(args) -> None:
         print(f"[judge] wrote {args.out}")
 
 
+
+def label(args) -> None:
+    """Judge unlabelled pairs and write labels in `label_app`'s schema.
+
+    Appends as it goes, and skips pair ids already in the output, so it is
+    resumable and can be pointed at a directory that is still filling up
+    while generation runs.
+    """
+    from openai import OpenAI
+    if not os.environ.get("OPENAI_API_KEY"):
+        raise SystemExit("set OPENAI_API_KEY")
+    client = OpenAI()
+    system = (Path(args.system_file).read_text() if args.system_file
+              else PROMPTS[args.prompt])
+
+    pairs_dir = Path(args.pairs)
+    out_path = Path(args.out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    done = set()
+    if out_path.exists():
+        done = {json.loads(l)["pair_id"]
+                for l in out_path.read_text().splitlines() if l.strip()}
+
+    ids = sorted(f.name[:-len("_prompt.mid")]
+                 for f in pairs_dir.glob("*_prompt.mid"))
+    todo = [i for i in ids
+            if i not in done and (pairs_dir / f"{i}_a.mid").exists()
+            and (pairs_dir / f"{i}_b.mid").exists()]
+    if args.limit:
+        todo = todo[:args.limit]
+    print(f"[label] {len(todo)} pairs to judge ({len(done)} already done), "
+          f"model={args.model}, prompt={args.system_file or args.prompt}")
+
+    lock = __import__("threading").Lock()
+    counts = {"a": 0, "b": 0, "tie": 0, "error": 0}
+
+    def one(pid: str):
+        pa = render(pairs_dir / f"{pid}_prompt.mid", args.format)
+        ra = render(pairs_dir / f"{pid}_a.mid", args.format)
+        rb = render(pairs_dir / f"{pid}_b.mid", args.format)
+        if not (pa and ra and rb):
+            return {"pair_id": pid, "error": "unrenderable"}
+        # Show a first half the time, so a side-biased judge cannot look
+        # right for the wrong reason. Derived from the pair id rather than a
+        # shared random.Random: this runs under a ThreadPoolExecutor (Random
+        # is not thread-safe) and resumes re-run the function, which would
+        # replay an identical seeded sequence every batch.
+        import hashlib
+        a_first = int(hashlib.sha1(f"{args.seed}:{pid}".encode()).hexdigest(), 16) & 1 == 0
+        first, second = (ra, rb) if a_first else (rb, ra)
+        try:
+            res = judge_pair(client, args.model, pa, first, second, system=system)
+        except Exception as e:
+            return {"pair_id": pid, "error": f"{type(e).__name__}: {e}"[:120]}
+        if res["verdict"] == "tie":
+            preferred = "tie"
+        else:
+            won_first = res["verdict"] == "1"
+            preferred = ("a" if won_first else "b") if a_first else ("b" if won_first else "a")
+        # label_app's schema, which every downstream loader expects: `choice`
+        # is the SIDE that won ("left"/"right") and `preferred` resolves it to
+        # canonical a/b. reward_probe filters on choice, so writing "a"/"b"
+        # there made it skip every row.
+        choice = ("tie" if preferred == "tie"
+                  else "left" if preferred == "a" else "right")
+        return {"ts": utcnow(), "pair_id": pid, "preferred": preferred,
+                "choice": choice, "left_is": "a", "right_is": "b",
+                "judge_model": args.model, "judge_prompt": args.system_file or args.prompt,
+                "swap_consistent": res["consistent"], "a_shown_first": a_first,
+                "reason": res["reason"]}
+
+    with ThreadPoolExecutor(args.concurrency) as ex, out_path.open("a") as fh:
+        for rec in ex.map(one, todo):
+            with lock:
+                if rec.get("error"):
+                    counts["error"] += 1
+                    continue
+                counts[rec["preferred"]] += 1
+                fh.write(json.dumps(rec) + "\n")
+                fh.flush()
+                n = counts["a"] + counts["b"] + counts["tie"]
+                if n % 25 == 0:
+                    print(f"[label] {n} judged  a={counts['a']} b={counts['b']} "
+                          f"tie={counts['tie']} err={counts['error']}")
+
+    n = counts["a"] + counts["b"] + counts["tie"]
+    decided = counts["a"] + counts["b"]
+    print(f"[label] wrote {decided} decided + {counts['tie']} ties to {out_path} "
+          f"({counts['error']} errors)")
+    if n:
+        print(f"[label] tie rate {counts['tie'] / n:.2f}, "
+              f"side balance a={counts['a']} b={counts['b']} "
+              f"(a lopsided split means the judge is reading position, not music)")
+
+
+def utcnow() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -315,8 +382,9 @@ def main() -> None:
     v = sub.add_parser("validate")
     v.add_argument("--labels", type=Path, required=True)
     v.add_argument("--model", default="gpt-4.1-mini")
-    v.add_argument("--prompt", choices=sorted(PROMPTS), default="base",
-                   help="which judging rubric to use")
+    v.add_argument("--prompt", choices=sorted(PROMPTS), default=DEFAULT_PROMPT,
+                   help=f"which judging rubric to use (default: {DEFAULT_PROMPT}, "
+                        "the one the agreement figures describe)")
     v.add_argument("--system-file", type=Path, default=None,
                    help="read the rubric from a file instead")
     v.add_argument("--split", choices=["all", "dev", "test"], default="all",
@@ -328,8 +396,23 @@ def main() -> None:
     v.add_argument("--concurrency", type=int, default=6)
     v.add_argument("--seed", type=int, default=0)
     v.add_argument("--out", type=Path, default=None)
+    lb = sub.add_parser("label", help="judge unlabelled pairs into labels.jsonl")
+    lb.add_argument("--pairs", type=Path, required=True,
+                    help="directory of <id>_prompt.mid / _a.mid / _b.mid")
+    lb.add_argument("--out", type=Path, required=True)
+    lb.add_argument("--model", default="gpt-5.6-sol")
+    lb.add_argument("--prompt", choices=sorted(PROMPTS), default=DEFAULT_PROMPT)
+    lb.add_argument("--system-file", type=Path, default=None)
+    lb.add_argument("--format", choices=["abc", "notes"], default="notes")
+    lb.add_argument("--limit", type=int, default=0)
+    lb.add_argument("--concurrency", type=int, default=12)
+    lb.add_argument("--seed", type=int, default=0)
+
     a = p.parse_args()
-    validate(a)
+    if a.cmd == "label":
+        label(a)
+    else:
+        validate(a)
 
 
 if __name__ == "__main__":
