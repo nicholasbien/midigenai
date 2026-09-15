@@ -197,6 +197,17 @@ class Generator:
         self.tokenizer = (
             load_tokenizer(tokenizer_path) if tokenizer_path else build_tokenizer()
         )
+        # A tokenizer from a different run decodes every id to the wrong
+        # token rather than failing, so the output is plausible-looking
+        # nonsense. Checking the one number that must agree turns that into
+        # an error naming both sides.
+        if len(self.tokenizer.vocab) != cfg.vocab_size:
+            raise ValueError(
+                f"tokenizer/checkpoint mismatch: tokenizer has "
+                f"{len(self.tokenizer.vocab)} tokens, checkpoint was trained "
+                f"with {cfg.vocab_size}. They are from different runs "
+                f"(checkpoint={checkpoint_path}, tokenizer={tokenizer_path})."
+            )
         self.bos_id = self._special_id("BOS_None", "BOS")
         self.eos_id = self._special_id("EOS_None", "EOS")
 
