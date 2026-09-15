@@ -216,6 +216,23 @@ class MidiGen:
                 logits, caches = model(next_ids, kv_caches=caches)
         return [list(gen.postprocess(prompt_ids, out)) for out in outs]
 
+    def _continuation_only(self, prompt_ids: list[int], new_ids: list[int],
+                           tempo_bpm: float) -> bytes:
+        """The continuation on its own, re-zeroed at the handoff.
+
+        Decoded with the prompt for context (Bar/Position are relative, so
+        decoding the continuation alone would put it at bar 0 of nothing) and
+        then cut at the prompt's end, which is what `label_app` scores and
+        therefore what `reward_align` expects to be handed."""
+        full = self.gen.tokenizer.decode(list(prompt_ids) + list(new_ids))
+        cut = self.gen.tokenizer.decode(list(prompt_ids)).end()
+        for track in full.tracks:
+            kept = [n for n in track.notes if n.start >= cut]
+            for n in kept:
+                n.start -= cut
+            track.notes = kept
+        return self._score_to_bytes(full, tempo_bpm)
+
     def _to_midi_bytes(self, full_ids: list[int], tempo_bpm: float) -> bytes:
         return self._score_to_bytes(self.gen.tokenizer.decode(full_ids), tempo_bpm)
 
@@ -263,6 +280,14 @@ class MidiGen:
         midis = [self._to_midi_bytes(list(prompt) + ids, tempo_bpm)
                  for ids in sample_ids]
 
+        # Continuation-only copies, plus the token ids: what a preference
+        # pair needs to be worth anything later. `label_app` writes exactly
+        # this (the played file is prompt + continuation, the scored file is
+        # the continuation alone, re-zeroed), so a vote cast on the site can
+        # be fitted by reward_align next to one cast in the labeling app.
+        cont_midis = [self._continuation_only(prompt, ids, tempo_bpm)
+                      for ids in sample_ids]
+
         return {
             "prompt_tokens": len(prompt),
             "prompt_tokens_total": len(full_prompt),
@@ -272,6 +297,9 @@ class MidiGen:
             "tempo_bpm": tempo_bpm,
             "midi": midis[0],   # backward-compatible single-sample field
             "midis": midis,
+            "cont_midis": cont_midis,
+            "prompt_ids": list(prompt),
+            "cont_ids": sample_ids,
         }
 
     @modal.method()
