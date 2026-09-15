@@ -10,6 +10,8 @@ For each held-out prompt it generates continuations and measures:
   ("starts good then wanders")
 - prompt coherence: pitch-class histogram correlation between prompt and
   continuation (does it stay in key / related material?)
+- control adherence (`--mode control`, v4): ask for each Density / Poly /
+  Range bucket in turn and measure which bucket came back
 - the eval_v2 musical battery on the continuation only
 
 Score one checkpoint:
@@ -48,12 +50,17 @@ METRICS = [
     "downbeat_alignment", "downbeat_delta", "bar_offset_beats",
     # accompaniment mode only
     "accomp_bars_ok", "accomp_pc_overlap", "accomp_notes",
+    # control mode only
+    "control_accuracy", "control_adjacent", "control_accuracy_off_prompt",
+    "control_effect",
 ]
 # direction hints for the compare table: +1 higher is better, -1 lower, 0 neutral
 DIRECTION = {"eos_rate": +1, "repetition_rate": -1, "repetition_drift": -1,
              "scale_consistency": +1, "prompt_coherence": +1,
              "downbeat_alignment": +1, "downbeat_delta": +1, "bar_offset_beats": -1,
-             "accomp_bars_ok": +1, "accomp_pc_overlap": +1}
+             "accomp_bars_ok": +1, "accomp_pc_overlap": +1,
+             "control_accuracy": +1, "control_adjacent": +1,
+             "control_accuracy_off_prompt": +1, "control_effect": +1}
 
 
 def _prompt_pool(prompts_dir: Path, prompt_set: dict | None) -> list[tuple[str, Path]]:
@@ -124,24 +131,17 @@ def evaluate_checkpoint(checkpoint: str, tokenizer: str | None, prompts_dir: Pat
         return _evaluate_accompany(gen, prompts_dir, n_prompts, gens_per_prompt,
                                    bars, temperature, top_k, seed, checkpoint,
                                    prompt_set=prompt_set)
+    if mode == "control":
+        return _evaluate_control(gen, prompts_dir, n_prompts, prompt_tokens,
+                                 max_new_tokens, temperature, top_k, seed,
+                                 checkpoint, prompt_set=prompt_set)
 
     pool = _prompt_pool(prompts_dir, prompt_set)
     rng = random.Random(seed)
     picked = rng.sample(pool, min(n_prompts, len(pool)))
 
     def cont_score(prompt_ids, new_ids):
-        """Continuation-only Score: decode with prompt context, cut, re-zero.
-        Also returns the un-rezeroed full decode and the cut tick, so bar-grid
-        metrics can be computed on the shared grid."""
-        full = gen.tokenizer.decode(list(prompt_ids) + list(new_ids))
-        cut = gen.tokenizer.decode(list(prompt_ids)).end()
-        grid = gen.tokenizer.decode(list(prompt_ids) + list(new_ids))
-        for t in full.tracks:
-            kept = [n for n in t.notes if n.start >= cut]
-            for n in kept:
-                n.start -= cut
-            t.notes = kept
-        return full, grid, cut
+        return _continuation_score(gen, prompt_ids, new_ids)
 
     rows = []
     for sha, f in picked:
@@ -237,6 +237,170 @@ def _cut_prompt(gen, ids: list[int], n: int) -> list[int]:
         if ids[i] in boundary:
             return ids[:i]
     return ids[:n]
+
+
+def _continuation_score(gen, prompt_ids, new_ids):
+    """Continuation-only Score: decode with prompt context, cut, re-zero.
+    Also returns the un-rezeroed full decode and the cut tick, so bar-grid
+    metrics can be computed on the shared grid."""
+    full = gen.tokenizer.decode(list(prompt_ids) + list(new_ids))
+    cut = gen.tokenizer.decode(list(prompt_ids)).end()
+    grid = gen.tokenizer.decode(list(prompt_ids) + list(new_ids))
+    for t in full.tracks:
+        kept = [n for n in t.notes if n.start >= cut]
+        for n in kept:
+            n.start -= cut
+        t.notes = kept
+    return full, grid, cut
+
+
+def _rank_corr(xs: list[float], ys: list[float]) -> float:
+    """Spearman: Pearson on tie-averaged ranks. Buckets are ordinal and there
+    are three or four of them, so ties are the normal case, not an edge one."""
+    def ranks(v):
+        order = sorted(range(len(v)), key=lambda i: v[i])
+        out = [0.0] * len(v)
+        i = 0
+        while i < len(order):
+            j = i
+            while j + 1 < len(order) and v[order[j + 1]] == v[order[i]]:
+                j += 1
+            avg = (i + j) / 2 + 1
+            for k in range(i, j + 1):
+                out[order[k]] = avg
+            i = j + 1
+        return out
+
+    rx, ry = ranks(xs), ranks(ys)
+    mx, my = st.mean(rx), st.mean(ry)
+    num = sum((a - mx) * (b - my) for a, b in zip(rx, ry))
+    den = (sum((a - mx) ** 2 for a in rx) * sum((b - my) ** 2 for b in ry)) ** 0.5
+    return num / den if den else float("nan")
+
+
+def _evaluate_control(gen, prompts_dir, n_prompts, prompt_tokens, max_new_tokens,
+                      temperature, top_k, seed, checkpoint,
+                      prompt_set: dict | None = None) -> dict:
+    """v4 control-adherence scorecard: ask for a bucket, measure what arrives.
+
+    For each prompt and each Density / Poly / Range bucket, the prompt's own
+    header is rebuilt with that one family overridden and everything else
+    left describing the file — the distribution training saw. The
+    continuation is then bucketed by the same function the dataset builder
+    used, so "asked for Density_3, got Density_3" is the same statement on
+    both sides.
+
+    Exact accuracy alone is gameable by inertia: a model that ignores the
+    header still scores well whenever the requested bucket happens to match
+    the prompt's own. So the card also reports accuracy on the requests that
+    *differ* from the prompt's bucket, and the low-to-high effect (mean
+    realized bucket when asking for the lowest vs the highest), which is zero
+    for a model that is not listening.
+    """
+    from symusic import Score
+
+    from midigenai.attributes import FAMILY_SIZES, realized_buckets
+    from midigenai.tokenizer import normalize_drums
+
+    if not gen.v4:
+        raise SystemExit("[eval] --mode control needs a v4 (header) checkpoint")
+
+    pool = _prompt_pool(prompts_dir, prompt_set)
+    rng = random.Random(seed)
+    picked = rng.sample(pool, min(n_prompts, len(pool)))
+
+    rows = []
+    for sha, f in picked:
+        score = Score(str(f))
+        normalize_drums(score, f.name)
+        ids = gen.tokenizer(score).ids
+        if len(ids) < 16:
+            continue
+        if len(ids) > prompt_tokens:
+            ids = _cut_prompt(gen, ids, prompt_tokens)
+        prompt_score = gen.tokenizer.decode(list(ids))
+        prompt_buckets = realized_buckets(prompt_score)
+        for family, n_buckets in FAMILY_SIZES.items():
+            for requested in range(n_buckets):
+                header = gen.make_header(f, **{family: requested})
+                new_ids = list(gen.generate_ids(
+                    [*header, *ids], max_new_tokens=max_new_tokens,
+                    temperature=temperature, top_k=top_k))
+                try:
+                    cont, _grid, _cut = _continuation_score(gen, ids, new_ids)
+                except Exception:
+                    continue
+                n_notes = sum(len(t.notes) for t in cont.tracks)
+                row = {"prompt": f.name, "prompt_sha": sha[:12],
+                       "family": family, "requested": requested,
+                       "prompt_bucket": prompt_buckets.get(family),
+                       "gen_tokens": len(new_ids), "gen_notes": n_notes}
+                if n_notes >= 4:
+                    got = realized_buckets(cont).get(family)
+                    if got is not None:
+                        row["realized"] = got
+                        row["hit"] = 1.0 if got == requested else 0.0
+                        row["adjacent"] = 1.0 if abs(got - requested) <= 1 else 0.0
+                rows.append(row)
+
+    families = {}
+    for family, n_buckets in FAMILY_SIZES.items():
+        scored = [r for r in rows if r["family"] == family and "realized" in r]
+        if not scored:
+            continue
+        confusion = [[0] * n_buckets for _ in range(n_buckets)]
+        for r in scored:
+            confusion[r["requested"]][r["realized"]] += 1
+        by_request = [[r["realized"] for r in scored if r["requested"] == b]
+                      for b in range(n_buckets)]
+        means = [round(st.mean(v), 3) if v else None for v in by_request]
+        off = [r for r in scored
+               if r["prompt_bucket"] is not None and r["requested"] != r["prompt_bucket"]]
+        lo, hi = means[0], means[-1]
+        families[family] = {
+            "n": len(scored),
+            "empty": sum(1 for r in rows
+                         if r["family"] == family and "realized" not in r),
+            "accuracy": round(st.mean([r["hit"] for r in scored]), 4),
+            "adjacent": round(st.mean([r["adjacent"] for r in scored]), 4),
+            "accuracy_off_prompt": (round(st.mean([r["hit"] for r in off]), 4)
+                                    if off else None),
+            "n_off_prompt": len(off),
+            "spearman": round(_rank_corr([r["requested"] for r in scored],
+                                         [r["realized"] for r in scored]), 4),
+            "effect_low_to_high": (round(hi - lo, 3)
+                                   if lo is not None and hi is not None else None),
+            "mean_realized_by_request": means,
+            "confusion": confusion,
+        }
+
+    def _pooled(key):
+        vals = [fam[key] for fam in families.values() if fam.get(key) is not None]
+        return {"mean": round(st.mean(vals), 4),
+                "median": round(st.median(vals), 4)} if vals else None
+
+    agg = {}
+    for card_key, fam_key in (("control_accuracy", "accuracy"),
+                              ("control_adjacent", "adjacent"),
+                              ("control_accuracy_off_prompt", "accuracy_off_prompt"),
+                              ("control_effect", "effect_low_to_high")):
+        v = _pooled(fam_key)
+        if v:
+            agg[card_key] = v
+    for m in ("gen_tokens", "gen_notes"):
+        vals = [r[m] for r in rows if m in r]
+        if vals:
+            agg[m] = {"mean": round(st.mean(vals), 4),
+                      "median": round(st.median(vals), 4)}
+
+    card = {"checkpoint": str(checkpoint), "mode": "control",
+            "n_generations": len(rows),
+            "params": {"prompt_tokens": prompt_tokens,
+                       "max_new_tokens": max_new_tokens,
+                       "temperature": temperature, "top_k": top_k, "seed": seed},
+            "families": families, "aggregate": agg, "rows": rows}
+    _stamp_prompt_set(card, prompt_set, rows)
+    return card
 
 
 def _evaluate_accompany(gen, prompts_dir, n_prompts, gens_per_prompt, bars,
@@ -355,8 +519,11 @@ def main():
     p.add_argument("--temperature", type=float, default=1.0)
     p.add_argument("--top-k", type=int, default=50)
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--mode", choices=["continue", "accompany"], default="continue",
-                   help="accompany: v4 accompaniment scorecard (see _evaluate_accompany)")
+    p.add_argument("--mode", choices=["continue", "accompany", "control"],
+                   default="continue",
+                   help="accompany: v4 accompaniment scorecard; control: v4 "
+                        "control-adherence scorecard (10 generations per "
+                        "prompt, so use a smaller --n-prompts)")
     p.add_argument("--bars", type=int, default=8, help="accompany: window length")
     p.add_argument("--pad-to-bar", action="store_true",
                    help="continue (v4): pad the prompt to its bar line first")
@@ -403,6 +570,13 @@ def main():
         print(f"[eval] per-prompt rows (local only) -> {rows_path}")
     for m, v in card["aggregate"].items():
         print(f"  {m:22s} mean {v['mean']:>8.3f}   median {v['median']:>8.3f}")
+    for family, fam in card.get("families", {}).items():
+        off = fam["accuracy_off_prompt"]
+        print(f"  {family}: exact {fam['accuracy']:.2f}  within-1 "
+              f"{fam['adjacent']:.2f}  off-prompt "
+              f"{off if off is None else f'{off:.2f}'} (n={fam['n_off_prompt']})  "
+              f"low->high {fam['effect_low_to_high']}  "
+              f"realized by request {fam['mean_realized_by_request']}")
 
 
 if __name__ == "__main__":

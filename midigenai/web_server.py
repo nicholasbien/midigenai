@@ -46,6 +46,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
 # The version allowlist lives with the Modal app so the two can't drift.
+from midigenai.attributes import control_vocab, validate_controls
 from midigenai.modal_serve import SERVED_VERSIONS, resolve_version
 
 env = os.environ.get("ENV", "dev")
@@ -238,12 +239,19 @@ def _unique_string() -> str:
 
 
 def _generate_n(midi_bytes: bytes, temperature: float, top_k: int,
-                max_new_tokens: int, n_samples: int, version: str) -> dict:
+                max_new_tokens: int, n_samples: int, version: str,
+                controls: dict | None = None) -> dict:
     """n continuations in ONE Modal call, batched on the GPU — one round trip
-    and a shared prefill instead of n sequential generations."""
+    and a shared prefill instead of n sequential generations.
+
+    `controls` is only sent when the caller asked for one: a serving
+    deployment older than the control surface rejects the argument, and an
+    uncontrolled request should not depend on the deploy order of two
+    services."""
+    kwargs = {"controls": controls} if controls else {}
     result = _generator(version).generate_batch.remote(
         midi_bytes, max_new_tokens=max_new_tokens,
-        temperature=temperature, top_k=top_k, n_samples=n_samples,
+        temperature=temperature, top_k=top_k, n_samples=n_samples, **kwargs,
     )
     return result
 
@@ -285,10 +293,10 @@ def _read_upload():
 
 def _two_samples_response(midi_bytes: bytes, base: str, temperature: float,
                           top_k: int, max_new_tokens: int, version: str,
-                          route: str = "generate"):
+                          route: str = "generate", controls: dict | None = None):
     unique_str = _unique_string()
     result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens,
-                         n_samples=2, version=version)
+                         n_samples=2, version=version, controls=controls)
     out_paths = [
         _save_midi(m, f"{base}_{unique_str}", str(i), version)
         for i, m in enumerate(result["midis"])
@@ -297,7 +305,8 @@ def _two_samples_response(midi_bytes: bytes, base: str, temperature: float,
     # the vote path never has to assume it.
     _write_pair(unique_str, midi_bytes, result, version,
                 {"temperature": temperature, "top_k": top_k,
-                 "max_new_tokens": max_new_tokens},
+                 "max_new_tokens": max_new_tokens, "controls": controls or {},
+                 "header": result.get("header", [])},
                 shown=["a", "b"], route=route)
     return jsonify({
         "message": "MIDI file generated successfully",
@@ -310,6 +319,8 @@ def _two_samples_response(midi_bytes: bytes, base: str, temperature: float,
                             filename=os.path.basename(out_paths[0]), _external=True),
         "midiUrl2": url_for("serve_user_midi",
                             filename=os.path.basename(out_paths[1]), _external=True),
+        # what the model was actually told, controls included
+        "header": result.get("header", []),
         **_prompt_fields(result),
     })
 
@@ -320,6 +331,32 @@ def _gen_params():
         request.args.get("top_k", default=50, type=int),
         request.args.get("max_new_tokens", default=512, type=int),
     )
+
+
+def _controls() -> dict:
+    """Attribute-header controls from the query string or form.
+
+    `density`, `poly` and `range` are the buckets the dataset builder
+    computed from the notes (see /, which publishes the vocabulary);
+    `instruments` is a comma-separated list of families, `genre` one name.
+    Validated here so a typo is a 400 naming the allowed values rather than
+    a 500 from a vocabulary lookup three processes away. Returns {} when the
+    caller asked for nothing, which keeps those requests on the code path
+    they have always taken.
+    """
+    def _get(name):
+        return request.args.get(name) or request.form.get(name)
+
+    raw = {"density": _get("density"), "poly": _get("poly"),
+           "pitch_range": _get("range")}
+    instruments = _get("instruments")
+    if instruments:
+        raw["instruments"] = [i.strip() for i in instruments.split(",") if i.strip()]
+    genre = _get("genre")
+    if genre:
+        raw["genres"] = [genre.strip()]
+    asked = {k: v for k, v in raw.items() if v not in (None, "", [])}
+    return validate_controls(**asked) if asked else {}
 
 
 def _model_version() -> str:
@@ -348,6 +385,8 @@ def health():
         "default_model": resolve_version(None),
         # If `id` changes after a deploy, DATA_DIR is not a volume and the
         # counts below went with it.
+        # what /api/* will accept as controls, so a client needn't hardcode it
+        "controls": control_vocab(),
         "storage": {
             "dir": DATA_DIR,
             "id": STORAGE.get("id"),
@@ -373,8 +412,16 @@ def upload_midi():
         return upload
     midi_bytes, base = upload
     try:
+        controls = _controls()
+    except ValueError as e:
+        return jsonify({"error": str(e), "controls": control_vocab()}), 400
+    try:
         return _two_samples_response(midi_bytes, base, temperature, top_k,
-                                     max_new_tokens, version, route="upload")
+                                     max_new_tokens, version, route="upload",
+                                     controls=controls)
+    except ValueError as e:
+        # the model can't do what was asked (controls on v3, for instance)
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -390,11 +437,18 @@ def generate_from_selected(filename):
     if not os.path.exists(input_filepath):
         return jsonify({"error": "File not found"}), 404
     try:
+        controls = _controls()
+    except ValueError as e:
+        return jsonify({"error": str(e), "controls": control_vocab()}), 400
+    try:
         with open(input_filepath, "rb") as fh:
             midi_bytes = fh.read()
         base = os.path.splitext(filename)[0]
         return _two_samples_response(midi_bytes, base, temperature, top_k,
-                                     max_new_tokens, version, route="preselected")
+                                     max_new_tokens, version, route="preselected",
+                                     controls=controls)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -416,8 +470,15 @@ def upload_midi_ab():
     with open(input_path, "wb") as f:
         f.write(midi_bytes)
 
-    result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens,
-                         n_samples=2, version=version)
+    try:
+        controls = _controls()
+    except ValueError as e:
+        return jsonify({"error": str(e), "controls": control_vocab()}), 400
+    try:
+        result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens,
+                             n_samples=2, version=version, controls=controls)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     paths = [
         _save_midi(m, f"{base}_{unique_str}", f"ab{i}", version)
         for i, m in enumerate(result["midis"])
@@ -432,7 +493,8 @@ def upload_midi_ab():
 
     _write_pair(unique_str, midi_bytes, result, version,
                 {"temperature": temperature, "top_k": top_k,
-                 "max_new_tokens": max_new_tokens},
+                 "max_new_tokens": max_new_tokens, "controls": controls,
+                 "header": result.get("header", [])},
                 shown=shown, route="ab")
 
     with open(os.path.join(DATA_DIR, "ab_pairs.csv"), "a") as f:
@@ -446,6 +508,7 @@ def upload_midi_ab():
                             filename=os.path.basename(paths[0]), _external=True),
         "midiUrl2": url_for("serve_user_midi",
                             filename=os.path.basename(paths[1]), _external=True),
+        "header": result.get("header", []),
         **_prompt_fields(result),
     })
 
@@ -472,10 +535,16 @@ def accompany():
     unique_str = _unique_string()
 
     try:
+        controls = _controls()
+    except ValueError as e:
+        return jsonify({"error": str(e), "controls": control_vocab()}), 400
+    try:
         result = _generator(version).accompany_batch.remote(
             midi_bytes, bars=bars, temperature=temperature, top_k=top_k,
-            n_samples=2,
+            n_samples=2, **({"controls": controls} if controls else {}),
         )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
@@ -501,6 +570,69 @@ def accompany():
         "conditionTrackName": result["condition_track_name"],
         "trackNames": result["track_names"],
         "generatedNotes": result["generated_notes"],
+        "header": result.get("header", []),
+    })
+
+
+@app.route("/api/infill", methods=["POST"])
+def infill():
+    """Rewrite bars [at_bar, at_bar+bars) of the upload, in place.
+
+    Continuation answers "what happens next" and accompaniment answers "what
+    else is playing"; this is "that bit in the middle, again". The model sees
+    the music on both sides of the gap, so the new span has to land back on
+    what follows it. Each returned file is the whole piece with the span
+    replaced, so the client plays it against the original and hears one
+    section change.
+
+    v4 only: earlier checkpoints have no span-infill document type.
+    """
+    temperature, top_k, _ = _gen_params()
+    version = _model_version()
+    at_bar = max(0, request.args.get("at_bar", default=0, type=int))
+    bars = max(1, min(request.args.get("bars", default=2, type=int), 32))
+    upload = _read_upload()
+    if isinstance(upload, Response):
+        return upload
+    midi_bytes, base = upload
+    unique_str = _unique_string()
+
+    try:
+        controls = _controls()
+    except ValueError as e:
+        return jsonify({"error": str(e), "controls": control_vocab()}), 400
+    try:
+        result = _generator(version).infill_batch.remote(
+            midi_bytes, at_bar=at_bar, bars=bars, temperature=temperature,
+            top_k=top_k, n_samples=2,
+            **({"controls": controls} if controls else {}),
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+    paths = [
+        _save_midi(m, f"{base}_{unique_str}", f"fill{i}", version)
+        for i, m in enumerate(result["midis"])
+    ]
+    return jsonify({
+        "message": "Infill generated",
+        "requestId": unique_str,
+        "model": version,
+        "midiUrl1": url_for("serve_user_midi",
+                            filename=os.path.basename(paths[0]), _external=True),
+        "midiUrl2": url_for("serve_user_midi",
+                            filename=os.path.basename(paths[1]), _external=True),
+        # where the rewritten span sits in the returned files
+        "atBar": result["at_bar"],
+        "bars": result["bars"],
+        "barsAvailable": result["bars_available"],
+        "spanStartSeconds": result["span_start_seconds"],
+        "spanSeconds": result["span_seconds"],
+        "generatedNotes": result["generated_notes"],
+        "header": result.get("header", []),
     })
 
 

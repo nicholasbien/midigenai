@@ -2,8 +2,15 @@
 Modal serving for midigenai (successor to openmusenet2/v2/modal_generate_v2.py).
 
 Deploys as app `midigenai-serve`, class `MidiGen`:
-- generate_batch(): one-shot, returns full prompt+continuation MIDI bytes
-- stream_notes():   yields JSON-line note dicts as the model emits events
+- generate_batch():   one-shot, returns full prompt+continuation MIDI bytes
+- accompany_batch():  parts that play *with* the upload (v4)
+- infill_batch():     rewrite bars i..j in place (v4)
+- stream_notes():     yields JSON-line note dicts as the model emits events
+
+The three v4 methods take `controls`: Density / Poly / Range buckets,
+instrument families and a genre, the same attribute header every training
+document carried. Validated against attributes.control_vocab() before it
+reaches a vocabulary lookup.
 
 Checkpoints live in the `midigenai-models` Modal Volume, one subfolder per
 version, mirroring the Hugging Face repo layout:
@@ -114,6 +121,19 @@ def list_versions() -> dict:
     return out
 
 
+def local_method(name: str):
+    """The undecorated function behind a `MidiGen` method.
+
+    Modal's decorators replace these with deployment handles, which would
+    leave the serving logic — header building, infill stitching, the batched
+    sampler — with no way to be exercised outside a deploy. Tests bind the
+    raw function to a stub instance holding a real Generator. Kept in one
+    place so a Modal upgrade breaks this function and not every caller.
+    """
+    raw = MidiGen._get_user_cls().__dict__[name]
+    return raw._get_raw_f() if hasattr(raw, "_get_raw_f") else raw
+
+
 @app.cls(
     image=image,
     gpu="L4",  # pinned: modern, low per-kernel latency; "any" can hand out T4s
@@ -171,6 +191,7 @@ class MidiGen:
         max_new_tokens: int,
         temperature: float,
         top_k: int,
+        header_ids: list[int] = (),
     ) -> list[list[int]]:
         """Decode n_samples continuations in one batch on the GPU — a second
         sample rides along nearly free vs. two sequential generations.
@@ -185,6 +206,9 @@ class MidiGen:
         # Long uploads: cut the prompt so prompt + continuation fits the
         # context window (decoding past it crashes attention).
         prompt_ids, max_new_tokens = gen.fit_to_context(prompt_ids, max_new_tokens)
+        # BOS, header, body -- the order sequence_format.continuation_prompt
+        # writes and the order training saw.
+        prompt_ids = [*header_ids, *prompt_ids]
         if gen.bos_id is not None and (not prompt_ids or prompt_ids[0] != gen.bos_id):
             prompt_ids = [gen.bos_id, *prompt_ids]
         ban_ids = gen.default_ban_ids()
@@ -215,6 +239,31 @@ class MidiGen:
                     break
                 logits, caches = model(next_ids, kv_caches=caches)
         return [list(gen.postprocess(prompt_ids, out)) for out in outs]
+
+    def _header_for(self, score, controls: dict | None) -> list[int]:
+        """Attribute header for a request: the music's own attributes, with
+        whatever the caller asked to override.
+
+        Sent on every v4 request, not just controlled ones. Training put a
+        header on ~90% of documents (the rest is dropout), and both offline
+        paths that judge this model -- eval_checkpoint and label_app -- build
+        one, so serving without it was measuring one thing and shipping
+        another. `controls` on a non-v4 checkpoint is an error rather than a
+        silent no-op: the caller asked for something that cannot happen.
+        """
+        from midigenai.attributes import validate_controls
+
+        if not self.gen.v4:
+            if controls:
+                raise ValueError(
+                    f"attribute controls need a v4 checkpoint; "
+                    f"{self.version!r} has no attribute header")
+            return []
+        return self.gen.make_header(score=score, **validate_controls(**(controls or {})))
+
+    def _header_names(self, header_ids: list[int]) -> list[str]:
+        inv = {v: k for k, v in self.gen.tokenizer.vocab.items()}
+        return [inv[t] for t in header_ids]
 
     def _continuation_only(self, prompt_ids: list[int], new_ids: list[int],
                            tempo_bpm: float) -> bytes:
@@ -260,6 +309,7 @@ class MidiGen:
         top_k: int = 50,
         tempo_bpm: float | None = None,
         n_samples: int = 1,
+        controls: dict | None = None,
     ) -> dict:
         full_prompt = self.gen.encode_midi_bytes(midi_bytes)
         if tempo_bpm is None:
@@ -275,8 +325,10 @@ class MidiGen:
         tpq = max(prompt_score.ticks_per_quarter, 1)
         prompt_end_seconds = prompt_score.end() / tpq * 60.0 / tempo_bpm
 
+        header = self._header_for(prompt_score, controls)
         sample_ids = self._batched_generate(
-            prompt, n_samples, max_new_tokens, temperature, top_k)
+            prompt, n_samples, max_new_tokens, temperature, top_k,
+            header_ids=header)
         midis = [self._to_midi_bytes(list(prompt) + ids, tempo_bpm)
                  for ids in sample_ids]
 
@@ -300,6 +352,7 @@ class MidiGen:
             "cont_midis": cont_midis,
             "prompt_ids": list(prompt),
             "cont_ids": sample_ids,
+            "header": self._header_names(header),
         }
 
     @modal.method()
@@ -311,6 +364,7 @@ class MidiGen:
         top_k: int = 50,
         n_samples: int = 1,
         tempo_bpm: float | None = None,
+        controls: dict | None = None,
     ) -> dict:
         """Write parts to go *with* the upload rather than after it.
 
@@ -324,7 +378,6 @@ class MidiGen:
 
         from symusic import Score
 
-        from midigenai.attributes import header_for_score
         from midigenai.data.v4_docs import _subscore, _window, bar_edges, trim_leading
         from midigenai.generate import densest_track, overlay
         from midigenai.tokenizer import normalize_drums
@@ -352,8 +405,11 @@ class MidiGen:
             raise ValueError("the chosen track has no notes in the first bars")
 
         cond_ids = self.gen.tokenizer(condition).ids
-        header = self.gen.sp.header_ids_for(
-            self.gen.tokenizer, header_for_score(window))
+        # The header describes the whole window, condition included: it says
+        # what should be playing when this is done, which is how the builder
+        # wrote accompaniment documents. `controls={"instruments": [...]}`
+        # is how a caller asks for a particular part to be added.
+        header = self._header_for(window, controls)
 
         midis, note_counts = [], []
         for _ in range(n_samples):
@@ -378,6 +434,86 @@ class MidiGen:
             "generated_notes": note_counts,
             "tempo_bpm": tempo_bpm,
             "window_seconds": bars * beats_per_bar * 60.0 / tempo_bpm,
+            "header": self._header_names(header),
+            "midi": midis[0],
+            "midis": midis,
+        }
+
+    @modal.method()
+    def infill_batch(
+        self,
+        midi_bytes: bytes,
+        at_bar: int,
+        bars: int = 2,
+        temperature: float = 1.0,
+        top_k: int = 50,
+        n_samples: int = 1,
+        tempo_bpm: float | None = None,
+        controls: dict | None = None,
+    ) -> dict:
+        """Rewrite bars [at_bar, at_bar+bars) and leave the rest alone.
+
+        Continuation answers "what happens next" and accompaniment answers
+        "what else is playing"; this answers "that bit in the middle, again".
+        The model sees the music on both sides of the gap (the span-infill
+        document type, `prefix MASK suffix SEP middle`), so the new span has
+        to land back on the music that follows it, not just continue from
+        what came before.
+
+        Each returned MIDI is the whole piece with the span replaced, so the
+        client can play it against the original and hear one span change.
+        """
+        from io import BytesIO
+
+        from symusic import Score
+
+        from midigenai.data.v4_docs import bar_edges, trim_leading
+        from midigenai.tokenizer import normalize_drums
+
+        if not self.gen.v4:
+            raise ValueError(
+                f"infilling needs a v4 checkpoint; {self.version!r} is not one")
+
+        score = Score.from_midi(BytesIO(midi_bytes).read())
+        normalize_drums(score, "upload.mid")
+        score = trim_leading(score)
+        if tempo_bpm is None:
+            tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+
+        available = max(0, len(bar_edges(score)) - 1)
+        if available < 2:
+            raise ValueError("upload has fewer than two complete bars to rewrite")
+        bars = max(1, min(bars, available - 1))     # never rewrite everything
+        at_bar = max(0, min(at_bar, available - bars))
+
+        ids = self.gen.tokenizer(score).ids
+        prefix, suffix = self.gen.split_bars(ids, at_bar, bars)
+        header = self._header_for(score, controls)
+
+        midis, note_counts, span_bars = [], [], []
+        for _ in range(n_samples):
+            middle = list(self.gen.infill(prefix, suffix, bars, header=header,
+                                          temperature=temperature, top_k=top_k))
+            span_bars.append(self.gen.count_bars(middle))
+            note_counts.append(sum(len(t.notes) for t in
+                                   self.gen.tokenizer.decode(middle).tracks))
+            full = self.gen.stitch_bars(prefix, middle, suffix, bars)
+            midis.append(self._to_midi_bytes(full, tempo_bpm))
+
+        beats_per_bar = 4.0
+        if score.time_signatures:
+            ts = score.time_signatures[0]
+            beats_per_bar = ts.numerator * 4.0 / ts.denominator
+        return {
+            "at_bar": at_bar,
+            "bars": bars,
+            "bars_available": available,
+            "span_bars_generated": span_bars,
+            "generated_notes": note_counts,
+            "span_start_seconds": at_bar * beats_per_bar * 60.0 / tempo_bpm,
+            "span_seconds": bars * beats_per_bar * 60.0 / tempo_bpm,
+            "tempo_bpm": tempo_bpm,
+            "header": self._header_names(header),
             "midi": midis[0],
             "midis": midis,
         }

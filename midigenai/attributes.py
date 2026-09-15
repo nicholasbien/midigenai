@@ -139,6 +139,84 @@ def header_for_score(score, source: str | None = None,
     return names
 
 
+# ---------- caller-supplied controls ---------- #
+
+FAMILY_SIZES = {
+    "density": len(DENSITY_EDGES) + 1,
+    "poly": len(POLY_EDGES) + 1,
+    "pitch_range": len(RANGE_EDGES) + 1,
+}
+
+
+def control_vocab() -> dict:
+    """What a caller may ask for, in a form an API can hand to a client.
+
+    Buckets are small integers rather than words on purpose: they are the
+    same buckets the dataset builder computed from the notes, so "Density_2"
+    means the same thing at inference as it did in training.
+    """
+    return {
+        "instruments": INSTRUMENT_FAMILIES + [DRUMS],
+        "density": list(range(FAMILY_SIZES["density"])),
+        "poly": list(range(FAMILY_SIZES["poly"])),
+        "range": list(range(FAMILY_SIZES["pitch_range"])),
+        "genres": GENRES,
+        "buckets": {
+            "density": f"notes per bar, edges {DENSITY_EDGES}",
+            "poly": f"notes per onset, edges {POLY_EDGES}",
+            "range": f"pitch span in semitones, edges {RANGE_EDGES}",
+        },
+    }
+
+
+def validate_controls(instruments=None, density=None, poly=None,
+                      pitch_range=None, genres=None) -> dict:
+    """Check caller-supplied control values and return make_header kwargs.
+
+    Header names go straight into a vocabulary lookup, so unvalidated input
+    would surface as a KeyError from deep inside the tokenizer. Raises
+    ValueError naming the offending value and what was allowed.
+    """
+    known = set(INSTRUMENT_FAMILIES) | {DRUMS}
+    out: dict = {}
+    if instruments:
+        bad = [i for i in instruments if i not in known]
+        if bad:
+            raise ValueError(
+                f"unknown instrument(s) {bad}; allowed: {sorted(known)}")
+        out["instruments"] = list(instruments)
+    for name, value in (("density", density), ("poly", poly),
+                        ("pitch_range", pitch_range)):
+        if value is None:
+            continue
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be an integer bucket, got {value!r}")
+        if not 0 <= value < FAMILY_SIZES[name]:
+            raise ValueError(
+                f"{name} bucket {value} out of range "
+                f"0..{FAMILY_SIZES[name] - 1}")
+        out[name] = value
+    if genres:
+        bad = [g for g in genres if g not in GENRES]
+        if bad:
+            raise ValueError(f"unknown genre(s) {bad}; allowed: {GENRES}")
+        out["genres"] = list(genres)
+    return out
+
+
+def realized_buckets(score) -> dict[str, int]:
+    """The Density/Poly/Range buckets a generated score actually landed in —
+    the measured half of control adherence."""
+    out = {}
+    for name in content_tokens(score):
+        prefix, _, value = name.partition("_")
+        out[{"Density": "density", "Poly": "poly",
+             "Range": "pitch_range"}[prefix]] = int(value)
+    return out
+
+
 def source_from_path(path: str) -> str | None:
     """Corpus layout is <root>/raw/<source>/...; None when not recognisable."""
     for s in SOURCES:

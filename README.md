@@ -33,6 +33,48 @@ for note in gen.stream_notes(prompt, tempo_bpm=120):
     ...  # {pitch, start, end, velocity, program}, emitted as the model plays
 ```
 
+## Beyond continuation (v4)
+
+The v4 checkpoint knows three tasks and takes an attribute header, so the
+model can be told what to write rather than only what to follow:
+
+```python
+gen = load_from_hub()                                  # v4
+score = gen.encode_midi_file("chords.mid")
+
+# "keep going, but sparse piano"
+header = gen.make_header("chords.mid", density=0, instruments=["Piano"])
+gen.continue_ids(score, header=header, bars=8)
+
+# "add drums under these chords" -- same bars, different parts
+gen.accompany(score, bars=8, header=gen.make_header("chords.mid",
+                                                    instruments=["Piano", "Drums"]))
+
+# "redo bars 3-4" -- the model sees both sides of the gap
+prefix, suffix = gen.split_bars(score, at_bar=2, n_bars=2)
+middle = list(gen.infill(prefix, suffix, bars=2))
+gen.stitch_bars(prefix, middle, suffix, bars=2)        # the piece, span replaced
+```
+
+Buckets (`Density_0..3`, `Poly_0..2`, `Range_0..2`) are the ones the dataset
+builder computed from the notes, so a request means the same thing at
+inference as it did in training; `midigenai.attributes.control_vocab()` lists
+them. The API exposes all three tasks (`/api/upload_midi`, `/api/accompany`,
+`/api/infill`) with the same controls as query parameters, and `/` publishes
+the vocabulary.
+
+How well the model obeys is measurable, not assumed:
+
+```bash
+python -m midigenai.eval_checkpoint --checkpoint <ckpt.pt> --mode control \
+    --prompts evals/prompts_heldout --n-prompts 10
+```
+
+which asks for every bucket in turn and reports what came back — exact and
+within-one accuracy, the confusion matrix, and accuracy on the requests that
+differ from the prompt's own bucket, since a model that ignores the header
+still scores well on the ones that don't.
+
 ## Live jamming
 
 Jamming with the model now lives in [fluidclaude](https://github.com/nicholasbien/fluidclaude):

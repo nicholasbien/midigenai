@@ -293,25 +293,30 @@ class Generator:
             raise RuntimeError(f"{what} needs a v4 (REMI + header) checkpoint")
 
     def make_header(self, midi_path: str | Path | None = None, *,
+                    score=None,
                     instruments: list[str] | None = None,
                     density: int | None = None, poly: int | None = None,
                     pitch_range: int | None = None,
                     source: str | None = None,
                     genres: list[str] | None = None) -> list[int]:
-        """Attribute-header token ids. With `midi_path` the header describes
-        that file (instruments, density, ...) and the keyword arguments
-        override individual families; without it only the given families are
-        set. `instruments` are family names from attributes.INSTRUMENT_FAMILIES
-        (+ "Drums"): list the instruments you want IN THE RESULT — for
-        accompaniment that means the condition's instrument plus the ones to
-        add. Returns [] on a non-v4 checkpoint so callers can always prepend it."""
+        """Attribute-header token ids. With `midi_path` (or an already-parsed
+        `score`) the header describes that music (instruments, density, ...)
+        and the keyword arguments override individual families; without it
+        only the given families are set. `instruments` are family names from
+        attributes.INSTRUMENT_FAMILIES (+ "Drums"): list the instruments you
+        want IN THE RESULT — for accompaniment that means the condition's
+        instrument plus the ones to add. Returns [] on a non-v4 checkpoint so
+        callers can always prepend it."""
         if not self.v4:
             return []
         from .attributes import header_for_score
         names: list[str] = []
-        if midi_path is not None:
-            from symusic import Score
-            names = header_for_score(Score(str(midi_path)), source=source, genres=genres)
+        described = score if score is not None else midi_path
+        if described is not None:
+            if score is None:
+                from symusic import Score
+                described = Score(str(midi_path))
+            names = header_for_score(described, source=source, genres=genres)
         else:
             if source:
                 names.append(f"Source_{source}")
@@ -328,7 +333,7 @@ class Generator:
             override("Poly_", [f"Poly_{poly}"])
         if pitch_range is not None:
             override("Range_", [f"Range_{pitch_range}"])
-        if source is not None and midi_path is not None:
+        if source is not None and described is not None:
             override("Source_", [f"Source_{source}"])
         # canonical family order, as the builder writes it
         from .attributes import HEADER_PREFIXES
@@ -555,6 +560,38 @@ class Generator:
         gen_kwargs.setdefault("max_new_tokens", 64 * bars + 64)
         gen_kwargs.setdefault("ban_ids", [self.sp.sep, self.sp.mask])
         yield from self.generate_ids(prompt, stop_after_bars=bars, **gen_kwargs)
+
+    def stitch_bars(self, prefix_ids: list[int], middle_ids: list[int],
+                    suffix_ids: list[int], bars: int) -> list[int]:
+        """Put an infilled span back between its neighbours.
+
+        Bar/Position are relative, so the three segments concatenate without
+        retiming — but only if the middle spans exactly `bars` bars, since
+        every Bar token after it shifts the suffix by one. A short answer is
+        padded to its bar count and an overlong one is cut at the bar line
+        (`stop_after_bars` makes that rare, not impossible).
+
+        A time signature inside the answer is rewritten to the surrounding
+        meter. REMI applies a TimeSig token to every bar after it, so a model
+        that opens its span in 3/4 does not just write three beats — it
+        shortens every remaining bar of the piece and drags the suffix
+        earlier. The caller asked for a span to be rewritten, not for the
+        music after it to move."""
+        self._require_v4("stitch_bars")
+        middle = list(middle_ids)
+        if self.count_bars(middle) > bars:
+            seen = 0
+            for i, t in enumerate(middle):
+                if t == self.bar_id:
+                    seen += 1
+                    if seen > bars:
+                        middle = middle[:i]
+                        break
+        meter = next((t for t in [*prefix_ids, *suffix_ids] if t in self.timesig_ids),
+                     None)
+        if meter is not None:
+            middle = [meter if t in self.timesig_ids else t for t in middle]
+        return [*prefix_ids, *self.pad_to_bars(middle, bars), *suffix_ids]
 
     def split_bars(self, ids: list[int], at_bar: int, n_bars: int) -> tuple[list[int], list[int]]:
         """Cut a v4 token segment into (prefix, suffix) around bars

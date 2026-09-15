@@ -97,6 +97,26 @@
   `modal volume put` wedges after a sleep/network change (per-file resumable
   puts); macOS xargs -I has a 255-byte replacement limit (helper script).
 
+- 2026-09-15: **Phase 2/3 control surface landed.** The header the model was
+  trained on now reaches it at serving time: `generate_batch` built no header
+  at all, while `eval_checkpoint` and `label_app` both build one, so the
+  numbers were measured on a prompt shape the site never sent. Serving now
+  sends the descriptive header by default and takes `controls` (Density /
+  Poly / Range buckets, instrument families, genre) on all three tasks,
+  validated against `attributes.control_vocab()` before any vocabulary
+  lookup. `/api/infill` exposes span infill, the one trained task with no
+  endpoint; `Generator.stitch_bars` puts the answer back between its
+  neighbours and rewrites any TimeSig inside the span, because REMI applies a
+  meter change to every following bar — a model answering in 3/4 was pulling
+  the rest of the piece two beats earlier (caught by a random-weights test,
+  which is exactly the kind of thing a trained model would hide most of the
+  time). Control *adherence* is now measurable: `eval_checkpoint --mode
+  control` asks for every bucket in turn and reports exact / within-one
+  accuracy, the confusion matrix, the low-to-high effect, and accuracy on
+  requests that differ from the prompt's own bucket — the subset a model that
+  ignores the header cannot score on. No adherence numbers yet: that needs a
+  run against v4 on the frozen prompt set.
+
 - 2026-09-14 02:40: **Corpus bug found while labeling, fixed for the NEXT
   build (not this run).** `normalize_drums` matched its name hints as bare
   substrings, so "909"/"808"/"hat"/"tom" hit inside arbitrary ids and song
