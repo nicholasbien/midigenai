@@ -326,6 +326,21 @@ class MidiGen:
         prompt_end_seconds = prompt_score.end() / tpq * 60.0 / tempo_bpm
 
         header = self._header_for(prompt_score, controls)
+        # The header is prepended after the context budget was computed, so a
+        # prompt that already filled the window would push the decode past
+        # the RoPE table and crash attention (the failure fit_to_context
+        # exists to prevent). Give the header its room back out of the
+        # prompt's tail, and re-read the cut so the client is told where the
+        # model's input actually ended.
+        overflow = (len(prompt) + len(header) + 1 + max_new_tokens
+                    - self.gen.max_seq_len)
+        if overflow > 0:
+            prompt = prompt[:-overflow]
+            truncated = True
+            prompt_score = self.gen.tokenizer.decode(list(prompt))
+            tpq = max(prompt_score.ticks_per_quarter, 1)
+            prompt_end_seconds = prompt_score.end() / tpq * 60.0 / tempo_bpm
+
         sample_ids = self._batched_generate(
             prompt, n_samples, max_new_tokens, temperature, top_k,
             header_ids=header)

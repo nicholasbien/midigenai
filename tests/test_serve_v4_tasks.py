@@ -131,3 +131,20 @@ def test_accompaniment_header_can_name_the_part_to_add(v4, tmp_path):
                                           controls={"instruments": ["Drums"]})
     assert "Inst_Drums" in out["header"]
     assert out["bars"] == 2 and out["condition_track"] in (0, 1)
+
+
+def test_the_header_does_not_push_the_prompt_past_the_context(tmp_path):
+    """fit_to_context sizes the prompt before the header exists; a prompt
+    that already filled the window must not overflow once it is prepended."""
+    gen = _checkpoint(tmp_path)
+    gen.max_seq_len = 192                      # small enough to hit the ceiling
+    stub = _stub(gen)
+    f = tmp_path / "long.mid"
+    _score(n_bars=40).dump_midi(str(f))
+
+    out = local_method("generate_batch")(stub, f.read_bytes(), max_new_tokens=32,
+                                         n_samples=1, controls={"density": 2})
+    header = out["header"]
+    assert header and out["prompt_truncated"]
+    assert (out["prompt_tokens"] + len(header) + 1
+            + max(out["generated_tokens"])) <= gen.max_seq_len
