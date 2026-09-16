@@ -103,23 +103,30 @@ def load_pairs(labels_path: Path):
 
 
 def logo_accuracy(diffs: np.ndarray, groups: list[str], l2: float) -> float:
-    """Leave-one-prompt-out accuracy, warm-started from the full-data fit.
+    """Leave-one-prompt-out accuracy, one cold fit per prompt group.
 
-    One refit per prompt group over d_model+1 features is the slowest part of
-    a probe fit — measured at tens of minutes for 769 features and ~400
-    groups, and it scales with d_model, so a larger checkpoint is worse. The
-    fit is convex, so each fold can start from the all-data solution and
-    take a fraction of the iterations to land in the same place.
+    Slow — tens of minutes for 769 features and ~400 groups, scaling with
+    d_model — but the cheap alternative was wrong (see below).
     """
     import time
     garr = np.array(groups)
     uniq = sorted(set(groups))
-    full = fit_bt(diffs, l2=l2)
+    n, d = diffs.shape
+    if d >= n:
+        print(f"[probe]   WARNING: {d} features >= {n} pairs; leave-one-out "
+              f"accuracy is unreliable in this regime — get more labels",
+              flush=True)
+    # Every fold starts cold. A warm start from the all-data fit was tried
+    # for speed and leaks: with more features than pairs the all-data fit
+    # memorises every row, and 400 iterations from there leave the held-out
+    # group's rows still fitted — it reported 0.993 held-out on 276 pairs.
+    # The synthetic check that "verified" it had n >> d, where there is
+    # nothing to memorise. Correctness over the 4.6x.
     correct = 0
     t0 = time.time()
     for i, g in enumerate(uniq, 1):
         test = garr == g
-        w = fit_bt(diffs[~test], l2=l2, iters=400, w0=full)
+        w = fit_bt(diffs[~test], l2=l2)
         correct += int(((diffs[test] @ w) > 0).sum())
         if i % 50 == 0 or i == len(uniq):
             el = time.time() - t0
