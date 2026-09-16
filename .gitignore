@@ -57,4 +57,7 @@ generated/
 tests/tmp/
 midigenai.egg-info/
 .claude/
-evals/autolabel/pairs/
+evals/autolabel*/pairs/
+
+# per-layer probe feature caches: hundreds of MB, rebuilt from pairs + checkpoint
+evals/reward/cache/
