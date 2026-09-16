@@ -35,6 +35,24 @@ def _windows(score, secs: float = WINDOW_SECONDS):
     return per
 
 
+# Two presets. "strict" is the original: a 5 s window is degenerate if one
+# pitch takes >60% of notes, or >45% with a near-constant onset spacing, or
+# the window uses <=2 pitches. "loose" is for transcribed audio, where a
+# kick+hat pattern or a held drone is legitimately two pitches on a grid --
+# the user's read on the transcriptions was "sometimes they degenerate in a
+# cool way", so the loose preset only flags the truly collapsed windows and
+# trims rather than drops.
+PRESETS = {
+    "strict": dict(top=0.60, top_rep=0.45, same=0.90, min_pitches=3, min_keep_windows=3),
+    "loose":  dict(top=0.75, top_rep=0.60, same=0.95, min_pitches=2, min_keep_windows=2),
+}
+_P = dict(PRESETS["strict"])
+
+
+def set_preset(name: str) -> None:
+    _P.update(PRESETS[name])
+
+
 def window_is_degenerate(notes) -> bool:
     """One pitch dominating, or one onset spacing repeated with a tiny alphabet."""
     if len(notes) < 8:
@@ -44,7 +62,8 @@ def window_is_degenerate(notes) -> bool:
     onsets = sorted({t for t, _ in notes})
     gaps = collections.Counter(onsets[i + 1] - onsets[i] for i in range(len(onsets) - 1))
     same = max(gaps.values()) / sum(gaps.values()) if gaps else 1.0
-    return top > 0.6 or (top > 0.45 and same > 0.9) or len(set(pitches)) <= 2
+    return (top > _P["top"] or (top > _P["top_rep"] and same > _P["same"])
+            or len(set(pitches)) < _P["min_pitches"])
 
 
 def clean_score(score):
@@ -57,7 +76,7 @@ def clean_score(score):
     if not any(flags):
         return score, "clean"
     first = flags.index(True)
-    if first < MIN_KEEP_WINDOWS:
+    if first < _P["min_keep_windows"]:
         return None, "degenerate"
     cut_s = first * WINDOW_SECONDS
     tpq = max(score.ticks_per_quarter, 1)
@@ -75,7 +94,9 @@ def main() -> None:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--in", dest="src", type=Path, required=True)
     p.add_argument("--out", dest="dst", type=Path, required=True)
+    p.add_argument("--preset", choices=sorted(PRESETS), default="strict")
     args = p.parse_args()
+    set_preset(args.preset)
     args.dst.mkdir(parents=True, exist_ok=True)
     counts = collections.Counter()
     for f in sorted(args.src.rglob("*.mid")):
