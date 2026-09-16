@@ -122,17 +122,28 @@ def logo_accuracy(diffs: np.ndarray, groups: list[str], l2: float) -> float:
     # group's rows still fitted — it reported 0.993 held-out on 276 pairs.
     # The synthetic check that "verified" it had n >> d, where there is
     # nothing to memorise. Correctness over the 4.6x.
-    correct = 0
-    t0 = time.time()
-    for i, g in enumerate(uniq, 1):
+    # Folds are independent, so they run in parallel — the honest way to get
+    # the speed back. numpy's matmul releases the GIL, so threads suffice and
+    # the (n x d) matrix is shared rather than copied per worker.
+    import os
+    from concurrent.futures import ThreadPoolExecutor
+
+    def fold(g):
         test = garr == g
         w = fit_bt(diffs[~test], l2=l2)
-        correct += int(((diffs[test] @ w) > 0).sum())
-        if i % 50 == 0 or i == len(uniq):
-            el = time.time() - t0
-            print(f"[probe]   cross-validation {i}/{len(uniq)} groups  "
-                  f"{el:.0f}s elapsed, ~{(len(uniq) - i) * el / i:.0f}s left",
-                  flush=True)
+        return int(((diffs[test] @ w) > 0).sum())
+
+    correct = 0
+    t0 = time.time()
+    workers = max(1, min(8, (os.cpu_count() or 2) - 1))
+    with ThreadPoolExecutor(workers) as ex:
+        for i, c in enumerate(ex.map(fold, uniq), 1):
+            correct += c
+            if i % 50 == 0 or i == len(uniq):
+                el = time.time() - t0
+                print(f"[probe]   cross-validation {i}/{len(uniq)} groups  "
+                      f"{el:.0f}s elapsed, ~{(len(uniq) - i) * el / i:.0f}s left "
+                      f"({workers} workers)", flush=True)
     return correct / len(diffs)
 
 
@@ -172,7 +183,10 @@ def fit(args) -> None:
     diffs = diffs / std
 
     best = None
-    for l2 in (1.0, 10.0, 100.0, 1000.0, 10000.0):
+    # Every fit so far (113M, 202M) was best at l2=1 and fell monotonically
+    # from there; 10000 collapses to w=0. The grid stays narrow because each
+    # value costs one cold fit per prompt group.
+    for l2 in (1.0, 3.0, 10.0):
         acc = logo_accuracy(diffs, groups, l2)
         print(f"[probe]   l2={l2:<9g} leave-one-prompt-out accuracy {acc:.3f}")
         if best is None or acc > best[1]:
