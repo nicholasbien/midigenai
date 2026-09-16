@@ -49,7 +49,7 @@ and [docs/jam-timing.md](docs/jam-timing.md). The Live socket client moved to
 |---|---|
 | Architecture | decoder-only transformer: RoPE, SwiGLU, RMSNorm, SDPA (FlashAttention-2), tied embeddings |
 | Parameters | 113M (`medium`; 25M `pilot` and 200M `large` configs in `model.py`) |
-| Vocabulary | 590 event tokens ([MidiTok REMI](https://github.com/Natooz/MidiTok)): Bar/Position/Duration, 32 velocity bins, plus an attribute header |
+| Vocabulary | 597 event tokens ([MidiTok REMI](https://github.com/Natooz/MidiTok)): Bar/Position/Duration, 32 velocity bins, plus an attribute header (instruments, density, polyphony, range, tempo bucket, source, genre, quality) |
 | Context | 2048 tokens trained, longer at inference (RoPE extrapolates) |
 | Timing | beat-relative ticks; tempo stripped at training, re-applied at decode (tempo-invariant learning) |
 | Training data | Lakh + LAMD + MAESTRO + POP909 + GiantMIDI (~408k files after dedup, ~8B tokens) |

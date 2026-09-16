@@ -24,9 +24,31 @@ def test_explicit_v4_config_matches_the_scheme_shortcut():
     assert len(build_tokenizer(v4_config(8)).vocab) == len(build_tokenizer(scheme="v4").vocab)
 
 
-def test_v4_config_vocab_matches_the_shipped_v4_checkpoint():
-    """590 is what v4/ckpt_final.pt was trained with; drift here is the bug."""
-    assert len(build_tokenizer(v4_config(8)).vocab) == 590
+def test_v4_config_vocab_is_the_next_rebuild_size():
+    """590 is what v4/ckpt_final.pt was trained with; the Tempo_ header
+    family (7 buckets) makes the next corpus rebuild 597. Shipped checkpoints
+    load their own tokenizer.json, so this is the size for new runs only;
+    unplanned drift from 597 is the bug."""
+    assert len(build_tokenizer(v4_config(8)).vocab) == 597
+
+
+def test_header_builder_skips_families_an_old_tokenizer_lacks():
+    """A 590-token v4 checkpoint predates Tempo_: the newer header builder
+    must drop that family for it, not raise, and still refuse a bad name."""
+    from midigenai.sequence_format import Specials
+    from miditok import TokenizerConfig
+
+    cfg = v4_config(8)
+    old = TokenizerConfig(**{**cfg.to_dict(), "special_tokens": [
+        s for s in cfg.special_tokens if not s.startswith("Tempo_")]})
+    tok = build_tokenizer(old)
+    assert len(tok.vocab) == 590
+    sp = Specials.from_tokenizer(tok)
+    inv = {v: k for k, v in tok.vocab.items()}
+    ids = sp.header_ids_for(tok, ["Inst_Bass", "Tempo_3", "Density_1"])
+    assert [inv[t] for t in ids] == ["Inst_Bass", "Density_1"]
+    with pytest.raises(KeyError):
+        sp.header_ids_for(tok, ["Inst_Theremin"])
 
 
 def test_legacy_config_still_builds_midilike():

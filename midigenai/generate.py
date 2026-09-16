@@ -297,25 +297,29 @@ class Generator:
                     density: int | None = None, poly: int | None = None,
                     pitch_range: int | None = None,
                     source: str | None = None,
-                    genres: list[str] | None = None) -> list[int]:
+                    genres: list[str] | None = None,
+                    tempo: float | None = None) -> list[int]:
         """Attribute-header token ids. With `midi_path` the header describes
         that file (instruments, density, ...) and the keyword arguments
         override individual families; without it only the given families are
-        set. `instruments` are family names from attributes.INSTRUMENT_FAMILIES
+        set. `tempo` (BPM, e.g. the DAW clock) sets the Tempo_ family; with a
+        file and no `tempo` the file's own tempo events decide it. `instruments` are family names from attributes.INSTRUMENT_FAMILIES
         (+ "Drums"): list the instruments you want IN THE RESULT — for
         accompaniment that means the condition's instrument plus the ones to
         add. Returns [] on a non-v4 checkpoint so callers can always prepend it."""
         if not self.v4:
             return []
-        from .attributes import header_for_score
+        from .attributes import header_for_score, tempo_tokens
         names: list[str] = []
         if midi_path is not None:
             from symusic import Score
-            names = header_for_score(Score(str(midi_path)), source=source, genres=genres)
+            names = header_for_score(Score(str(midi_path)), source=source,
+                                     genres=genres, tempo=tempo)
         else:
             if source:
                 names.append(f"Source_{source}")
             names += [f"Genre_{g}" for g in (genres or [])]
+            names += tempo_tokens(None, tempo=tempo)
 
         def override(prefix: str, new: list[str]):
             nonlocal names
@@ -669,6 +673,9 @@ if __name__ == "__main__":
                     backend=args.backend)
     prompt = g.encode_midi_file(args.input_midi)
     tempo = args.tempo_bpm if args.tempo_bpm else g.detect_tempo(args.input_midi)
+    # v4: the header describes the prompt file and carries the tempo the
+    # output will play at, so the model is told the clock it writes for
+    prompt = [*g.make_header(args.input_midi, tempo=tempo), *prompt]
     new_ids = g.generate_to_midi(
         prompt, args.output_midi,
         tempo_bpm=tempo,
