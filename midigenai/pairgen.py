@@ -362,6 +362,10 @@ def main() -> None:
     p.add_argument("--prompt-tokens", type=int, default=256)
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--label", default=None,
+                   help="model name written to each pair's meta; defaults to the "
+                        "hub version or the checkpoint's stem, which is ckpt_final "
+                        "for every run and says nothing about which one")
     p.add_argument("--mode", choices=("continue", "accompany"), default="continue")
     p.add_argument("--bars", type=int, default=16,
                    help="accompany: window length (training uses 16)")
@@ -389,7 +393,7 @@ def main() -> None:
 
     cfg = PairConfig(mode=a.mode, bars=a.bars, prompt_tokens=a.prompt_tokens,
                      max_new_tokens=a.max_new_tokens, temperature=a.temperature,
-                     top_k=a.top_k, model_label=label_name)
+                     top_k=a.top_k, model_label=a.label or label_name)
     t0 = time.time()
 
     def on_pair(pair, i):
