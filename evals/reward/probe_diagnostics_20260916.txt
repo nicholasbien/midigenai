@@ -1,0 +1,14 @@
+# 113M probe learning curve — cold leave-one-prompt-out, l2=1, nested by prompt group (2026-09-16)
+LCURVE n= 506 pairs ( 67 prompts)  held-out 0.741   [58s]
+LCURVE n=1004 pairs (131 prompts)  held-out 0.740   [149s]
+LCURVE n=2002 pairs (270 prompts)  held-out 0.759   [1659s]
+LCURVE n=2882 pairs (400 prompts)  held-out 0.765   [2353s]
+
+# 202M probe: same 470 pairs, two judges (labels are not the bottleneck)
+pairs decided by BOTH judges: 470  (sol decided 580, agree on 423/470)
+DIAG sol   n=470  held-out 0.700
+DIAG luna  n=470  held-out 0.700
+DIAG both-agree n=423  held-out 0.735
+
+# 113M probe cold recheck
+RESULT 113M probe, cold leave-one-prompt-out, l2=1: 0.765 on 2882 pairs (warm-start reported 0.826)
