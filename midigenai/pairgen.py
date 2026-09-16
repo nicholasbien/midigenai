@@ -160,8 +160,11 @@ def make_pair(gen, prompt_file: Path, cfg: PairConfig,
         "max_new_tokens": cfg.max_new_tokens,
         "seed_a": sides["a"]["seed"], "seed_b": sides["b"]["seed"],
         "n_notes_a": sides["a"]["n_notes"], "n_notes_b": sides["b"]["n_notes"],
-        # reward_align's drift features split these in half; without them it
-        # falls back to re-tokenising the MIDI, which is a round trip
+        # what the model was actually prompted with (header included), and
+        # what it sampled. reward_probe reads both — its features are a
+        # forward pass over prompt + continuation — and a meta without
+        # prompt_ids made it KeyError on the first 202M pair.
+        "prompt_ids": list(ids),
         "cont_a_ids": sides["a"]["ids"], "cont_b_ids": sides["b"]["ids"],
         **cfg.extra,
     }
