@@ -1,0 +1,254 @@
+{
+ "model": "gpt-5.6-luna",
+ "format": "notes",
+ "prompt": "accompany",
+ "split": "test",
+ "n": 24,
+ "n_decided": 22,
+ "agreement_with_human": 0.6818181818181818,
+ "swap_consistency": 0.9166666666666666,
+ "position_bias_pick_first": 0.4583333333333333,
+ "tie_rate": 0.08333333333333337,
+ "results": [
+  {
+   "pair_id": "20260916113944_65abf097",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 better supports the harmony, especially avoiding sustained clashes"
+  },
+  {
+   "pair_id": "20260916114004_c0ea4e2e",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Arrangement 2 provides clearer chordal support; arrangement 1 is overcrowded and"
+  },
+  {
+   "pair_id": "20260916113957_cd3a34fe",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Arrangement 1 provides structured chordal support and register separation, despi"
+  },
+  {
+   "pair_id": "20260916114420_13ed0ce3",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 uses supportive sustained tones; arrangement 1 introduces frequent"
+  },
+  {
+   "pair_id": "20260916114337_cdb4bd4a",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Restrained sustained harmony, coherent voicing, and fewer distracting chromatic "
+  },
+  {
+   "pair_id": "20260916114121_d95b428c",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 outlines changing harmony clearly, while arrangement 2 sustains re"
+  },
+  {
+   "pair_id": "20260916114229_e2fc4352",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 provides coherent low-register harmony, steady groove, and fewer d"
+  },
+  {
+   "pair_id": "20260916114405_5a193e8a",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 provides coherent harmony, manageable texture, and fewer distracti"
+  },
+  {
+   "pair_id": "20260916114151_5372f90b",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 is restrained and spacious; Arrangement 2 is overcrowded and chrom"
+  },
+  {
+   "pair_id": "20260916114022_0e11e651",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 provides coherent low-register foundation, sustained support, and "
+  },
+  {
+   "pair_id": "20260916114405_5a193e8a",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 offers coherent chordal support; arrangement 1 is cluttered and ch"
+  },
+  {
+   "pair_id": "20260916113937_f46c6d94",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 fits harmony; arrangement 2 is busier and omits bar 7."
+  },
+  {
+   "pair_id": "20260916114234_d938e6e8",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Triadic voicings complement the bass rhythm, while arrangement 2 merely doubles "
+  },
+  {
+   "pair_id": "20260916114221_18cfc11d",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 provides supportive bass and chord tones without copying the part'"
+  },
+  {
+   "pair_id": "20260916114313_4c467b69",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Avoids arrangement 1\u2019s glaring C-natural clash and continues accompanying throug"
+  },
+  {
+   "pair_id": "20260916114336_cd00be4a",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Steady bass motion supports the part; arrangement 2 is sparse, repetitive, and c"
+  },
+  {
+   "pair_id": "20260916114208_de38814a",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 provides coherent chordal support; arrangement 1 is chaotic, clash"
+  },
+  {
+   "pair_id": "20260916114046_a3ac58df",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Cleaner harmonic support and steadier voicings leave more room for the melody."
+  },
+  {
+   "pair_id": "20260916113950_a591416a",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 is dense; arrangement 2 has harsher clashes and ends earlier."
+  },
+  {
+   "pair_id": "20260916114348_50c65e96",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 provides a more coherent bass progression and better supports the "
+  },
+  {
+   "pair_id": "20260916114341_915f02bc",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 fits harmony better; arrangement 1 clashes repeatedly with sustain"
+  },
+  {
+   "pair_id": "20260916114313_4c467b69",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 stays diatonic and supports the harmony; arrangement 1 has a glari"
+  },
+  {
+   "pair_id": "20260916113930_44c2fca9",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 provides steadier bass support with fewer clashes and clearer harm"
+  },
+  {
+   "pair_id": "20260916114129_7356480c",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Clearer chord voicings, higher register, and less intrusive doubling support the"
+  }
+ ]
+}

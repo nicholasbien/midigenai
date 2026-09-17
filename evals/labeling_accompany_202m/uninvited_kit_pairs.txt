@@ -1,0 +1,9 @@
+# pitched-target pairs where the 202M added a drum kit it was not asked for (no ban at generation)
+20260916113950_a591416a  drum_share=0.42
+20260916114014_e7309614  drum_share=0.50
+20260916114058_023d57b5  drum_share=0.34
+20260916114133_b8ac2f06  drum_share=0.14
+20260916114140_1bfa4c88  drum_share=0.46
+20260916114201_a58963dd  drum_share=0.09
+20260916114208_de38814a  drum_share=0.26
+20260916114221_18cfc11d  drum_share=0.05

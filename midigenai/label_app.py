@@ -14,11 +14,19 @@ Compare two checkpoints instead of self-vs-self:
     python -m midigenai.label_app --prompts evals/prompts \\
         --hub-version v3 --hub-version-b v2-100m
 
-Keyboard: 1 = left, 2 = right, t = tie, x = both bad, s = skip.
+Each pair plays itself: prompt + take 1, a short pause, prompt + take 2,
+then the page waits for a vote and the next pair starts once it lands.
+Keyboard: 1 = left, 2 = right, t = tie, x = both bad, s = skip, v = voice.
+Voice (Chrome/Safari, localhost or https): say "one" / "two" / "tie" /
+"both bad" / "skip" / "again" / "play one" / "play two".
+Seed with your own MIDI: drop a .mid on the page (or use the file picker).
+It is saved under <out>/uploads/, the next N pairs continue from it (head of
+the file, as in production), and it then joins the regular prompt rotation.
 Open http://localhost:7788.
 
 Output layout (default --out evals/labeling):
     labels.jsonl          one line per vote
+    uploads/user_*.mid    seeds dropped onto the page
     pairs/<id>.json       per-pair metadata (token ids, models, params)
     pairs/<id>_prompt.mid
     pairs/<id>_a.mid      prompt + continuation A
@@ -28,10 +36,15 @@ Output layout (default --out evals/labeling):
 from __future__ import annotations
 
 import argparse
+import collections
 import datetime
 import json
+import os
 import queue
 import random
+import re
+import shlex
+import subprocess
 import threading
 import uuid
 from pathlib import Path
@@ -41,6 +54,108 @@ from flask import Flask, jsonify, request, send_from_directory
 
 def utcnow() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def retract_vote(labels_path: Path, pair_id: str, session_id: str = "",
+                 idx=None) -> dict | None:
+    """Remove the most recent record for `pair_id` (or the newest record of
+    all when `pair_id` is empty; and this session's, when given) from an
+    append-only labels file, and log it next door in
+    corrections.jsonl so the retraction is traceable. Returns the removed
+    record, or None when there was nothing to remove."""
+    if not labels_path.exists():
+        return None
+    lines = labels_path.read_text().splitlines()
+    hit = None
+    for i in range(len(lines) - 1, -1, -1):
+        if not lines[i].strip():
+            continue
+        r = json.loads(lines[i])
+        if pair_id and r.get("pair_id") != pair_id:   # no pair_id: the newest record
+            continue
+        if session_id and r.get("session_id") and r["session_id"] != session_id:
+            continue
+        if idx is not None and r.get("idx") is not None and r["idx"] != idx:
+            continue
+        hit = i
+        break
+    if hit is None:
+        return None
+    removed = json.loads(lines[hit])
+    del lines[hit]
+    labels_path.write_text("".join(l + "\n" for l in lines))
+    with (labels_path.parent / "corrections.jsonl").open("a") as f:
+        f.write(json.dumps({"ts": utcnow(), "action": "undo", "pair_id": pair_id,
+                            "idx": removed.get("idx"), "removed": removed}) + "\n")
+    return removed
+
+
+def discover_label_servers() -> list[dict]:
+    """Other label servers on this machine, read off their command lines.
+
+    Each `label_app` / `relabel_app serve` process names its output dir(s)
+    and port in argv, which is enough for the page's source selector to
+    link across servers — including ones started by another session, which
+    have no way to register themselves anywhere.
+    """
+    try:
+        ps = subprocess.run(["ps", "-axo", "pid=,command="],
+                            capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return []
+    found = []
+    for line in ps.splitlines():
+        # only a python process running the module — not a shell whose
+        # command string merely mentions it (the `zsh -c` that launched it)
+        m = re.search(r"^\s*(\d+)\s+\S*python[\d.]* -m midigenai\.(re)?label_app\b(.*)$", line, re.I)
+        if not m:
+            continue
+        pid, kind, rest = int(m.group(1)), ("relabel" if m.group(2) else "live"), m.group(3)
+        if pid == os.getpid():
+            continue
+        try:
+            argv = shlex.split(rest)
+        except ValueError:
+            argv = rest.split()
+        val = lambda flag: [argv[i + 1] for i, a in enumerate(argv) if a == flag and i + 1 < len(argv)]
+        outs = val("--out") or (["evals/labeling"] if kind == "live" else ["evals/ceiling"])
+        try:
+            port = int(val("--port")[0])
+        except (IndexError, ValueError):
+            port = 7788 if kind == "live" else 7789
+        found.append({"pid": pid, "kind": kind, "port": port,
+                      "outs": [Path(o).name for o in outs]})
+    return sorted(found, key=lambda f: f["port"])
+
+
+def sources_payload(local: list[dict], current: str, host: str,
+                    proxy_live: bool = False) -> dict:
+    """The selector's entries: this server's own sources first (`local`,
+    each with id/label/mode/counts), then the other label servers found on
+    the machine. A hub (`proxy_live`) reaches live-generation servers
+    through its own /live/<port>/ path, so one tunnel covers them; other
+    servers are plain links. Servers serving a set the hub already has are
+    left out."""
+    known = {src["id"] for src in local}
+    entries = [{**src, "url": f"/?source={src['id']}", "here": True,
+                "current": src["id"] == current} for src in local]
+    for srv in discover_label_servers():
+        for out in srv["outs"]:
+            if out in known:
+                continue
+            if srv["kind"] == "live" and proxy_live:
+                sid = f"live:{srv['port']}"
+                entries.append({"id": sid, "here": True, "current": sid == current,
+                                "mode": "continuation",
+                                "label": f"{out} · live pairs from the model",
+                                "url": f"/live/{srv['port']}/"})
+                continue
+            entries.append({
+                "id": f"{srv['port']}:{out}", "here": False, "current": False,
+                "label": f"{out} ({'live pairs' if srv['kind'] == 'live' else 'pre-generated'}) · :{srv['port']}",
+                "url": f"http://{host}:{srv['port']}/" + (f"?source={out}" if srv["kind"] == "relabel" and len(srv["outs"]) > 1 else ""),
+            })
+    return {"current": current, "sources": entries}
 
 
 def velocity_scale(prompt_score, target_peak: int = 118) -> float:
@@ -112,6 +227,7 @@ class PairFactory:
         self.out_dir = out_dir
         self.pairs_dir = out_dir / "pairs"
         self.pairs_dir.mkdir(parents=True, exist_ok=True)
+        self.uploads_dir = out_dir / "uploads"
 
         self.gen_a, self.label_a = load_generator(args, "a")
         gen_b, label_b = load_generator(args, "b")
@@ -125,7 +241,8 @@ class PairFactory:
             blacklisted = set(self.blacklist_path.read_text().split())
         self.prompt_files = [
             f for f in sorted(Path(args.prompts).glob("*.mid")) +
-                       sorted(Path(args.prompts).glob("*.midi"))
+                       sorted(Path(args.prompts).glob("*.midi")) +
+                       sorted(self.uploads_dir.glob("user_*.mid"))   # earlier seeds stay in rotation
             if f.name not in blacklisted]
         self.prompt_order = {f: i for i, f in enumerate(
             random.Random(12345).sample(self.prompt_files, len(self.prompt_files)))} \
@@ -146,6 +263,13 @@ class PairFactory:
               f"models: {self.label_a} vs {self.label_b}")
 
         self.queue: queue.Queue[dict] = queue.Queue(maxsize=args.queue_size)
+        # Seeds dropped onto the page jump the line: the worker generates from
+        # them before anything else and /api/next serves them first, so an
+        # upload is heard within one generation rather than after the whole
+        # pre-generated queue has drained.
+        self.priority: collections.deque[Path] = collections.deque()
+        self.priority_queue: queue.Queue[dict] = queue.Queue()
+        self.priority_pending = 0          # requested, not yet in priority_queue
         self.rng = random.Random()
         self._stop = threading.Event()
         self.worker = threading.Thread(target=self._run, daemon=True)
@@ -181,9 +305,13 @@ class PairFactory:
             self.prompt_uses[f] += 1
             return f
 
-    def _generate_one(self) -> dict:
+    def _generate_one(self, prompt_file: Path | None = None) -> dict:
         args = self.args
-        prompt_file = self._next_prompt()
+        if prompt_file is None:
+            prompt_file = self._next_prompt()
+        else:   # a seed served out of turn still counts as used in the rotation
+            with self._prompt_lock:
+                self.prompt_uses[prompt_file] = self.prompt_uses.get(prompt_file, 0) + 1
         from symusic import Score
 
         from midigenai.tokenizer import normalize_drums
@@ -192,7 +320,11 @@ class PairFactory:
         normalize_drums(prompt_score, prompt_file.name)
         prompt_ids = self.gen_a.tokenizer(prompt_score).ids
         if len(prompt_ids) > args.prompt_tokens:
-            start = self.rng.randrange(0, len(prompt_ids) - args.prompt_tokens)
+            # a dropped seed is continued from its head, as production does
+            # with an upload; corpus prompts take a random window so one long
+            # file yields many different pairs
+            start = 0 if prompt_file.name.startswith("user_") else \
+                self.rng.randrange(0, len(prompt_ids) - args.prompt_tokens)
             prompt_ids = self._slice_with_program(prompt_ids, start, args.prompt_tokens)
         tempo = self.gen_a.detect_tempo(prompt_file)
 
@@ -272,8 +404,10 @@ class PairFactory:
                 for n in tt.notes:
                     n.start -= tail0
                 for n in tt.notes:
+                    # the roll carries the velocities the served file plays at
+                    # (scaled below), so the page's loudness estimate is right
                     notes.append({"s": round(n.start * spt, 3), "e": round((n.start + n.duration) * spt, 3),
-                                  "p": int(n.pitch), "v": int(n.velocity),
+                                  "p": int(n.pitch), "v": max(1, min(127, int(round(n.velocity * vscale)))),
                                   "d": bool(track.is_drum), "prompt": n.start < (cut_tick - tail0)})
             cont.tempos = [Tempo(time=0, qpm=tempo)]
             timeline.tempos = [Tempo(time=0, qpm=tempo)]
@@ -355,14 +489,63 @@ class PairFactory:
             "right_model": meta[f"model_{right}"],
         }
 
+    def _pop_priority(self) -> Path | None:
+        with self._prompt_lock:
+            return self.priority.popleft() if self.priority else None
+
     def _run(self):
+        held = None   # a regular pair waiting for room in the queue
         while not self._stop.is_set():
-            try:
-                pair = self._generate_one()
-            except Exception as e:  # keep the worker alive on bad prompt files
-                print(f"[label] generation error: {e}")
+            seed = self._pop_priority()
+            if seed is not None:
+                try:
+                    self.priority_queue.put(self._generate_one(seed))
+                except Exception as e:
+                    print(f"[label] generation error on upload {seed.name}: {e}")
+                finally:
+                    with self._prompt_lock:
+                        self.priority_pending -= 1
                 continue
-            self.queue.put(pair)  # blocks while the queue is full
+            if held is None:
+                try:
+                    held = self._generate_one()
+                except Exception as e:  # keep the worker alive on bad prompt files
+                    print(f"[label] generation error: {e}")
+                    continue
+            # a short wait, not a blocking put: a seed dropped while the queue
+            # is full must not sit behind it
+            try:
+                self.queue.put(held, timeout=1.0)
+                held = None
+            except queue.Full:
+                pass
+
+    def add_upload(self, data: bytes, filename: str, n_pairs: int) -> Path:
+        """Save a dropped MIDI file as a seed and queue `n_pairs` pairs from
+        it ahead of everything else. Afterwards it stays in the rotation like
+        any other prompt. Raises ValueError for a file symusic cannot read."""
+        from symusic import Score
+        stem = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(filename).stem).strip("_")[:40] or "seed"
+        self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        path = self.uploads_dir / f"user_{stem}_{uuid.uuid4().hex[:6]}.mid"
+        path.write_bytes(data)
+        try:
+            score = Score(str(path))
+        except Exception as e:
+            path.unlink(missing_ok=True)
+            raise ValueError(f"not a readable MIDI file: {e}") from None
+        if sum(len(t.notes) for t in score.tracks) == 0:
+            path.unlink(missing_ok=True)
+            raise ValueError("the file has no notes")
+        with self._prompt_lock:
+            self.prompt_files.append(path)
+            self.prompt_order[path] = len(self.prompt_order)
+            self.prompt_uses[path] = 0
+            for _ in range(n_pairs):
+                self.priority.append(path)
+            self.priority_pending += n_pairs
+        print(f"[label] seed uploaded: {path.name} -> next {n_pairs} pair(s)")
+        return path
 
     def stop(self):
         self._stop.set()
@@ -383,7 +566,12 @@ def build_app(args) -> Flask:
     # Repeats measure the labeler's self-consistency — the accuracy ceiling
     # for any reward fit on these labels. The UI is never told it's a repeat.
     voted_pairs: dict[str, dict] = {}
+    served: dict[str, dict] = {}        # the exact payload each pair was shown with
     repeat_rng = random.Random()
+
+    # every field the UI needs that comes in left/right halves; a flipped
+    # repeat has to swap all of them together or the page is inconsistent
+    _SIDED = ("url", "timeline_url", "roll", "is", "model")
 
     def make_repeat() -> dict | None:
         candidates = [p for p in voted_pairs.values() if not p.get("_repeated")]
@@ -391,16 +579,16 @@ def build_app(args) -> Flask:
             return None
         pair = repeat_rng.choice(candidates)
         pair["_repeated"] = True
-        flipped = repeat_rng.random() < 0.5
         out = dict(pair)
         out.pop("_repeated", None)
-        if flipped:
-            out.update({
-                "left_url": pair["right_url"], "right_url": pair["left_url"],
-                "left_is": pair["right_is"], "right_is": pair["left_is"],
-                "left_model": pair["right_model"],
-                "right_model": pair["left_model"],
-            })
+        if repeat_rng.random() < 0.5:
+            # Swap every sided field, not just the URLs. Rebuilding a partial
+            # payload here is what broke repeats before: the template reads
+            # left_roll and left_timeline_url, and a payload without them
+            # throws before anything renders — so the repeat was served, the
+            # page died, and the vote never happened.
+            for f in _SIDED:
+                out[f"left_{f}"], out[f"right_{f}"] = pair[f"right_{f}"], pair[f"left_{f}"]
         return out
 
     @app.route("/")
@@ -409,6 +597,21 @@ def build_app(args) -> Flask:
 
     @app.route("/api/next")
     def next_pair():
+        # pairs from a dropped seed come first, and while one is still being
+        # generated the client waits for it rather than taking a corpus pair
+        try:
+            pair = factory.priority_queue.get_nowait()
+        except queue.Empty:
+            pair = None
+            if factory.priority_pending > 0:
+                try:
+                    pair = factory.priority_queue.get(timeout=args.next_timeout)
+                except queue.Empty:
+                    return jsonify({"status": "generating"}), 202
+        if pair is not None:
+            served[pair["pair_id"]] = pair
+            return jsonify({"status": "ok", "pair": pair,
+                            "queued": factory.queue.qsize()})
         if repeat_rng.random() < args.dup_rate:
             repeat = make_repeat()
             if repeat is not None:
@@ -418,6 +621,7 @@ def build_app(args) -> Flask:
             pair = factory.queue.get(timeout=args.next_timeout)
         except queue.Empty:
             return jsonify({"status": "generating"}), 202
+        served[pair["pair_id"]] = pair
         return jsonify({"status": "ok", "pair": pair,
                         "queued": factory.queue.qsize()})
 
@@ -425,7 +629,10 @@ def build_app(args) -> Flask:
     def vote():
         data = request.get_json(force=True)
         choice = data.get("choice")  # left | right | tie | bad | skip | bad_prompt
-        if choice not in ("left", "right", "tie", "bad", "skip", "bad_prompt"):
+        # "drums_as_piano" is a defect report about the pair, not a preference:
+        # recorded as a non-vote so the rendering bug can be traced later
+        if choice not in ("left", "right", "tie", "bad", "skip", "bad_prompt",
+                          "drums_as_piano"):
             return jsonify({"error": f"bad choice {choice!r}"}), 400
         if choice == "bad_prompt" and data.get("pair_id"):
             # the source example itself is unusable: blacklist it from future
@@ -461,18 +668,51 @@ def build_app(args) -> Flask:
         with labels_path.open("a") as f:
             f.write(json.dumps(record) + "\n")
         if choice in ("left", "right", "tie") and record["pair_id"]:
-            voted_pairs.setdefault(record["pair_id"], {
-                "pair_id": record["pair_id"],
-                "prompt_url": f"/midi/{record['pair_id']}_prompt.mid",
-                "left_url": f"/midi/{record['pair_id']}_a.mid",
-                "right_url": f"/midi/{record['pair_id']}_b.mid",
-                "left_is": "a", "right_is": "b",
-                "left_model": data.get(
-                    "left_model" if data.get("left_is") == "a" else "right_model", ""),
-                "right_model": data.get(
-                    "left_model" if data.get("left_is") == "b" else "right_model", ""),
-            })
+            # re-serve exactly what was shown, rolls and timelines included
+            full = served.get(record["pair_id"])
+            if full is not None:
+                voted_pairs.setdefault(record["pair_id"], full)
         return jsonify({"ok": True})
+
+    @app.route("/api/upload", methods=["POST"])
+    def upload():
+        f = request.files.get("midi")
+        if f is None or not f.filename:
+            return jsonify({"error": "no file"}), 400
+        if Path(f.filename).suffix.lower() not in (".mid", ".midi"):
+            return jsonify({"error": "not a .mid file"}), 400
+        try:
+            n = max(1, min(20, int(request.form.get("n", 3))))
+        except ValueError:
+            n = 3
+        try:
+            path = factory.add_upload(f.read(), f.filename, n)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"ok": True, "name": path.name, "n": n})
+
+    @app.route("/api/undo", methods=["POST"])
+    def undo():
+        data = request.get_json(force=True)
+        removed = retract_vote(labels_path, data.get("pair_id", ""), data.get("session_id", ""))
+        if removed is None:
+            return jsonify({"error": "no vote of yours on that pair"}), 404
+        # the page needs the pair back on screen; it is re-served as it was
+        # shown if this process served it, else the page just moves on
+        again = served.get(removed.get("pair_id"))
+        if removed.get("choice") == "bad_prompt":
+            # the prompt was blacklisted by that vote; let it back in
+            meta_path = factory.pairs_dir / f"{removed['pair_id']}.json"
+            if meta_path.exists():
+                pf = Path(json.loads(meta_path.read_text())["prompt_file"])
+                if factory.blacklist_path.exists():
+                    kept = [n for n in factory.blacklist_path.read_text().split() if n != pf.name]
+                    factory.blacklist_path.write_text("".join(n + "\n" for n in kept))
+                if pf.exists() and pf not in factory.prompt_files:
+                    factory.prompt_files.append(pf)
+                    factory.prompt_order.setdefault(pf, len(factory.prompt_order))
+                    factory.prompt_uses.setdefault(pf, 1)
+        return jsonify({"ok": True, "removed": removed, "pair": again})
 
     @app.route("/api/stats")
     def stats():
@@ -480,7 +720,14 @@ def build_app(args) -> Flask:
         if labels_path.exists():
             with labels_path.open() as f:
                 n = sum(1 for line in f if line.strip())
-        return jsonify({"total_labels": n, "queued": factory.queue.qsize()})
+        return jsonify({"total_labels": n, "queued": factory.queue.qsize(),
+                        "upload_pending": factory.priority_pending})
+
+    @app.route("/api/sources")
+    def sources():
+        me = {"id": out_dir.name, "mode": "continuation",
+              "label": f"{out_dir.name} · live {factory.label_a} vs {factory.label_b}"}
+        return jsonify(sources_payload([me], me["id"], request.host.split(":")[0]))
 
     @app.route("/midi/<path:name>")
     def serve_midi(name):

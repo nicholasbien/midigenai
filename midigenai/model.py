@@ -229,6 +229,79 @@ class MusicTransformer(nn.Module):
         return logits, new_caches
 
     @torch.no_grad()
+    def generate_batch(
+        self,
+        ids: torch.Tensor,
+        n: int,
+        max_new_tokens: int,
+        temperature: float = 1.0,
+        top_k: int | None = 50,
+        eos_id: int | None = None,
+        min_new_tokens: int = 0,
+        ban_ids: list[int] | None = None,
+        stop_after_bars: int | None = None,
+        bar_id: int | None = None,
+    ) -> list[list[int]]:
+        """`n` independent continuations of ONE prompt, decoded as one batch.
+
+        `stop_after_bars` (with `bar_id`): a row stops once it has emitted
+        the Bar token that would open bar N+1, and that token is consumed,
+        not kept — the same rule Generator.generate_ids applies, so an
+        accompaniment sampled here spans exactly the window it was asked
+        for. Only meaningful for a prompt that ends on a bar line, which an
+        accompaniment prompt always does (its condition is padded to one).
+
+        A GRPO group is n samples of the same prompt, and decoding them one at
+        a time leaves the GPU almost idle: rollout was measured at 82% of a
+        training step. One batched pass costs about the same wall-clock as one
+        unbatched sequence, because a 113M model at batch 1 is latency-bound,
+        not throughput-bound.
+
+        Sequences that hit EOS stop collecting tokens but keep riding along in
+        the batch — compacting the batch mid-decode would mean rebuilding
+        every KV cache, which costs more than the wasted rows.
+        """
+        self.eval()
+        cur = ids.expand(n, -1).contiguous() if ids.size(0) == 1 else ids
+        kv_caches: list | None = None
+        n_ctx = 0
+        out: list[list[int]] = [[] for _ in range(n)]
+        alive = torch.ones(n, dtype=torch.bool, device=cur.device)
+        bars = [0] * n
+        for i in range(max_new_tokens):
+            if n_ctx + cur.size(1) > self.cfg.max_seq_len:
+                break
+            logits, kv_caches = self.forward(cur, kv_caches)
+            n_ctx += cur.size(1)
+            logits = logits[:, -1, :].float() / max(temperature, 1e-6)
+            if eos_id is not None and i < min_new_tokens:
+                logits[:, eos_id] = -float("inf")
+            if ban_ids:
+                logits[:, ban_ids] = -float("inf")
+            if top_k is not None:
+                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
+                logits[logits < v[:, [-1]]] = -float("inf")
+            probs = F.softmax(logits, dim=-1)
+            next_ids = torch.multinomial(probs, num_samples=1)      # (n, 1)
+            for r in range(n):
+                if not alive[r]:
+                    continue
+                t = int(next_ids[r, 0])
+                if eos_id is not None and t == eos_id:
+                    alive[r] = False
+                    continue
+                if stop_after_bars and bar_id is not None and t == bar_id:
+                    bars[r] += 1
+                    if bars[r] > stop_after_bars:
+                        alive[r] = False          # the Bar opening bar N+1: consumed
+                        continue
+                out[r].append(t)
+            if not bool(alive.any()):
+                break
+            cur = next_ids
+        return out
+
+    @torch.no_grad()
     def generate(
         self,
         ids: torch.Tensor,

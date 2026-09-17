@@ -1,0 +1,82 @@
+{
+  "checkpoint": "/Users/nicholasbien/.cache/huggingface/hub/models--nicholasbien--midigenai/snapshots/26ea417cd7e95bdff60cddbfcd8f9b0974f36d2d/v4/ckpt_final.pt",
+  "n_generations": 60,
+  "params": {
+    "prompt_tokens": 256,
+    "max_new_tokens": 512,
+    "temperature": 1.0,
+    "top_k": 50,
+    "seed": 0
+  },
+  "aggregate": {
+    "eos_rate": {
+      "mean": 0.1333,
+      "median": 0.0
+    },
+    "gen_tokens": {
+      "mean": 484.6833,
+      "median": 512.0
+    },
+    "gen_notes": {
+      "mean": 122.05,
+      "median": 128.0
+    },
+    "gen_seconds": {
+      "mean": 15.7683,
+      "median": 12.35
+    },
+    "repetition_rate": {
+      "mean": 0.2995,
+      "median": 0.1464
+    },
+    "note_density_hz": {
+      "mean": 7.9032,
+      "median": 7.3316
+    },
+    "pitch_class_entropy": {
+      "mean": 2.4332,
+      "median": 2.5953
+    },
+    "scale_consistency": {
+      "mean": 0.8912,
+      "median": 0.9473
+    },
+    "polyphony_rate": {
+      "mean": 3.4458,
+      "median": 2.8407
+    },
+    "ioi_entropy": {
+      "mean": 1.3669,
+      "median": 1.4605
+    },
+    "repetition_drift": {
+      "mean": -0.0464,
+      "median": 0.0
+    },
+    "density_drift": {
+      "mean": -0.0296,
+      "median": 0.0853
+    },
+    "pce_drift": {
+      "mean": 0.0902,
+      "median": 0.0091
+    },
+    "prompt_coherence": {
+      "mean": 0.7629,
+      "median": 0.8343
+    },
+    "downbeat_alignment": {
+      "mean": 0.2588,
+      "median": 0.2362
+    },
+    "downbeat_delta": {
+      "mean": -0.0278,
+      "median": -0.0338
+    },
+    "bar_offset_beats": {
+      "mean": 0.9437,
+      "median": 1.0
+    }
+  },
+  "n_rows": 60
+}

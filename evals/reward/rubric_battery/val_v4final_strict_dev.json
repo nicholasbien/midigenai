@@ -1,0 +1,544 @@
+{
+ "model": "gpt-5.6-luna",
+ "format": "notes",
+ "prompt": "strict",
+ "split": "dev",
+ "n": 53,
+ "n_decided": 41,
+ "agreement_with_human": 0.7560975609756098,
+ "swap_consistency": 0.7735849056603774,
+ "position_bias_pick_first": 0.3584905660377358,
+ "tie_rate": 0.2264150943396226,
+ "results": [
+  {
+   "pair_id": "20260914174514_640da927",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s arpeggiated texture, register, and steady "
+  },
+  {
+   "pair_id": "20260914150937_f8b36b81",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the established D/F/C groove and register with purposef"
+  },
+  {
+   "pair_id": "20260914214238_68a1b91d",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Stronger sustained harmonic progression and bass movement, with fewer arbitrary "
+  },
+  {
+   "pair_id": "20260914214827_a82eb0a5",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the established D-centered groove and motif without Con"
+  },
+  {
+   "pair_id": "20260914213327_4ae5de8a",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "It extends the established motif coherently, using restraint before a clear cade"
+  },
+  {
+   "pair_id": "20260914125300_9d1a7401",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 maintains stronger harmonic coherence and purposeful voicings; co"
+  },
+  {
+   "pair_id": "20260914124754_a8208e10",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Coherent bass motion and tighter chordal phrasing preserve the prompt\u2019s rhythmic"
+  },
+  {
+   "pair_id": "20260914214705_a4abb859",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 sustains groove and develops harmony; continuation 2 abruptly bec"
+  },
+  {
+   "pair_id": "20260914124556_f02c416a",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the established G\u266f/D\u266f sonority, despite repetitive dens"
+  },
+  {
+   "pair_id": "20260914221908_0b321736",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Continuation 1 preserves the prompt\u2019s groove and harmonic texture with more cohe"
+  },
+  {
+   "pair_id": "20260914213556_d7a812b8",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Maintains E-centered arpeggios, coherent rhythmic motion, and stronger harmonic "
+  },
+  {
+   "pair_id": "20260914124203_f0ae5036",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s pitches, bass movement, and rhythm convinc"
+  },
+  {
+   "pair_id": "20260914124601_0f85693e",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt\u2019s F#-major arpeggiation; continuation 2 turn"
+  },
+  {
+   "pair_id": "20260914214016_dc621047",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 stays rooted in D major, with clearer phrasing and restraint."
+  },
+  {
+   "pair_id": "20260914162814_8d16793d",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 follows the established groove with a clearer, coherent harmonic "
+  },
+  {
+   "pair_id": "20260914151216_fe0229e7",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Cleaner sustained harmony and clearer resolution, despite a brief chromatic colo"
+  },
+  {
+   "pair_id": "20260914222131_5e78b647",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Maintains the groove while developing a clearer harmonic progression toward C-ce"
+  },
+  {
+   "pair_id": "20260914215059_a712f071",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "More coherent A-centered harmony and steadier voicing, with fewer distracting no"
+  },
+  {
+   "pair_id": "20260914215625_c74f1a0a",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Preserves prompt\u2019s D-centered melodic groove; the second shifts keys and overfil"
+  },
+  {
+   "pair_id": "20260914215307_3ac8dc8e",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Maintains the prompt\u2019s D-sharp harmony and recurring rhythmic-melodic motif more"
+  },
+  {
+   "pair_id": "20260914214318_111123f1",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s D\u266f/F/A\u266f vocabulary and steady layered phra"
+  },
+  {
+   "pair_id": "20260914150417_9b407658",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Continuation 2 maintains a steadier groove and clearer harmonic motion from the "
+  },
+  {
+   "pair_id": "20260914124558_4d21bae5",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the groove, develops harmony coherently, and avoids fir"
+  },
+  {
+   "pair_id": "20260914162602_39381bc5",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "2 maintains coherent B-major chordal motion and steadier phrasing; 1 becomes ove"
+  },
+  {
+   "pair_id": "20260914151242_02742a47",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Continuation 2 preserves the prompt\u2019s tonal vocabulary and rhythmic momentum mor"
+  },
+  {
+   "pair_id": "20260914150358_145b7148",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Continuation 2 preserves the prompt\u2019s F-centered accompaniment and purposeful re"
+  },
+  {
+   "pair_id": "20260914162917_605166d6",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the groove and harmonic motion without continuation 2\u2019s"
+  },
+  {
+   "pair_id": "20260914174039_48bffa9d",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 resolves the buildup more coherently, with cleaner harmony and re"
+  },
+  {
+   "pair_id": "20260914174131_ae23bbea",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s motifs, harmonic color, register, and stea"
+  },
+  {
+   "pair_id": "20260914221626_8db7a288",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the D-major groove and develops it more coherently than"
+  },
+  {
+   "pair_id": "20260914163559_3f81c4f4",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 establishes a clearer A-centered progression with steadier rhythm"
+  },
+  {
+   "pair_id": "20260914213952_2ed8352e",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "It follows the C-natural turn with coherent A-to-B harmonic movement and groove."
+  },
+  {
+   "pair_id": "20260914215206_2bee8a96",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the D-major contour and cadence with cleaner, more cohe"
+  },
+  {
+   "pair_id": "20260914125450_1de91b38",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves harmonic language and groove with cleaner, more restrai"
+  },
+  {
+   "pair_id": "20260914222025_b478c150",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Maintains the ride groove while giving the harmony a coherent melodic contour."
+  },
+  {
+   "pair_id": "20260914124903_99a6a259",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Maintains A-major color, steady groove, and a convincing D-to-F# harmonic contin"
+  },
+  {
+   "pair_id": "20260914214218_9b3a4ca0",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Continuation 2 maintains coherent groove and harmonic trajectory with restrained"
+  },
+  {
+   "pair_id": "20260914162628_2bf3f0a0",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 provides cleaner harmonic motion and avoids continuation 2's over"
+  },
+  {
+   "pair_id": "20260914125429_4742715e",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the groove and develops harmony with restraint; continu"
+  },
+  {
+   "pair_id": "20260914221324_1ea57194",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s groove, register, and recurring D\u2013F melodi"
+  },
+  {
+   "pair_id": "20260914151047_64e953fd",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "It sustains the prompt\u2019s dense polyphonic texture while developing a clearer har"
+  },
+  {
+   "pair_id": "20260914214130_aa798302",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the established C# groove and restrained rhythmic-melod"
+  },
+  {
+   "pair_id": "20260914163246_cbb3ec39",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Cleaner groove and restrained melodic contour continue the prompt\u2019s C\u2013G\u2013E langua"
+  },
+  {
+   "pair_id": "20260914175502_89fb133a",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 continues melodic motion; continuation 2 creates overwhelming, im"
+  },
+  {
+   "pair_id": "20260914162733_cdc72660",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the harmonic palette and develops a coherent, steady gr"
+  },
+  {
+   "pair_id": "20260914173612_c1f5e7e0",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "It better preserves the prompt's B-minor/D-major palette and develops toward a c"
+  },
+  {
+   "pair_id": "20260914175515_d618a81d",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the established harmonic vocabulary and recurring rhyth"
+  },
+  {
+   "pair_id": "20260914175540_b009eb86",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the established ostinato, register, harmonic palette, a"
+  },
+  {
+   "pair_id": "20260914151305_a45b5be9",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Better preserves the established ostinato while avoiding continuation 2\u2019s abrupt"
+  },
+  {
+   "pair_id": "20260914124558_2a5ea0d3",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the established groove, tonal center, and coherent harm"
+  },
+  {
+   "pair_id": "20260914173816_ba909a4c",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "It resolves A# diminished into B minor, preserving the prompt\u2019s chromatic motion"
+  },
+  {
+   "pair_id": "20260914221356_441aa3b8",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Continuation 1 maintains groove and tonal center; continuation 2 becomes rhythmi"
+  },
+  {
+   "pair_id": "20260914163746_b8b1e294",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Maintains the groove and gives the chromatic pickup a coherent sustained resolut"
+  }
+ ]
+}

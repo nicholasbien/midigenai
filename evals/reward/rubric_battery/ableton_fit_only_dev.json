@@ -1,0 +1,424 @@
+{
+ "model": "gpt-5.6-luna",
+ "format": "notes",
+ "prompt": "fit_only",
+ "split": "dev",
+ "n": 41,
+ "n_decided": 34,
+ "agreement_with_human": 0.6470588235294118,
+ "swap_consistency": 0.8292682926829268,
+ "position_bias_pick_first": 0.43902439024390244,
+ "tie_rate": 0.1707317073170732,
+ "results": [
+  {
+   "pair_id": "20260916211053_68add0ac",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s F-centered groove, register, and rhythmic "
+  },
+  {
+   "pair_id": "20260916203921_aac512cd",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves prompt\u2019s pitch center, sparse drum vocabulary, and rhyt"
+  },
+  {
+   "pair_id": "20260916211014_d9b9061f",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt\u2019s pitch collection, sustained texture, regis"
+  },
+  {
+   "pair_id": "20260916203858_e157874d",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt\u2019s B-major harmony, repeated groove, register"
+  },
+  {
+   "pair_id": "20260916203544_f32af29d",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s groove, instrumentation, register, and rec"
+  },
+  {
+   "pair_id": "20260916211022_bf155b0a",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt's pitches, register, rhythmic density, and r"
+  },
+  {
+   "pair_id": "20260916203835_18467684",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 closely extends the established kick, clap, tom, and hat groove p"
+  },
+  {
+   "pair_id": "20260916203508_d11e6149",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s rhythmic layering, bass patterns, register"
+  },
+  {
+   "pair_id": "20260916211108_ccda2880",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt\u2019s pitch palette, recurring figures, and dens"
+  },
+  {
+   "pair_id": "20260916203733_73d3ada1",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the established groove, instrumentation, register, and "
+  },
+  {
+   "pair_id": "20260916203728_c1e654ac",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Continuation 2 extends the prompt\u2019s bass ostinato and preserves chromatic C-mino"
+  },
+  {
+   "pair_id": "20260916203921_aac512cd",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt\u2019s A-sharp, D-sharp, G language and restraine"
+  },
+  {
+   "pair_id": "20260916203949_ff18ad75",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt's dense kick-clap groove, hats, register, an"
+  },
+  {
+   "pair_id": "20260916203639_34eafb0f",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Preserves the prompt\u2019s low A-centered bass register, sparse density, and consist"
+  },
+  {
+   "pair_id": "20260916203639_34eafb0f",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s A-centered low-register motif, groove, and"
+  },
+  {
+   "pair_id": "20260916203839_3aea622e",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves C-minor harmony, recurring voicing, and the established"
+  },
+  {
+   "pair_id": "20260916211155_89f5ace4",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s dense drum groove, instrumentation, and rh"
+  },
+  {
+   "pair_id": "20260916211031_db3874ff",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s groove, harmony, instrumentation, and repe"
+  },
+  {
+   "pair_id": "20260916210919_bcacf590",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves prompt\u2019s pitch vocabulary and closed-hat texture better"
+  },
+  {
+   "pair_id": "20260916211037_713ca196",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Continuation 2 preserves the dense three-voice texture, pitch palette, and rhyth"
+  },
+  {
+   "pair_id": "20260916211144_5095dc44",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s percussion groove, register, and repeating"
+  },
+  {
+   "pair_id": "20260916203907_e605e47d",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the groove and harmonic language, despite its increased"
+  },
+  {
+   "pair_id": "20260916203753_93567b71",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 closely preserves the prompt\u2019s alternating kick/F# rhythmic patte"
+  },
+  {
+   "pair_id": "20260916210941_62f9a4a6",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Maintains the established subdivision and dense repeating low-register groove mo"
+  },
+  {
+   "pair_id": "20260916203852_38b39528",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 better preserves A-centered harmony and related register, despite"
+  },
+  {
+   "pair_id": "20260916203721_cb5c4540",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Continuation 2 preserves the prompt\u2019s harmony, texture, register, and rhythmic s"
+  },
+  {
+   "pair_id": "20260916211105_6c377050",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves C# harmony, rhythmic density, and the prompt\u2019s arpeggia"
+  },
+  {
+   "pair_id": "20260916203936_4e2cb1d7",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Continuation 1 preserves the prompt\u2019s groove, density, register, and closely rel"
+  },
+  {
+   "pair_id": "20260916203635_74d6c10c",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves prompt's dense repetition, pitch vocabulary, register, "
+  },
+  {
+   "pair_id": "20260916211153_35c40495",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Continuation 1 extends the prompt\u2019s harmonic alternation with coherent, developi"
+  },
+  {
+   "pair_id": "20260916203750_cf079ce4",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Continuation 1 preserves the established chord loop, groove, instrumentation, an"
+  },
+  {
+   "pair_id": "20260916203552_7dd58fb9",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves prompt\u2019s bass pitches, sparse groove, and recurring cla"
+  },
+  {
+   "pair_id": "20260916211039_097d04cf",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves established percussion, register, groove, and recurring"
+  },
+  {
+   "pair_id": "20260916211140_c7fb3ea2",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 completes the established alternating pattern, while continuation"
+  },
+  {
+   "pair_id": "20260916203949_ff18ad75",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves established drum groove, sparse textures, register, and"
+  },
+  {
+   "pair_id": "20260916211105_6c377050",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt\u2019s dense subdivision, C-sharp harmony, regist"
+  },
+  {
+   "pair_id": "20260916211037_713ca196",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Option 1 matches prompt texture, subdivision, register, and recurring C/G accent"
+  },
+  {
+   "pair_id": "20260916203718_de08c294",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves prompt\u2019s repeated groove, sustained harmony, register, "
+  },
+  {
+   "pair_id": "20260916203635_74d6c10c",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt's pitch vocabulary, register, density, and r"
+  },
+  {
+   "pair_id": "20260916211126_38c10bd2",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s dense kick pattern, clap accents, and hat "
+  },
+  {
+   "pair_id": "20260916211115_534cf3ca",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt's rapid subdivision, register, pitch collect"
+  }
+ ]
+}

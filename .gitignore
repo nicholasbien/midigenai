@@ -57,3 +57,17 @@ generated/
 tests/tmp/
 midigenai.egg-info/
 .claude/
+evals/autolabel*/pairs/
+
+# per-layer probe feature caches: hundreds of MB, rebuilt from pairs + checkpoint
+evals/reward/cache/
+
+# your own Ableton clips, extracted as prompts: personal material, rebuilt from ~/Music/Ableton
+evals/prompts_ableton/
+
+# weighted RL prompt pools: symlinks into the held-out seed sets
+evals/prompts_pool*/
+
+# the user's own Ableton material: seeds and pairs built on it stay local
+evals/prompts_ableton*/
+evals/pairs_ableton*/
