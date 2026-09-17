@@ -475,3 +475,13 @@ def test_transcript_filter_keeps_loops_and_cuts_stuck_notes():
     out, verdict = clean_score(build(breaks))
     assert out is not None and verdict.startswith("trimmed")
     assert sum(len(t.notes) for t in out.tracks) < 200
+
+
+def test_fma_is_a_source_and_keeps_its_tempo():
+    """Transcriptions get a Source_ token, and their detected tempo is real
+    (not a placeholder like aria/maestro), so the Tempo_ family is kept."""
+    from midigenai.attributes import SOURCES, TEMPO_PLACEHOLDER_SOURCES, source_from_path
+    assert "fma" in SOURCES
+    assert "fma" not in TEMPO_PLACEHOLDER_SOURCES
+    assert source_from_path("/x/midigenai_data/raw/fma/012345.mid") == "fma"
+    assert source_from_path("/x/midigenai_data/raw/fma_small_train/012345.mid") is None

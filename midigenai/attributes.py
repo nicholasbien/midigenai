@@ -46,7 +46,11 @@ TEMPO_EDGES = (70, 90, 110, 130, 150, 175)   # -> buckets 0..6
 TEMPO_PLACEHOLDER_SOURCES = ("aria", "maestro", "giantmidi")
 
 SOURCES = ["lakh", "lamd", "aria", "gigamidi", "maestro", "pop909",
-           "giantmidi", "user"]
+           "giantmidi", "user",
+           # audio->MIDI transcriptions (MuScriptor over FMA). Tagged so the
+           # model can tell transcribed material from authored MIDI, and so
+           # it can be asked for or steered away from at generation time.
+           "fma"]
 GENRES = ["rock", "pop", "jazz", "classical", "electronic", "hiphop", "rnb",
           "country", "folk", "latin", "blues", "metal", "reggae", "soul",
           "world", "other"]

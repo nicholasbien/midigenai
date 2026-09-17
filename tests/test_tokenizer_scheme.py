@@ -26,10 +26,10 @@ def test_explicit_v4_config_matches_the_scheme_shortcut():
 
 def test_v4_config_vocab_is_the_next_rebuild_size():
     """590 is what v4/ckpt_final.pt was trained with; the Tempo_ header
-    family (7 buckets) makes the next corpus rebuild 597. Shipped checkpoints
-    load their own tokenizer.json, so this is the size for new runs only;
-    unplanned drift from 597 is the bug."""
-    assert len(build_tokenizer(v4_config(8)).vocab) == 597
+    family (7 buckets) and Source_fma make the next corpus rebuild 598.
+    Shipped checkpoints load their own tokenizer.json, so this is the size
+    for new runs only; unplanned drift from 598 is the bug."""
+    assert len(build_tokenizer(v4_config(8)).vocab) == 598
 
 
 def test_header_builder_skips_families_an_old_tokenizer_lacks():
@@ -40,7 +40,8 @@ def test_header_builder_skips_families_an_old_tokenizer_lacks():
 
     cfg = v4_config(8)
     old = TokenizerConfig(**{**cfg.to_dict(), "special_tokens": [
-        s for s in cfg.special_tokens if not s.startswith("Tempo_")]})
+        s for s in cfg.special_tokens
+        if not s.startswith("Tempo_") and s != "Source_fma"]})   # both post-date 590
     tok = build_tokenizer(old)
     assert len(tok.vocab) == 590
     sp = Specials.from_tokenizer(tok)
