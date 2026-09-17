@@ -317,7 +317,7 @@ function setPhase(p) {
   if (ask) {
     ask.classList.toggle('now', p === 'awaiting');
     ask.innerHTML = p === 'awaiting'
-      ? `Which was better? <b>1</b> or <b>2</b>${Voice.enabled ? ' — or just say it' : ''}`
+      ? `Which was better? <b>1</b> or <b>2</b>${Voice.enabled ? ' — or say it, or “play again”' : ' — or “play again”'}`
       : p === 'playing' ? 'playing… (you can vote any time)' : '';
   }
   Voice.paint();
@@ -550,6 +550,7 @@ function render() {
     </div>
     <div class="ask" id="ask"></div>
     <div class="buttons">
+      <button onclick="playSequence('both')">&#9654; play again<kbd>space</kbd></button>
       <button onclick="vote('left')">1 is better<kbd>1</kbd></button>
       <button onclick="vote('right')">2 is better<kbd>2</kbd></button>
       <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
