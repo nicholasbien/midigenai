@@ -50,6 +50,64 @@ def _layer_module(model, name: str):
     raise ValueError(f"unknown layer {name!r}: expected 'norm' or 'block<N>'")
 
 
+def portable_path(path) -> str:
+    """An absolute path with the home directory written back as `~`.
+
+    Specs and scorecards record which checkpoint produced them, and a
+    resolved path bakes one machine's home directory into a file that gets
+    committed. `~` still points at the same checkpoint on the machine that
+    wrote it, and names nobody on any other. Nothing loads a spec by this
+    field -- grpo.py verifies the checkpoint by content hash -- so it is
+    provenance, and provenance does not need a username in it.
+    """
+    resolved = Path(path).resolve()
+    try:
+        return "~/" + str(resolved.relative_to(Path.home()))
+    except ValueError:
+        return str(resolved)
+
+
+MIN_CONT_TOKENS = 8      # a continuation shorter than this is not worth a row
+
+
+def fit_to_context(prompt_ids, cont_ids, max_seq_len: int, device,
+                   min_cont: int = MIN_CONT_TOKENS):
+    """(seq, n_prompt) for scoring, or None when the pair cannot be scored.
+
+    The prompt is kept WHOLE and the continuation's tail is cut instead.
+
+    The probe exists because its activations have attended over the prompt --
+    "does this fit what came before" is the signal the 10-feature hand reward
+    could not see, being computed on the continuation alone. Cutting the
+    prompt's head is therefore the one truncation that changes the question
+    being asked.
+
+    It is also asymmetric exactly where it does most damage. The two sides of
+    a pair share one prompt but differ in continuation length, so a cut sized
+    by total length removes MORE prompt from the longer side: on a 16-bar
+    accompaniment prompt the two sides can end up ~740 tokens apart in how
+    much context they saw. That is a length-correlated difference in
+    conditioning inside a Bradley-Terry comparison -- a spurious signal a
+    reward model will happily fit, and one that then rewards length rather
+    than fit.
+
+    So: keep the prompt, trim the continuation's tail, and give up when the
+    prompt leaves no room for a continuation worth scoring. Both the fitting
+    path and the live GRPO path use this, so a spec fitted from a feature
+    cache still scores identically when it is serving.
+
+    The cost is that a very long sample is scored on its first `room` tokens
+    rather than all of it. That is symmetric across a GRPO group, which
+    shares one prompt, and unavoidable at a fixed context.
+    """
+    kept_cont = min(len(cont_ids), max_seq_len - len(prompt_ids))
+    if kept_cont < min_cont:
+        return None
+    seq = torch.tensor([list(prompt_ids) + list(cont_ids)[:kept_cont]],
+                       dtype=torch.long, device=device)
+    return seq, len(prompt_ids)
+
+
 def _hidden_and_logprob(model, seq: torch.Tensor, n_prompt: int,
                         layers=DEFAULT_LAYERS):
     """(concat of mean continuation activations from each layer, mean log-prob).
@@ -83,13 +141,11 @@ def _hidden_and_logprob(model, seq: torch.Tensor, n_prompt: int,
 
 def feature_vector(model, prompt_ids, cont_ids, device,
                    layers=DEFAULT_LAYERS) -> np.ndarray | None:
-    if len(cont_ids) < 8:
+    fitted = fit_to_context(prompt_ids, cont_ids, model.cfg.max_seq_len, device)
+    if fitted is None:
         return None
-    seq = torch.tensor([list(prompt_ids) + list(cont_ids)], dtype=torch.long,
-                       device=device)
-    if seq.shape[1] > model.cfg.max_seq_len:
-        seq = seq[:, -model.cfg.max_seq_len:]
-    h, lp = _hidden_and_logprob(model, seq, len(prompt_ids), layers)
+    seq, n_prompt = fitted
+    h, lp = _hidden_and_logprob(model, seq, n_prompt, layers)
     v = np.concatenate([h, [lp]])
     return v if np.isfinite(v).all() else None
 
@@ -229,7 +285,7 @@ def fit(args) -> None:
     h = hashlib.sha256()
     with open(args.checkpoint, "rb") as fh:            # 8 MB is plenty to identify
         h.update(fh.read(8 << 20))
-    spec = {"kind": "probe", "checkpoint": str(Path(args.checkpoint).resolve()),
+    spec = {"kind": "probe", "checkpoint": portable_path(args.checkpoint),
             "layers": list(layers),
             # corpus_v5 moves to a 598-token vocab and every musical id shifts;
             # a probe fitted on 590-vocab activations must never score a
