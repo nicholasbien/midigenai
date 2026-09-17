@@ -168,3 +168,44 @@ def test_repeat_payload_has_everything_the_ui_reads():
         else:
             assert rep["left_roll"] is fresh["right_roll"]
             assert rep["left_model"] == "trained" and rep["left_timeline_url"] == "RT"
+
+
+def test_generate_batch_stops_after_n_bars():
+    """With bar_id the only sampleable token, every row emits exactly N bars
+    and consumes the Bar that would open bar N+1."""
+    m = _tiny(32)
+    ids = torch.tensor([[1, 2, 3]], dtype=torch.long)
+    bar = 9
+    banned = [i for i in range(32) if i != bar]
+    out = m.generate_batch(ids, n=4, max_new_tokens=40, top_k=None, ban_ids=banned,
+                           stop_after_bars=5, bar_id=bar)
+    assert all(s == [bar] * 5 for s in out), out
+
+
+def test_prompt_spec_accompany_item_layout(tmp_path):
+    """An accompaniment prompt is BOS Task_accomp <header> <condition padded
+    to the window> SEP, with drum tokens banned for a pitched target."""
+    from symusic import Note, Score, TimeSignature, Track
+    tok = build_tokenizer(scheme="v4")
+    spec = PromptSpec(tok)
+    s = Score(480); s.time_signatures.append(TimeSignature(0, 4, 4))
+    for prog, base in ((0, 60), (32, 40)):            # two live pitched tracks
+        t = Track(program=prog)
+        for i in range(64):
+            t.notes.append(Note(i * 240, 220, base + i % 5, 80))
+        s.tracks.append(t)
+    f = tmp_path / "two.mid"; s.dump_midi(f)
+    import random
+    it = spec.accompany_item(f, bars=4, rng=random.Random(0))
+    assert it and it["task"] == "accompany"
+    ids = it["prompt_ids"]; inv = {v: k for k, v in tok.vocab.items()}
+    assert inv[ids[0]] == "BOS_None" and inv[ids[1]] == "Task_accomp" and inv[ids[-1]] == "SEP_None"
+    assert spec.count_bars(ids) >= 4, "condition padded to the window"
+    assert set(spec.drum_ids()) <= set(it["ban_ids"]), "no uninvited kit for a pitched target"
+
+
+def test_prompt_spec_trim_leading_bars():
+    tok = build_tokenizer(scheme="v4"); spec = PromptSpec(tok)
+    bar = spec.sp.bar; ts = tok.vocab["TimeSig_4/4"]; pitch = tok.vocab["Pitch_60"]
+    assert spec.trim_leading_bars([bar, ts, bar, ts, pitch, 5, bar]) == [pitch, 5, bar]
+    assert spec.trim_leading_bars([pitch, bar]) == [pitch, bar]

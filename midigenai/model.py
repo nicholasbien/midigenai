@@ -239,8 +239,17 @@ class MusicTransformer(nn.Module):
         eos_id: int | None = None,
         min_new_tokens: int = 0,
         ban_ids: list[int] | None = None,
+        stop_after_bars: int | None = None,
+        bar_id: int | None = None,
     ) -> list[list[int]]:
         """`n` independent continuations of ONE prompt, decoded as one batch.
+
+        `stop_after_bars` (with `bar_id`): a row stops once it has emitted
+        the Bar token that would open bar N+1, and that token is consumed,
+        not kept — the same rule Generator.generate_ids applies, so an
+        accompaniment sampled here spans exactly the window it was asked
+        for. Only meaningful for a prompt that ends on a bar line, which an
+        accompaniment prompt always does (its condition is padded to one).
 
         A GRPO group is n samples of the same prompt, and decoding them one at
         a time leaves the GPU almost idle: rollout was measured at 82% of a
@@ -258,6 +267,7 @@ class MusicTransformer(nn.Module):
         n_ctx = 0
         out: list[list[int]] = [[] for _ in range(n)]
         alive = torch.ones(n, dtype=torch.bool, device=cur.device)
+        bars = [0] * n
         for i in range(max_new_tokens):
             if n_ctx + cur.size(1) > self.cfg.max_seq_len:
                 break
@@ -279,8 +289,13 @@ class MusicTransformer(nn.Module):
                 t = int(next_ids[r, 0])
                 if eos_id is not None and t == eos_id:
                     alive[r] = False
-                else:
-                    out[r].append(t)
+                    continue
+                if stop_after_bars and bar_id is not None and t == bar_id:
+                    bars[r] += 1
+                    if bars[r] > stop_after_bars:
+                        alive[r] = False          # the Bar opening bar N+1: consumed
+                        continue
+                out[r].append(t)
             if not bool(alive.any()):
                 break
             cur = next_ids

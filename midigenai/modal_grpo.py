@@ -57,6 +57,10 @@ def grpo(
     version: str = "v4",
     reward: str = "reward_v4_autolabel.json",
     prompts_tar: bytes | None = None,
+    accompany_tar: bytes | None = None,      # multi-track seeds; enables the second task
+    accompany_frac: float = 0.5,
+    reward_accompany: str | None = None,     # probe fitted on accompaniment pairs
+    bars: int = 16,
     steps: int = 1000,
     prompts_per_step: int = 8,
     group_size: int = 8,
@@ -106,6 +110,20 @@ def grpo(
     if not list(root.glob("*.mid")):
         root = next(d for d in root.iterdir() if d.is_dir() and any(d.glob("*.mid")))
 
+    acc_root = None
+    if accompany_tar:
+        acc_dir = Path("/work/accompany_prompts"); acc_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(fileobj=io.BytesIO(accompany_tar), mode="r:gz") as tf:
+            tf.extractall(acc_dir)
+        acc_root = acc_dir
+        if not list(acc_root.glob("*.mid")):
+            acc_root = next(d for d in acc_root.iterdir() if d.is_dir() and any(d.glob("*.mid")))
+        if reward_accompany is None:
+            raise SystemExit("accompaniment seeds shipped but no --reward-accompany")
+    reward_acc_path = Path("/work/reward") / reward_accompany if reward_accompany else None
+    if reward_acc_path is not None and not reward_acc_path.exists():
+        raise SystemExit(f"accompaniment reward spec {reward_accompany!r} not in the image")
+
     out_dir = Path(RUNS_ROOT) / run_name
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"[modal-grpo] {run_name}: {version} policy, {n_prompts} prompts, "
@@ -120,6 +138,8 @@ def grpo(
         lr=lr, beta=beta, save_every=save_every, eval_every=eval_every,
         eval_prompts=eval_prompts, eval_samples=eval_samples, seed=seed,
         device="cuda",
+        accompany_prompts=acc_root, accompany_frac=accompany_frac,
+        reward_accompany=reward_acc_path, bars=bars,
     ))
     runs_volume.commit()          # make the checkpoints visible before exit
 
@@ -156,6 +176,10 @@ def main(
     version: str = "v4",
     reward: str = "reward_v4_autolabel.json",
     prompts: str = "/Users/nicholasbien/midigenai-v4/evals/prompts_heldout",
+    accompany_prompts: str = "",            # directory of multi-track seeds; empty = continuation only
+    accompany_frac: float = 0.5,
+    reward_accompany: str = "",
+    bars: int = 16,
     steps: int = 1000,
     prompts_per_step: int = 8,
     group_size: int = 8,
@@ -179,8 +203,20 @@ def main(
     blob = buf.getvalue()
     print(f"shipping {len(files)} prompts ({len(blob)/1e6:.1f} MB) with the call")
 
+    acc_blob = None
+    if accompany_prompts:
+        afiles = sorted(Path(accompany_prompts).glob("*.mid"))
+        if not afiles:
+            raise SystemExit(f"no .mid files in {accompany_prompts}")
+        abuf = io.BytesIO()
+        with tarfile.open(fileobj=abuf, mode="w:gz") as tf:
+            for f in afiles:
+                tf.add(f, arcname=f.name)
+        acc_blob = abuf.getvalue()
+        print(f"shipping {len(afiles)} accompaniment seeds ({len(acc_blob)/1e6:.1f} MB)")
     out = grpo.remote(run_name=run_name, version=version, reward=reward,
-                      prompts_tar=blob, steps=steps,
+                      prompts_tar=blob, accompany_tar=acc_blob, accompany_frac=accompany_frac,
+                      reward_accompany=reward_accompany or None, bars=bars, steps=steps,
                       prompts_per_step=prompts_per_step, group_size=group_size,
                       lr=lr, beta=beta, eval_every=eval_every, seed=seed)
     print(out)

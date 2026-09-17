@@ -39,6 +39,11 @@ class PairConfig:
     extra: dict = field(default_factory=dict)
 
 
+def _accomp_prompt(gen, header, cond_ids, bars) -> list[int]:
+    from midigenai.sequence_format import accompaniment_prompt
+    return accompaniment_prompt(gen.sp, list(header), gen.pad_to_bars(list(cond_ids), bars))
+
+
 def _dumps_midi(score) -> bytes:
     """symusic writes to a path; newer builds also dump to bytes."""
     try:
@@ -219,6 +224,47 @@ def _drum_token_ids(tokenizer) -> list[int]:
     return _DRUM_IDS[key]
 
 
+def sample_accompany_window(score, bars: int, rng: random.Random,
+                            single_target_frac: float = 0.6, name: str = ""):
+    """The training sampler for accompaniment windows, shared by pair
+    generation and RL so both draw the same distribution. Returns
+    (cond, tgt, header_src, kind) as Scores, or None."""
+    from midigenai.data.v4_docs import (MIN_SEGMENT_NOTES, _n_notes, _subscore,
+                                        _tracks_in_window, _window, bar_edges,
+                                        split_hands, trim_leading)
+    from midigenai.tokenizer import normalize_drums
+    normalize_drums(score, name)
+    score = trim_leading(score)
+    edges = bar_edges(score)
+    n_bars = len(edges) - 1
+    if n_bars < bars:
+        return None
+    b0 = rng.randrange(0, n_bars - bars + 1)
+    s_tick, e_tick = edges[b0], edges[b0 + bars]
+    win = _window(score, s_tick, e_tick)
+    live = _tracks_in_window(score, s_tick, e_tick, MIN_SEGMENT_NOTES)
+    if len(live) >= 2:
+        rng.shuffle(live)
+        n_cond = 1 if len(live) == 2 or rng.random() < 0.7 else 2
+        cond_idx, rest = live[:n_cond], live[n_cond:]
+        tgt_idx = [rng.choice(rest)] if rng.random() < single_target_frac else rest
+        cond, tgt = _subscore(win, cond_idx), _subscore(win, tgt_idx)
+        header_src, kind = _subscore(win, cond_idx + tgt_idx), "tracks"
+    else:
+        solo = [i for i, t in enumerate(score.tracks) if not t.is_drum and len(t.notes)]
+        if len(solo) != 1 or any(t.is_drum and len(t.notes) for t in score.tracks):
+            return None
+        hands = split_hands(win)
+        if hands is None:
+            return None
+        low, high = hands
+        cond, tgt = (low, high) if rng.random() < 0.5 else (high, low)
+        header_src, kind = win, "hands"
+    if _n_notes(cond) < MIN_SEGMENT_NOTES or _n_notes(tgt) < MIN_SEGMENT_NOTES:
+        return None
+    return cond, tgt, header_src, kind
+
+
 def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
                         rng: random.Random) -> dict | None:
     """One accompaniment pair, sampled the way TRAINING samples them.
@@ -245,11 +291,7 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
     them.
     """
     from symusic import Score, Tempo
-    from midigenai.data.v4_docs import (MIN_SEGMENT_NOTES, _n_notes, _subscore,
-                                        _tracks_in_window, _window, bar_edges,
-                                        split_hands, trim_leading)
     from midigenai.attributes import header_for_score
-    from midigenai.tokenizer import normalize_drums
 
     if not getattr(gen, "v4", False):
         return None
@@ -257,44 +299,11 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
         score = Score(str(prompt_file))
     except Exception:
         return None
-    normalize_drums(score, prompt_file.name)
-    score = trim_leading(score)
-    edges = bar_edges(score)
-    n_bars = len(edges) - 1
-    if n_bars < cfg.bars:
+    sampled = sample_accompany_window(score, cfg.bars, rng, cfg.single_target_frac,
+                                      prompt_file.name)
+    if sampled is None:
         return None
-    b0 = rng.randrange(0, n_bars - cfg.bars + 1)
-    s_tick, e_tick = edges[b0], edges[b0 + cfg.bars]
-    win = _window(score, s_tick, e_tick)
-
-    live = _tracks_in_window(score, s_tick, e_tick, MIN_SEGMENT_NOTES)
-    kind = "tracks"
-    if len(live) >= 2:
-        rng.shuffle(live)
-        n_cond = 1 if len(live) == 2 or rng.random() < 0.7 else 2
-        cond_idx, rest = live[:n_cond], live[n_cond:]
-        tgt_idx = ([rng.choice(rest)] if rng.random() < cfg.single_target_frac
-                   else rest)
-        cond = _subscore(win, cond_idx)
-        tgt = _subscore(win, tgt_idx)
-        header_src = _subscore(win, cond_idx + tgt_idx)
-    else:
-        # solo keyboard: one hand conditions the other, both directions
-        solo = [i for i, t in enumerate(score.tracks)
-                if not t.is_drum and len(t.notes)]
-        drums = any(t.is_drum and len(t.notes) for t in score.tracks)
-        if len(solo) != 1 or drums:
-            return None
-        hands = split_hands(win)
-        if hands is None:
-            return None
-        low, high = hands
-        cond, tgt = (low, high) if rng.random() < 0.5 else (high, low)
-        header_src = win
-        kind = "hands"
-    if _n_notes(cond) < MIN_SEGMENT_NOTES or _n_notes(tgt) < MIN_SEGMENT_NOTES:
-        return None
-
+    cond, tgt, header_src, kind = sampled
     cond_ids = gen.tokenizer(cond).ids
     # Unless a kit was asked for, keep one out. With the header naming
     # condition + target the v4 model still puts an uninvited drum kit in
@@ -364,7 +373,11 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
         "cross_model": False, "on_policy": True,
         "tempo_bpm": tempo,
         "temperature": cfg.temperature, "top_k": cfg.top_k,
-        "prompt_ids": [*header, *cond_ids],
+        # exactly what the model was prompted with — BOS, Task_accomp, header,
+        # the condition padded to the window, SEP — so a probe reward sees the
+        # same layout when it is fitted on these pairs and when GRPO scores
+        # samples from this same prompt
+        "prompt_ids": list(_accomp_prompt(gen, header, cond_ids, bars)),
         "cond_ids": cond_ids,
         "cont_a_ids": sides["a"]["ids"], "cont_b_ids": sides["b"]["ids"],
         "seed_a": sides["a"]["seed"], "seed_b": sides["b"]["seed"],
