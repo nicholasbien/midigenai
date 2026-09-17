@@ -299,6 +299,23 @@ class Source:
                 "label": f"{self.id} · {self.mode} · {c['decided']} decided, {c['queued']} left"}
 
 
+SETS_CONFIG = "labeling_sets.json"
+
+
+def sets_config(sets_dir: Path | None) -> dict:
+    """<sets_dir>/labeling_sets.json: {"order": [basename, ...], "hidden":
+    [basename, ...]}. Listed sets come first in that order and the first
+    unfinished one is the default; hidden sets are served if asked for by
+    name but never listed. Missing or broken file: no order, nothing hidden."""
+    if sets_dir is None:
+        return {"order": [], "hidden": []}
+    try:
+        cfg = json.loads((sets_dir / SETS_CONFIG).read_text())
+        return {"order": list(cfg.get("order", [])), "hidden": list(cfg.get("hidden", []))}
+    except (FileNotFoundError, ValueError):
+        return {"order": [], "hidden": []}
+
+
 def discover_sets(sets_dir: Path) -> list[Path]:
     """Every labeling_*/ under `sets_dir` with a manifest: a set another
     session just wrote appears here without anyone restarting anything."""
@@ -343,8 +360,14 @@ def build_app(args):
         raise SystemExit("nothing to serve: pass --out <dir> or --sets-dir <dir with labeling_*/manifest.jsonl>")
 
     def ordered() -> list[Source]:
-        # sets with work left first (newest manifest first), finished ones last
-        return sorted(sources.values(), key=lambda s: (not s.todo, -(s.out_dir / "manifest.jsonl").stat().st_mtime))
+        # sets with work left first — those named in labeling_sets.json in
+        # that order, then the rest newest-manifest-first — finished ones
+        # last; hidden sets never listed
+        cfg = sets_config(sets_dir)
+        rank = {name: i for i, name in enumerate(cfg["order"])}
+        shown = [s for s in sources.values() if s.id not in cfg["hidden"]]
+        return sorted(shown, key=lambda s: (not s.todo, rank.get(s.id, len(rank)),
+                                            -(s.out_dir / "manifest.jsonl").stat().st_mtime))
 
     def pick() -> Source:
         # a set named in the query or the vote body; the first one otherwise,
@@ -606,7 +629,8 @@ def main() -> None:
                         "between them; the first is the default)")
     v.add_argument("--sets-dir", default=None,
                    help="hub mode: serve every labeling_*/ with a manifest under this "
-                        "directory, and pick up new ones as they appear")
+                        "directory, and pick up new ones as they appear; an optional "
+                        f"<dir>/{SETS_CONFIG} fixes the order and hides sets")
     v.add_argument("--rescan", type=float, default=30.0,
                    help="hub mode: seconds between looks for new sets")
     v.add_argument("--live", action=argparse.BooleanOptionalAction, default=True,
