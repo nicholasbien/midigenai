@@ -1,0 +1,84 @@
+{
+ "model": "gpt-5.6-luna",
+ "format": "notes",
+ "prompt": "fit_first",
+ "split": "dev",
+ "n": 7,
+ "n_decided": 5,
+ "agreement_with_human": 0.8,
+ "swap_consistency": 0.7142857142857143,
+ "position_bias_pick_first": 0.7142857142857143,
+ "tie_rate": 0.2857142857142857,
+ "results": [
+  {
+   "pair_id": "20260916204514_0f649cb0",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 extends the C-sharp minor harmony with coherent rhythmic motion."
+  },
+  {
+   "pair_id": "20260916204357_1cc2ee7d",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Continuation 1 preserves the prompt's groove, register, and coherent G-major har"
+  },
+  {
+   "pair_id": "20260916211340_200405d3",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 maintains the established groove and harmony; continuation 2 beco"
+  },
+  {
+   "pair_id": "20260916204504_58262aba",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "1 follows the established groove with clearer harmonic continuity and less clutt"
+  },
+  {
+   "pair_id": "20260916204641_2328ddeb",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Preserves the established D-sharp/F-sharp/A-sharp groove, harmony, register, and"
+  },
+  {
+   "pair_id": "20260916211308_8aa42371",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the established A/F# groove and harmonic palette; 2 wan"
+  },
+  {
+   "pair_id": "20260916204127_c42ec457",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Continuation 2 preserves D# bass harmony and groove; continuation 1 loses both."
+  }
+ ]
+}

@@ -1,0 +1,84 @@
+{
+ "model": "gpt-5.6-luna",
+ "format": "notes",
+ "prompt": "fit_only",
+ "split": "dev",
+ "n": 7,
+ "n_decided": 6,
+ "agreement_with_human": 0.8333333333333334,
+ "swap_consistency": 0.8571428571428571,
+ "position_bias_pick_first": 0.5714285714285714,
+ "tie_rate": 0.1428571428571429,
+ "results": [
+  {
+   "pair_id": "20260916204514_0f649cb0",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Continuation 2 preserves the prompt\u2019s C# harmony, bass register, and rhythmic te"
+  },
+  {
+   "pair_id": "20260916204357_1cc2ee7d",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt\u2019s G-centered harmony, kick-snare groove, reg"
+  },
+  {
+   "pair_id": "20260916211340_200405d3",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the established kick-snare groove, harmonic palette, re"
+  },
+  {
+   "pair_id": "20260916204504_58262aba",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 better preserves the prompt\u2019s sparse groove and compatible chroma"
+  },
+  {
+   "pair_id": "20260916204641_2328ddeb",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s syncopated groove, harmony, register, and "
+  },
+  {
+   "pair_id": "20260916211308_8aa42371",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt's harmony, rhythmic density, instrumentation"
+  },
+  {
+   "pair_id": "20260916204127_c42ec457",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the established D# motif, closed-hat groove, and drum d"
+  }
+ ]
+}

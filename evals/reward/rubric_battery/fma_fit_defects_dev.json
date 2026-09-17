@@ -1,0 +1,84 @@
+{
+ "model": "gpt-5.6-luna",
+ "format": "notes",
+ "prompt": "fit_defects",
+ "split": "dev",
+ "n": 7,
+ "n_decided": 5,
+ "agreement_with_human": 0.6,
+ "swap_consistency": 0.7142857142857143,
+ "position_bias_pick_first": 0.7142857142857143,
+ "tie_rate": 0.2857142857142857,
+ "results": [
+  {
+   "pair_id": "20260916204514_0f649cb0",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves tonal center, chordal density, register, and rhythmic c"
+  },
+  {
+   "pair_id": "20260916204357_1cc2ee7d",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Continuation 1 preserves the prompt\u2019s groove, drum palette, register, and closel"
+  },
+  {
+   "pair_id": "20260916211340_200405d3",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Closer upper-register density and G-sharp-minor harmonic language, with a more r"
+  },
+  {
+   "pair_id": "20260916204504_58262aba",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Matches the prompt's dense layered instrumentation, register, rhythmic subdivisi"
+  },
+  {
+   "pair_id": "20260916204641_2328ddeb",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt\u2019s harmony, instrumentation, and repeating rh"
+  },
+  {
+   "pair_id": "20260916211308_8aa42371",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Continuation 1 preserves the prompt's harmonic groove and rhythmic density; cont"
+  },
+  {
+   "pair_id": "20260916204127_c42ec457",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Continuation 2 preserves the prompt\u2019s drum groove and D-sharp harmonic material "
+  }
+ ]
+}
