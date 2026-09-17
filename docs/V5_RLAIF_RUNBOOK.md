@@ -54,13 +54,50 @@ Block 1 is the first guess (it won on the 113M v4), but the sweep decides.
 Gate: the confirm number should be at least the 113M v4's **0.789**. Below
 ~0.75 do not launch.
 
-## 5. GRPO  (DECISION: steps; ~$8 per 1000 steps at 113M with batched rollouts)
+## 2b. Accompaniment pairs, judge, reward  (the second task; same recipe)
+
+Accompaniment seeds must be MULTI-TRACK files. On day one that is the
+held-out val set (235 of its 400 files have two live tracks); the Ableton
+clip set and the FMA transcriptions are single-track and cannot seed
+accompaniment (see "Gap" below).
+
+    python -m midigenai.pairgen --prompts ~/midigenai-v4/evals/prompts_heldout \
+      --out evals/autolabel_v5_acc -n 3000 --mode accompany --bars 16 \
+      --checkpoint runs/v5/ckpt_final.pt --tokenizer runs/v5/tokenizer.json --label v5
+    python -m midigenai.llm_judge label --pairs evals/autolabel_v5_acc/pairs \
+      --out evals/autolabel_v5_acc/labels.jsonl --prompt accompany --concurrency 12
+    python -m midigenai.probe_layers cache --checkpoint runs/v5/ckpt_final.pt \
+      --tokenizer runs/v5/tokenizer.json --labels evals/autolabel_v5_acc/labels.jsonl \
+      --out evals/reward/cache/v5_acc_luna_layers.npz --device mps
+    python -m midigenai.probe_layers sweep   --cache evals/reward/cache/v5_acc_luna_layers.npz --labels evals/autolabel_v5_acc/labels.jsonl
+    python -m midigenai.probe_layers confirm --cache evals/reward/cache/v5_acc_luna_layers.npz \
+      --labels evals/autolabel_v5_acc/labels.jsonl --layers <winner> --l2 10 \
+      --checkpoint runs/v5/ckpt_final.pt --out evals/reward/probe_v5_acc.json
+
+The accompaniment judge (`accompany` rubric, chosen from the pair meta) was
+validated at sol 0.83 / luna 0.72–0.76 on 47 human votes; its probe has no
+prior number to gate against, so treat ~0.72 (the judge's own band) as the
+floor.
+
+## 5. GRPO — one run, both tasks  (DECISIONS: steps, accompany-frac)
 
     modal run midigenai/modal_grpo.py --run-name grpo_v5_001 --version v5 \
       --reward probe_v5.json --prompts evals/prompts_pool_v5 \
+      --accompany-prompts ~/midigenai-v4/evals/prompts_heldout --reward-accompany probe_v5_acc.json \
+      --accompany-frac 0.5 --bars 16 \
       --steps 1000 --prompts-per-step 8 --lr 5e-6 --beta 0.04 --eval-every 25
 
-No repetition penalty (user decision); `compare_ckpt` is the gate afterward.
+Each step samples prompts from both tasks at `--accompany-frac`; each task
+scores against its own probe (group-relative advantage means the two need
+no shared scale); one KL reference anchors both. EVAL is reported per task
+— watch both curves. No repetition penalty (user decision); `compare_ckpt`
+is the gate afterward, per task.
+
+**Gap:** there is no Ableton accompaniment seed set yet. `ableton_clips.py`
+exports single clips; accompaniment needs multi-track windows from whole
+sets. A `--arrangements` mode on the extractor (per-project multi-track
+windows, same exclusion and dedup) would close it — a couple of hours, and
+worth doing before the second v5 run, since Ableton is the target.
 
 ## 6. Verify — reward going up is not evidence
 
