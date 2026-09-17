@@ -138,6 +138,51 @@ def sync_from_hub(version: str = DEFAULT_VERSION, repo_id: str = "nicholasbien/m
     return sorted(os.listdir(dest))
 
 
+@app.function(
+    image=image,
+    volumes={MODELS_ROOT: volume,
+             "/runs": modal.Volume.from_name("midigenai-runs"),
+             "/corpus": modal.Volume.from_name("midigenai-corpus")},
+    timeout=1800,
+    memory=16_384,
+)
+def publish_from_run(run_name: str, version: str, corpus: str,
+                     checkpoint: str = "ckpt_final.pt") -> dict:
+    """Copy a training run's checkpoint into the models volume as `version`,
+    with optimizer state stripped, plus the tokenizer from `corpus`.
+
+    Runs inside Modal, so the checkpoint never travels through a laptop. A
+    training checkpoint carries AdamW moments that serving never reads --
+    for the 113M that is 1365 MB of which 457 MB is weights -- and pulling
+    the full file over a home connection stalled at 1.3 GB for three hours.
+    The resumable copy stays on the runs volume; only the slim one is served.
+    """
+    import os
+    import shutil
+    import torch
+
+    src = os.path.join("/runs", run_name, checkpoint)
+    tok_src = os.path.join("/corpus", corpus, TOKENIZER_FILENAME)
+    for path in (src, tok_src):
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+    dest = os.path.join(MODELS_ROOT, version)
+    os.makedirs(dest, exist_ok=True)
+
+    ckpt = torch.load(src, map_location="cpu", weights_only=False)
+    slim = {k: v for k, v in ckpt.items() if k != "optimizer"}
+    out = os.path.join(dest, CKPT_FILENAME)
+    torch.save(slim, out)
+    shutil.copyfile(tok_src, os.path.join(dest, TOKENIZER_FILENAME))
+    volume.commit()
+    return {
+        "version": version,
+        "full_mb": os.path.getsize(src) // 1_000_000,
+        "slim_mb": os.path.getsize(out) // 1_000_000,
+        "step": slim.get("step"),
+        "vocab": slim.get("model_config", {}).get("vocab_size"),
+    }
+
 @app.function(image=image, volumes={MODELS_ROOT: volume})
 def list_versions() -> dict:
     """What the volume actually holds, so a deploy can be checked without SSH."""
