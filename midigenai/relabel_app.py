@@ -23,6 +23,9 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -296,24 +299,60 @@ class Source:
                 "label": f"{self.id} · {self.mode} · {c['decided']} decided, {c['queued']} left"}
 
 
+def discover_sets(sets_dir: Path) -> list[Path]:
+    """Every labeling_*/ under `sets_dir` with a manifest: a set another
+    session just wrote appears here without anyone restarting anything."""
+    return sorted((d for d in sets_dir.glob("labeling_*") if (d / "manifest.jsonl").exists()),
+                  key=lambda d: (d / "manifest.jsonl").stat().st_mtime, reverse=True)
+
+
 def build_app(args):
-    from flask import Flask, jsonify, request, send_from_directory
+    from flask import Flask, Response, jsonify, request, send_from_directory
 
     from midigenai.label_app import sources_payload
 
-    outs = args.out if isinstance(args.out, list) else [args.out]
-    sources = {}
-    for out in outs:
-        src = Source(out, args.seed)
+    sets_dir = Path(args.sets_dir).resolve() if getattr(args, "sets_dir", None) else None
+    outs = list(args.out or [])
+    sources: dict[str, Source] = {}
+
+    def add_source(out) -> None:
+        try:
+            src = Source(out, args.seed)
+        except Exception as e:
+            print(f"[relabel] cannot serve {out}: {type(e).__name__}: {e}")
+            return
         sources[src.id] = src
-    first = next(iter(sources))
+
+    last_scan = 0.0
+
+    def rescan(force: bool = False) -> None:
+        # the hub picks up sets written after it started; cheap (a glob), so
+        # it runs on every /api/sources and before every /api/next
+        nonlocal last_scan
+        if sets_dir is None or (not force and time.time() - last_scan < args.rescan):
+            return
+        last_scan = time.time()
+        for d in discover_sets(sets_dir):
+            if d.name not in sources:
+                add_source(d)
+
+    for out in outs:
+        add_source(out)
+    rescan(force=True)
+    if not sources:
+        raise SystemExit("nothing to serve: pass --out <dir> or --sets-dir <dir with labeling_*/manifest.jsonl>")
+
+    def ordered() -> list[Source]:
+        # sets with work left first (newest manifest first), finished ones last
+        return sorted(sources.values(), key=lambda s: (not s.todo, -(s.out_dir / "manifest.jsonl").stat().st_mtime))
 
     def pick() -> Source:
         # a set named in the query or the vote body; the first one otherwise,
         # so a single-set server behaves exactly as before
         name = request.args.get("source") or (
             (request.get_json(silent=True) or {}).get("source") if request.method == "POST" else None)
-        return sources.get(name, sources[first])
+        rescan()
+        return sources.get(name) or ordered()[0]
 
     app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
 
@@ -321,10 +360,47 @@ def build_app(args):
     def index():
         return send_from_directory(app.template_folder, "label.html")
 
+    def hub_sources(current: str):
+        rescan()
+        return jsonify(sources_payload([s.entry() for s in ordered()], current,
+                                       request.host.split(":")[0], proxy_live=args.live))
+
     @app.route("/api/sources")
     def api_sources():
-        return jsonify(sources_payload([s.entry() for s in sources.values()],
-                                       pick().id, request.host.split(":")[0]))
+        return hub_sources(pick().id)
+
+    # ---- live-generation servers (label_app) behind this one's URL, so a
+    # single tunnel reaches them: /live/<port>/<anything> -> 127.0.0.1:<port>.
+    # The page uses paths relative to its own URL, so it works unchanged
+    # under the prefix; only the source list is answered here, with hub URLs.
+    @app.route("/live/<int:port>")
+    def live_root(port):
+        from flask import redirect
+        return redirect(f"/live/{port}/")
+
+    @app.route("/live/<int:port>/", defaults={"rest": ""}, methods=["GET", "POST"])
+    @app.route("/live/<int:port>/<path:rest>", methods=["GET", "POST"])
+    def live_proxy(port, rest):
+        if not args.live:
+            return "live proxy off", 404
+        if rest == "api/sources":
+            return hub_sources(f"live:{port}")
+        url = f"http://127.0.0.1:{port}/{rest}"
+        if request.query_string:
+            url += "?" + request.query_string.decode()
+        req = urllib.request.Request(url, method=request.method,
+                                     data=request.get_data() if request.method == "POST" else None)
+        if request.content_type:
+            req.add_header("Content-Type", request.content_type)
+        try:
+            with urllib.request.urlopen(req, timeout=90) as r:
+                return Response(r.read(), status=r.status,
+                                content_type=r.headers.get("Content-Type", "application/octet-stream"))
+        except urllib.error.HTTPError as e:
+            return Response(e.read(), status=e.code,
+                            content_type=e.headers.get("Content-Type", "text/plain"))
+        except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
+            return jsonify({"error": f"live server :{port} unreachable: {e}"}), 502
 
     @app.route("/api/next")
     def next_pair():
@@ -375,7 +451,7 @@ def build_app(args):
     @app.route("/api/vote", methods=["POST"])
     def vote():
         data = request.get_json(force=True)
-        src = sources.get(data.get("source"), sources[first])
+        src = sources.get(data.get("source")) or ordered()[0]
         choice = data.get("choice")
         # the shared template can also post "drums_as_piano": a defect report
         # about the pair, not a preference, so it is recorded as a non-vote
@@ -510,6 +586,14 @@ def main() -> None:
     v.add_argument("--out", action="append", default=None,
                    help="a set to serve; repeat for several (the page switches "
                         "between them; the first is the default)")
+    v.add_argument("--sets-dir", default=None,
+                   help="hub mode: serve every labeling_*/ with a manifest under this "
+                        "directory, and pick up new ones as they appear")
+    v.add_argument("--rescan", type=float, default=30.0,
+                   help="hub mode: seconds between looks for new sets")
+    v.add_argument("--live", action=argparse.BooleanOptionalAction, default=True,
+                   help="reach running label_app (live generation) servers through "
+                        "/live/<port>/ on this server, so one tunnel covers them")
     v.add_argument("--port", type=int, default=7789)
     v.add_argument("--seed", type=int, default=1)
 
@@ -524,8 +608,9 @@ def main() -> None:
     elif a.cmd == "score":
         score(a)
     else:
-        a.out = a.out or ["evals/ceiling"]
-        build_app(a).run(port=a.port, debug=False)
+        if not a.out and not a.sets_dir:
+            a.out = ["evals/ceiling"]
+        build_app(a).run(port=a.port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":

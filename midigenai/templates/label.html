@@ -74,6 +74,18 @@
   .rows .opt { margin-bottom: 10px; }
   .legend { font-size: 11px; color: var(--faint); margin: 4px 0 8px; }
   .buttons { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+  /* votes, by how often they are pressed: the two answers on top and big,
+     then tie / both bad / skip, then transport, then the defect reports */
+  .votes { display: grid; gap: 8px; margin-top: 8px; }
+  .votes.primary { grid-template-columns: 1fr 1fr; margin-top: 12px; }
+  .votes.primary button { font-size: 18px; font-weight: 600; padding: 16px 12px; border-width: 2px; }
+  .votes.primary button:hover { border-color: var(--accent); }
+  .votes.secondary { grid-template-columns: 1fr 1fr 1fr; }
+  .votes.secondary button { font-size: 14px; padding: 11px 10px; }
+  .votes.transport { grid-template-columns: repeat(4, 1fr); }
+  .votes.transport button { font-size: 12px; padding: 8px 6px; color: var(--muted); }
+  .votes.reports { grid-template-columns: 1fr 1fr; margin-top: 12px; }
+  .votes.reports button { font-size: 12px; padding: 7px 8px; opacity: .8; }
   button { padding: 9px 14px; border: 1px solid var(--btn-br); background: var(--btn); color: var(--fg); border-radius: 6px; cursor: pointer; font-size: 13px; }
   button:hover { background: var(--btn-hover); }
   kbd { background: var(--kbd); border-radius: 3px; padding: 1px 5px; font-size: 11px; margin-left: 6px; }
@@ -97,9 +109,12 @@
     .rowplay { margin-top: 6px; gap: 6px; }
     .chips { margin-top: 4px; }
     .chip { padding: 2px 8px; font-size: 11px; }
-    .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
     button { padding: 14px 10px; font-size: 15px; }
-    button.wide { grid-column: 1 / -1; }
+    .votes.primary button { font-size: 20px; padding: 20px 10px; }
+    .votes.secondary button { padding: 14px 8px; }
+    .votes.transport button { padding: 12px 4px; font-size: 13px; }
+    .votes.reports { grid-template-columns: 1fr; }
+    .votes.reports button { padding: 10px 8px; }
     kbd { display: none; }
   }
   .rowplay { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -112,7 +127,7 @@
   @keyframes flash { 0% { background: var(--flash); } 100% { background: var(--card); } }
   /* voice control: one pill in the status bar, plus what was last heard */
   .voice { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
-  #voicebtn { padding: 4px 9px; font-size: 12px; }
+  #voicebtn { padding: 4px 9px; font-size: 12px; white-space: nowrap; }
   #morebtn { display: none; }   /* phone only: opens the folded controls */
   #voicebtn.on { border-color: var(--playing); color: var(--playing); }
   #voicebtn.err { border-color: var(--warn-br); color: var(--warn); }
@@ -211,7 +226,11 @@
 const SESSION_ID = crypto.randomUUID();
 // which of this server's sets to serve; empty = the server's first (default)
 const SOURCE = new URLSearchParams(location.search).get('source') || '';
-const withSource = (path) => SOURCE ? `${path}${path.includes('?') ? '&' : '?'}source=${encodeURIComponent(SOURCE)}` : path;
+// Server paths are resolved against the page's own URL, not the site root:
+// behind the hub the same page is served at /live/<port>/ and must talk to
+// /live/<port>/api/... — a leading slash would escape the prefix.
+const rel = (path) => new URL(String(path).replace(/^\//, ''), location.href).pathname;
+const withSource = (path) => rel(path) + (SOURCE ? `?source=${encodeURIComponent(SOURCE)}` : '');
 
 async function loadSources() {
   const sel = document.getElementById('source');
@@ -348,6 +367,7 @@ async function loadNext() {
     const data = await res.json();
     if (data.status === 'ok') {
       current = data.pair;
+      for (const k of Object.keys(current)) if (k.endsWith('_url') && current[k]) current[k] = rel(current[k]);
       document.getElementById('queue').textContent = `${data.queued} queued`;
       render();
       return;
@@ -793,18 +813,24 @@ function render() {
     </div>
     <div class="ask" id="ask"></div>
     <div style="text-align:center"><button type="button" id="listenbtn" onclick="Voice.listenNow()">🎤 tap, then say 1 or 2</button></div>
-    <div class="buttons">
+    <div class="votes primary">
+      <button onclick="vote('left')">1 is better<kbd>1</kbd></button>
+      <button onclick="vote('right')">2 is better<kbd>2</kbd></button>
+    </div>
+    <div class="votes secondary">
+      <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
+      <button onclick="vote('bad')">Both bad<kbd>x</kbd></button>
+      <button onclick="vote('skip')">Skip<kbd>s</kbd></button>
+    </div>
+    <div class="votes transport">
       <button onclick="startOver()">&#8635; start over<kbd>enter</kbd></button>
       <button id="pausebtn" onclick="togglePause()">&#10074;&#10074; pause<kbd>space</kbd></button>
       <button onclick="stopPlayback()">&#9632; stop<kbd>esc</kbd></button>
       <button onclick="playOther()">&#8646; next one<kbd>o</kbd></button>
-      <button onclick="vote('left')">1 is better<kbd>1</kbd></button>
-      <button onclick="vote('right')">2 is better<kbd>2</kbd></button>
-      <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
-      <button onclick="vote('bad')">Both bad<kbd>x</kbd></button>
-      <button onclick="vote('skip')">Skip<kbd>s</kbd></button>
-      <button class="wide" onclick="vote('drums_as_piano')" style="border-color:var(--warn-br);color:var(--warn)">Drums playing as piano<kbd>d</kbd></button>
-      <button class="wide" onclick="vote('bad_prompt')" style="border-color:var(--cut);color:var(--cut)">Bad prompt — exclude from data<kbd>p</kbd></button>
+    </div>
+    <div class="votes reports">
+      <button onclick="vote('drums_as_piano')" style="border-color:var(--warn-br);color:var(--warn)">Drums playing as piano<kbd>d</kbd></button>
+      <button onclick="vote('bad_prompt')" style="border-color:var(--cut);color:var(--cut)">Bad prompt — exclude from data<kbd>p</kbd></button>
     </div>
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
   `;
@@ -885,7 +911,7 @@ async function vote(choice) {
     flags: { left: [...flags.left], right: [...flags.right] },
   };
   try {
-    await fetch('/api/vote', { method: 'POST',
+    await fetch(rel('/api/vote'), { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) });
     if (!['skip', 'bad_prompt', 'drums_as_piano'].includes(choice)) { sessionCount++; totalCount++; updateCount(); }
@@ -938,7 +964,7 @@ async function uploadSeed(files) {
   fd.append('midi', f, f.name);
   fd.append('n', String(n));
   try {
-    const res = await fetch('/api/upload', { method: 'POST', body: fd });
+    const res = await fetch(rel('/api/upload'), { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) { sn.textContent = `upload failed: ${data.error || res.status}`; return; }
     sn.textContent = `${f.name} → next ${data.n} pair${data.n > 1 ? 's' : ''} (vote or skip to get there)`;

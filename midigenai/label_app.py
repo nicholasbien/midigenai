@@ -94,81 +94,34 @@ def discover_label_servers() -> list[dict]:
     return sorted(found, key=lambda f: f["port"])
 
 
-def sources_payload(local: list[dict], current: str, host: str) -> dict:
+def sources_payload(local: list[dict], current: str, host: str,
+                    proxy_live: bool = False) -> dict:
     """The selector's entries: this server's own sources first (`local`,
-    each with id/label/mode/counts), then every other label server found
-    on the machine as a plain link."""
+    each with id/label/mode/counts), then the other label servers found on
+    the machine. A hub (`proxy_live`) reaches live-generation servers
+    through its own /live/<port>/ path, so one tunnel covers them; other
+    servers are plain links. Servers serving a set the hub already has are
+    left out."""
+    known = {src["id"] for src in local}
     entries = [{**src, "url": f"/?source={src['id']}", "here": True,
                 "current": src["id"] == current} for src in local]
     for srv in discover_label_servers():
         for out in srv["outs"]:
+            if out in known:
+                continue
+            if srv["kind"] == "live" and proxy_live:
+                sid = f"live:{srv['port']}"
+                entries.append({"id": sid, "here": True, "current": sid == current,
+                                "mode": "continuation",
+                                "label": f"{out} · live pairs from the model",
+                                "url": f"/live/{srv['port']}/"})
+                continue
             entries.append({
                 "id": f"{srv['port']}:{out}", "here": False, "current": False,
                 "label": f"{out} ({'live pairs' if srv['kind'] == 'live' else 'pre-generated'}) · :{srv['port']}",
                 "url": f"http://{host}:{srv['port']}/" + (f"?source={out}" if srv["kind"] == "relabel" and len(srv["outs"]) > 1 else ""),
             })
     return {"current": current, "sources": entries}
-
-
-def velocity_scale(prompt_score, target_peak: int = 118) -> float:
-    """One gain factor for a whole pair, derived from the prompt.
-
-    Generations routinely peak around velocity 60-80, which is close to
-    inaudible on a phone speaker. Scaling per file would flatten a real
-    difference between the two takes, so the factor comes from the prompt —
-    identical for both sides — and their relative loudness survives.
-    """
-    vels = [n.velocity for t in prompt_score.tracks for n in t.notes]
-    if not vels:
-        return 1.0
-    peak = max(vels)
-    return max(1.0, min(3.0, target_peak / max(peak, 1)))
-
-
-def apply_velocity_scale(score, scale: float):
-    if scale <= 1.0:
-        return score
-    for track in score.tracks:
-        for n in track.notes:
-            n.velocity = max(1, min(127, int(round(n.velocity * scale))))
-    return score
-
-
-def _degeneracy(score) -> dict:
-    """Cheap sanity metrics for a continuation-only Score. `degenerate` is
-    True for near-empty, one-pitch-stuck, or hard-looping samples."""
-    from midigenai.eval import repetition_rate
-    notes = [n for t in score.tracks for n in t.notes]
-    n = len(notes)
-    if n == 0:
-        return {"n_notes": 0, "top_pitch_share": 1.0, "repetition": 1.0,
-                "degenerate": True, "badness": 9.0}
-    pitches = [nt.pitch for nt in notes]
-    top = max(pitches.count(p) for p in set(pitches)) / n
-    try:
-        rep = float(repetition_rate(score)) if n >= 8 else 0.0
-    except Exception:
-        rep = 0.0
-    degenerate = n < 8 or top > 0.5 or rep > 0.6 or n > 600
-    badness = (8 - n) / 8 if n < 8 else 0.0
-    badness += max(0.0, top - 0.3) + max(0.0, rep - 0.3) + (1.0 if n > 600 else 0.0)
-    return {"n_notes": n, "top_pitch_share": round(top, 3), "repetition": round(rep, 3),
-            "degenerate": bool(degenerate), "badness": round(badness, 3)}
-
-
-def load_generator(args, side: str):
-    """Build the generator for side 'a' or 'b'. Returns (generator, label)."""
-    ckpt = getattr(args, f"checkpoint{'_b' if side == 'b' else ''}", None)
-    hubv = getattr(args, f"hub_version{'_b' if side == 'b' else ''}", None)
-    if side == "b" and ckpt is None and hubv is None:
-        return None, None  # no distinct B model -> self-comparison
-    from midigenai.generate import Generator
-    if ckpt:
-        tok = getattr(args, f"tokenizer{'_b' if side == 'b' else ''}", None)
-        return Generator(ckpt, tok), Path(ckpt).stem
-    from midigenai.hub import DEFAULT_VERSION, load_from_hub
-    version = hubv or DEFAULT_VERSION
-    return load_from_hub(version=version), version
 
 
 class PairFactory:
