@@ -1,0 +1,104 @@
+{
+ "model": "gpt-5.6-sol",
+ "format": "notes",
+ "prompt": "strict",
+ "split": "all",
+ "n": 9,
+ "n_decided": 6,
+ "agreement_with_human": 0.8333333333333334,
+ "swap_consistency": 0.6666666666666666,
+ "position_bias_pick_first": 0.3333333333333333,
+ "tie_rate": 0.33333333333333337,
+ "results": [
+  {
+   "pair_id": "20260916114417_f4ff559b",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Second develops bass motion; first is overwhelmed by duplicated chord clutter."
+  },
+  {
+   "pair_id": "20260916113934_ccadd9fe",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Consistent low-register bass supports the harmony without crowding the existing "
+  },
+  {
+   "pair_id": "20260916114044_66f88c97",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Structured harmonization fits better; continuation 1 scatters intrusive repeated"
+  },
+  {
+   "pair_id": "20260916114037_09ffb59f",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Its steady repeated chordal groove is more coherent and less cluttered."
+  },
+  {
+   "pair_id": "20260916114151_5372f90b",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Maintains the established pattern while adding coherent, restrained harmonic lay"
+  },
+  {
+   "pair_id": "20260916114401_9bc24e42",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Its restrained, singable line fits the harmony and repeating accompaniment."
+  },
+  {
+   "pair_id": "20260916114325_59e6014f",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Adds a steadier recurring groove; 2's drums become excessively chaotic."
+  },
+  {
+   "pair_id": "20260916114405_5a193e8a",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Its restrained mid-register lines fit the harmony without clutter."
+  },
+  {
+   "pair_id": "20260916113944_65abf097",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Restrained bass movement supports the implied harmony more consistently."
+  }
+ ]
+}
