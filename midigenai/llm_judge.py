@@ -53,6 +53,11 @@ from pathlib import Path
 #                       see evals/reward/rubric_battery/.
 PROMPT_DIR = Path(__file__).parent / "prompts"
 DEFAULT_PROMPT = "fit_only"
+# luna, not sol: on the same 470 on-policy pairs a reward fitted to either
+# judge's labels reached 0.700, luna agrees with sol 0.82-0.95 pair-for-pair,
+# and it costs about 17x less per call ($0.20/$1.20 vs $4/$20 per 1M tokens),
+# which is the difference between 4,000 labels and 60,000 for the same money.
+DEFAULT_MODEL = "gpt-5.6-luna"
 
 PROMPTS: dict[str, str] = {
     f.stem[len("judge_"):]: f.read_text().rstrip()
@@ -388,7 +393,7 @@ def main() -> None:
     sub = p.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate")
     v.add_argument("--labels", type=Path, required=True)
-    v.add_argument("--model", default="gpt-4.1-mini")
+    v.add_argument("--model", default=DEFAULT_MODEL)
     v.add_argument("--prompt", choices=sorted(PROMPTS), default=DEFAULT_PROMPT,
                    help=f"which judging rubric to use (default: {DEFAULT_PROMPT}, "
                         "the one the agreement figures describe)")
@@ -407,7 +412,7 @@ def main() -> None:
     lb.add_argument("--pairs", type=Path, required=True,
                     help="directory of <id>_prompt.mid / _a.mid / _b.mid")
     lb.add_argument("--out", type=Path, required=True)
-    lb.add_argument("--model", default="gpt-5.6-sol")
+    lb.add_argument("--model", default=DEFAULT_MODEL)
     lb.add_argument("--prompt", choices=sorted(PROMPTS), default=DEFAULT_PROMPT)
     lb.add_argument("--system-file", type=Path, default=None)
     lb.add_argument("--format", choices=["abc", "notes"], default="notes")
