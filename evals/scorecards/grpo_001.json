@@ -1,0 +1,82 @@
+{
+  "checkpoint": "runs/grpo_v4_probe_001/ckpt_001000.pt",
+  "n_generations": 60,
+  "params": {
+    "prompt_tokens": 256,
+    "max_new_tokens": 1024,
+    "temperature": 1.0,
+    "top_k": 50,
+    "seed": 0
+  },
+  "aggregate": {
+    "eos_rate": {
+      "mean": 0.0833,
+      "median": 0.0
+    },
+    "gen_tokens": {
+      "mean": 998.85,
+      "median": 1024.0
+    },
+    "gen_notes": {
+      "mean": 251.5667,
+      "median": 254.5
+    },
+    "gen_seconds": {
+      "mean": 36.8567,
+      "median": 28.75
+    },
+    "repetition_rate": {
+      "mean": 0.69,
+      "median": 0.805
+    },
+    "note_density_hz": {
+      "mean": 7.5488,
+      "median": 6.3934
+    },
+    "pitch_class_entropy": {
+      "mean": 2.1249,
+      "median": 2.3197
+    },
+    "scale_consistency": {
+      "mean": 0.9286,
+      "median": 0.9955
+    },
+    "polyphony_rate": {
+      "mean": 3.2626,
+      "median": 2.4192
+    },
+    "ioi_entropy": {
+      "mean": 1.0947,
+      "median": 0.9532
+    },
+    "repetition_drift": {
+      "mean": 0.0327,
+      "median": 0.0221
+    },
+    "density_drift": {
+      "mean": 0.1731,
+      "median": -0.0493
+    },
+    "pce_drift": {
+      "mean": -0.0124,
+      "median": -0.0137
+    },
+    "prompt_coherence": {
+      "mean": 0.8246,
+      "median": 0.928
+    },
+    "downbeat_alignment": {
+      "mean": 0.2841,
+      "median": 0.2494
+    },
+    "downbeat_delta": {
+      "mean": -0.0025,
+      "median": -0.0006
+    },
+    "bar_offset_beats": {
+      "mean": 0.975,
+      "median": 1.0
+    }
+  },
+  "n_rows": 60
+}
