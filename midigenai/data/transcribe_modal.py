@@ -106,14 +106,14 @@ MAX_CONTAINERS = int(os.environ.get("MIDIGENAI_TRANSCRIBE_CONTAINERS", "4"))
 @app.function(image=image, gpu=GPU, volumes={"/data": vol}, timeout=12 * 3600,
               max_containers=MAX_CONTAINERS,
               secrets=[modal.Secret.from_name("huggingface")])
-def transcribe(paths: list[str], size: str = "large") -> dict:
+def transcribe(paths: list[str], size: str = "large", out_dir: str = "/data/midi") -> dict:
     """Transcribe a shard of audio files; writes <stem>.mid onto the volume."""
     import time
     from pathlib import Path
     from muscriptor import TranscriptionModel
 
-    out = Path("/data/midi")
-    out.mkdir(parents=True, exist_ok=True)
+    out = Path(out_dir)          # default is the corpus dir; a model-size
+    out.mkdir(parents=True, exist_ok=True)   # comparison writes elsewhere
     model = TranscriptionModel.load_model(size)
     done = failed = notes = 0
     t0 = time.time()
