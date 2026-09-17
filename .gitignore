@@ -58,3 +58,4 @@ tests/tmp/
 midigenai.egg-info/
 .claude/
 evals/prompts_fma/
+evals/prompts_ableton/

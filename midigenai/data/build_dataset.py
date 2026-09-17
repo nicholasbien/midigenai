@@ -377,6 +377,9 @@ if __name__ == "__main__":
                         help="output directory for shards + tokenizer")
     parser.add_argument("--shard-tokens", type=int, default=SHARD_TOKENS)
     parser.add_argument("--val-fraction", type=float, default=VAL_FRACTION)
+    parser.add_argument("--exclude-ids", type=Path, default=None,
+                        help="file of ids (basename without .mid), one per line, that must NOT be "
+                             "in this build; the build refuses to start if any are in the manifest")
     parser.add_argument("--limit", type=int, default=None,
                         help="optional cap on number of files (for pilot runs)")
     parser.add_argument("--workers", type=int, default=None,
@@ -420,6 +423,19 @@ if __name__ == "__main__":
                         help="v4: quality_predictor score JSONL (path, q_bucket): adds "
                              "Quality_ header tokens and splits train shards per bucket")
     args = parser.parse_args()
+    if args.exclude_ids:
+        # A held-out split is only real if the build enforces it. Added the
+        # day an empty id list let 183 of 200 held-out transcriptions into the
+        # training manifest -- silently, because nothing checked.
+        import json as _json
+        held = {l.strip() for l in args.exclude_ids.read_text().splitlines() if l.strip()}
+        in_manifest = {Path(_json.loads(l)["path"]).stem
+                       for l in args.manifest.read_text().splitlines() if l.strip()}
+        leak = held & in_manifest
+        if leak:
+            raise SystemExit(f"[build] REFUSING: {len(leak)} of {len(held)} held-out ids are in "
+                             f"{args.manifest} (e.g. {sorted(leak)[:5]}). Fix the split first.")
+        print(f"[build] held-out guard: {len(held)} ids checked, none in the manifest")
     v4_opts = dict(accomp_windows=args.accomp_windows, infill_windows=args.infill_windows,
                    window_bars=args.window_bars, context_bars=args.context_bars,
                    max_span_bars=args.max_span_bars, segment_eos=args.segment_eos,
