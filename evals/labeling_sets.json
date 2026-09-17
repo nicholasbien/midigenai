@@ -1,5 +1,11 @@
 {
-  "_": "labeling hub: listed sets come first in this order (first unfinished one is the default); hidden sets are never listed. Re-read every rescan, no restart needed.",
-  "order": ["labeling_fma_v4", "labeling_ableton_v4_seeds2", "labeling_accompany_202m"],
-  "hidden": ["labeling_accompany"]
+ "_": "labeling hub: listed sets come first in this order (first unfinished one is the default); hidden sets are never listed. Re-read every rescan, no restart needed.",
+ "order": [
+  "labeling_ableton_v4_seeds2",
+  "labeling_accompany_202m",
+  "labeling_fma_v4"
+ ],
+ "hidden": [
+  "labeling_accompany"
+ ]
 }
