@@ -32,10 +32,13 @@ def _files(src: Path) -> list[Path]:
     if meta.exists():
         h = json.loads(meta.read_text())
         rows = h if isinstance(h, list) else h.get("files", list(h.values()))
-        bad = {r.get("filename") or r.get("file") for r in rows
-               if r.get("verdict") in ("degenerate", "empty")}
-        bad_ids = {str(r.get("id")) for r in rows if r.get("verdict") in ("degenerate", "empty")}
-        files = [f for f in files if f.name not in bad and not any(i and i in f.name for i in bad_ids)]
+        # the split's metadata calls the field filter_verdict; accept both
+        def verdict(r): return r.get("filter_verdict") or r.get("verdict")
+        bad = {r.get("file") or r.get("filename") for r in rows if verdict(r) in ("degenerate", "empty")}
+        skipped = [f for f in files if f.name in bad]
+        files = [f for f in files if f.name not in bad]
+        if skipped:
+            print(f"[pool] {src.name}: skipping {len(skipped)} seeds the training filter called degenerate/empty")
     return files
 
 
@@ -59,17 +62,27 @@ def main() -> None:
     for old in a.out.glob("*.mid"):
         old.unlink()
     made = {}
+    # a source that cannot supply its share is capped at what it has, and the
+    # shortfall is redistributed to the others so the pool still reaches -n
+    avail = {name: _files(d) for name, d, _ in srcs}
+    want = {name: round(a.n * w / total_w) for name, _, w in srcs}
+    short = sum(max(0, want[n] - len(avail[n])) for n in want)
+    if short:
+        room = {n: len(avail[n]) - want[n] for n in want if len(avail[n]) > want[n]}
+        for n in room:
+            want[n] += round(short * room[n] / sum(room.values()))
     for name, d, w in srcs:
-        files = _files(d)
-        want = round(a.n * w / total_w)
-        pick = rng.sample(files, min(want, len(files)))
+        files = avail[name]
+        pick = rng.sample(files, min(want[name], len(files)))
         for f in pick:
             (a.out / f"pool_{name}_{f.name}").symlink_to(f.resolve())
         made[name] = (len(pick), len(files))
     (a.out / "POOL.json").write_text(json.dumps(
         {"n": a.n, "sources": {n: {"dir": str(d), "weight": w, "picked": made[n][0], "available": made[n][1]}
                                  for n, d, w in srcs}, "seed": a.seed}, indent=1))
-    print(f"[pool] {a.out}: " + ", ".join(f"{n} {made[n][0]}/{made[n][1]} (w={w:g})" for n, _, w in srcs))
+    total = sum(v[0] for v in made.values())
+    print(f"[pool] {a.out}: {total} prompts — " + ", ".join(
+        f"{n} {made[n][0]}/{made[n][1]} ({made[n][0]/total:.0%}, asked {w/total_w:.0%})" for n, _, w in srcs))
 
 
 if __name__ == "__main__":
