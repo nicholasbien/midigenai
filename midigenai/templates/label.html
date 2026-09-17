@@ -139,7 +139,7 @@
   <div class="sub">Each pair plays itself: prompt + take 1, a short pause, prompt + take 2, then it waits for your call. Vote by key, click, or voice.
     <kbd>1</kbd> take 1 &nbsp;<kbd>2</kbd> take 2 &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip
     &nbsp;·&nbsp; flags (before voting): <kbd>q</kbd>/<kbd>w</kbd> degrades &nbsp;<kbd>e</kbd>/<kbd>r</kbd> too long
-    &nbsp;·&nbsp; say “one”, “two”, “tie”, “both bad”, “skip”, “again”, “play one”, “play two”</div>
+    &nbsp;·&nbsp; say “one”, “two”, “tie”, “both bad”, “skip”, “play again”, “play 1 again”, “next one”, “pause”, “resume”, “stop”, “start over”</div>
   <div class="statusbar" style="align-items:center">
     <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)">
       volume <input id="vol" type="range" min="-20" max="24" step="1" value="0"
@@ -318,8 +318,11 @@ function setPhase(p) {
     ask.classList.toggle('now', p === 'awaiting');
     ask.innerHTML = p === 'awaiting'
       ? `Which was better? <b>1</b> or <b>2</b>${Voice.enabled ? ' — or say it, or “play again”' : ' — or “play again”'}`
-      : p === 'playing' ? 'playing… (you can vote any time)' : '';
+      : p === 'playing' ? 'playing… (you can vote any time; “pause”, “stop”, “next one”)'
+      : p === 'paused' ? 'paused — <b>space</b> or “resume”; “start over” plays both from the top' : '';
   }
+  const pb = document.getElementById('pausebtn');
+  if (pb) pb.innerHTML = p === 'playing' ? '&#10074;&#10074; pause<kbd>space</kbd>' : '&#9654; resume<kbd>space</kbd>';
   Voice.paint();
 }
 
@@ -330,13 +333,13 @@ function stopAll() {
 
 // `withPrompt` plays the row from its start (prompt tail + take); otherwise
 // from the handoff line only.
-function playSide(side, withPrompt) {
+function playSide(side, withPrompt, at = null) {
   const pl = document.getElementById('pl-' + side);
   if (!pl) return;
   markInteracted();
   document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing'));
   document.getElementById('opt-' + side).classList.add('playing');
-  const offset = withPrompt ? 0 : (current[side + '_roll'].prompt_end_s || 0);
+  const offset = at !== null ? at : withPrompt ? 0 : (current[side + '_roll'].prompt_end_s || 0);
   try {
     pl.currentTime = offset;
     const r = pl.start();
@@ -347,23 +350,28 @@ function playSide(side, withPrompt) {
 }
 
 // One sequence at a time: a replay started mid-sequence invalidates the old
-// one's chained 'stop' handlers, so two plans never interleave.
+// one's chained 'stop' handlers, so two plans never interleave. `seq` is the
+// running plan and its step, which is what pause saves and resume restarts.
 let seqToken = 0;
-function playSequence(mode = 'both') {
-  if (!current) return;
-  const plan = mode === 'both' ? [['left', true], ['right', settings.replayPrompt]]
-             : mode === 'left' ? [['left', true]]
-             : [['right', true]];
+let seq = null;       // {plan, i}
+let paused = null;    // {plan, i, offset} while paused
+let lastSide = null;  // the take most recently started; "next one" is the other
+
+function runPlan(plan, i0 = 0, offset = null) {
   const token = ++seqToken;
   stopAll();
+  paused = null;
+  seq = { plan, i: i0 };
   setPhase('playing');
-  const go = (i) => {
+  const go = (i, at) => {
     if (token !== seqToken) return;
     if (i >= plan.length) {
       document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing'));
+      seq = null;
       setPhase('awaiting');
       return;
     }
+    seq.i = i;
     const [side, withPrompt] = plan[i];
     const pl = document.getElementById('pl-' + side);
     if (!pl) return;
@@ -371,12 +379,62 @@ function playSequence(mode = 'both') {
       pl.removeEventListener('stop', onStop);
       if (token !== seqToken) return;
       const gap = i + 1 < plan.length ? settings.pauseMs : 0;
-      setTimeout(() => go(i + 1), gap);
+      setTimeout(() => go(i + 1, null), gap);
     };
     pl.addEventListener('stop', onStop);
-    playSide(side, withPrompt);
+    lastSide = side;
+    if (at === null) playSide(side, withPrompt);
+    else playSide(side, withPrompt, at);
   };
-  go(0);
+  go(i0, offset);
+}
+
+function playSequence(mode = 'both') {
+  if (!current) return;
+  const plan = mode === 'both' ? [['left', true], ['right', settings.replayPrompt]]
+             : mode === 'left' ? [['left', true]]
+             : [['right', true]];
+  runPlan(plan);
+}
+
+// "start over": both takes from the top, the same as the first play
+function startOver() { playSequence('both'); }
+
+// "next one": whichever take is not the one playing (or last played)
+function playOther() {
+  playSequence(lastSide === 'left' ? 'right' : 'left');
+}
+
+function pausePlayback() {
+  if (phase !== 'playing' || !seq) return;
+  const [side] = seq.plan[seq.i];
+  const pl = document.getElementById('pl-' + side);
+  let offset = 0;
+  try { offset = pl.currentTime || 0; } catch (e) {}
+  paused = { plan: seq.plan, i: seq.i, offset };
+  seqToken++;           // the stop below must not advance the plan
+  stopAll();
+  seq = null;
+  setPhase('paused');
+}
+
+function resumePlayback() {
+  if (!paused) { if (phase !== 'playing') startOver(); return; }
+  const p = paused;
+  runPlan(p.plan, p.i, p.offset);
+}
+
+function togglePause() {
+  if (phase === 'playing') pausePlayback();
+  else resumePlayback();
+}
+
+function stopPlayback() {
+  seqToken++;
+  paused = null;
+  seq = null;
+  stopAll();
+  setPhase(current ? 'awaiting' : 'idle');
 }
 
 // ---- voice votes: the browser's speech recognizer (Chrome, Safari), kept
@@ -476,11 +534,25 @@ function parseVoice(text) {
   const side = ordinal || (one && !two ? 'left' : two && !one ? 'right' : null);
   const v = (label, choice) => ({ label, run: () => vote(choice) });
   // controls first: "play it again" must not read as a vote
-  if (has('stop', 'pause', 'quiet')) return { label: 'stop', run: stopAll };
+  if (has('stop', 'halt', 'quiet', 'silence', 'enough')) return { label: 'stop', run: stopPlayback };
+  if (has('pause', 'hold', 'wait')) return { label: 'pause', run: pausePlayback };
+  if (has('resume', 'continue', 'unpause') || (has('keep', 'go') && has('going', 'on'))) {
+    return { label: 'resume', run: resumePlayback };
+  }
+  if (has('restart', 'beginning', 'top') || (has('start') && has('over')) || (has('from') && has('start'))) {
+    return { label: 'start over', run: startOver };
+  }
+  // "next one" / "the other one" = the take that is not playing;
+  // "next" / "next pair" / "skip" = on to the next pair
+  if (has('other', 'switch') || (has('next') && has('one', '1', 'take', 'clip', 'sample'))) {
+    return { label: 'next one', run: playOther };
+  }
   if (has('again', 'replay', 'repeat', 'play', 'hear')) {
     if (side) return { label: `replay ${side === 'left' ? 1 : 2}`, run: () => playSequence(side) };
     return { label: 'replay both', run: () => playSequence('both') };
   }
+  // bare "start" / "go": pick up where we left off, or from the top
+  if (has('start', 'go')) return { label: paused ? 'resume' : 'start over', run: resumePlayback };
   // flags: "one degrades", "two too long" — toggled, not voted
   if (side && has('degrades', 'degrade', 'falls', 'collapses')) {
     return { label: `flag ${side === 'left' ? 1 : 2}: degrades`, run: () => toggleFlag(side, 'degrades') };
@@ -514,7 +586,7 @@ function render() {
   stage.innerHTML = `
     <div class="legend">Prompt <span style="font-weight:400;color:var(--accent)">· ${p.prompt_source || ''}</span> <span style="color:var(--faint)">${p.prompt_name || ''}</span>
       <span id="loadnote" style="color:var(--warn)"></span>
-      &nbsp;·&nbsp; ${ACC ? 'each row is the SAME part you just heard, plus a different set of accompanying parts — judge how well they fit together, not what comes next. Both rows share one time and pitch scale' : 'shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays prompt + 1, pauses, then prompt + 2, and waits for you'}; <kbd>space</kbd> replays both, <kbd>a</kbd> replays 1, <kbd>b</kbd> replays 2${ACC ? ', <kbd>c</kbd> plays the original part alone' : ''}.</div>
+      &nbsp;·&nbsp; ${ACC ? 'each row is the SAME part you just heard, plus a different set of accompanying parts — judge how well they fit together, not what comes next. Both rows share one time and pitch scale' : 'shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays prompt + 1, pauses, then prompt + 2, and waits for you'}; <kbd>space</kbd> pauses/resumes, <kbd>enter</kbd> starts over, <kbd>esc</kbd> stops, <kbd>a</kbd> replays 1, <kbd>b</kbd> replays 2, <kbd>o</kbd> the other one${ACC ? ', <kbd>c</kbd> plays the original part alone' : ''}.</div>
     ${ACC ? `<div class="opt" id="opt-prompt" style="margin-bottom:10px">
         <h3>The part being accompanied &mdash; both arrangements add to this</h3>
         <div class="rollwrap"><div class="rollinner">
@@ -550,7 +622,10 @@ function render() {
     </div>
     <div class="ask" id="ask"></div>
     <div class="buttons">
-      <button onclick="playSequence('both')">&#9654; play again<kbd>space</kbd></button>
+      <button onclick="startOver()">&#8635; start over<kbd>enter</kbd></button>
+      <button id="pausebtn" onclick="togglePause()">&#10074;&#10074; pause<kbd>space</kbd></button>
+      <button onclick="stopPlayback()">&#9632; stop<kbd>esc</kbd></button>
+      <button onclick="playOther()">&#8646; next one<kbd>o</kbd></button>
       <button onclick="vote('left')">1 is better<kbd>1</kbd></button>
       <button onclick="vote('right')">2 is better<kbd>2</kbd></button>
       <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
@@ -620,6 +695,7 @@ async function vote(choice) {
   if (!current) return;
   const p = current;
   seqToken++;           // cancel a running sequence before the players go away
+  paused = null; seq = null; lastSide = null;
   stopAll();
   setPhase('idle');
   if (choice === 'left' || choice === 'right') {
@@ -651,7 +727,10 @@ document.addEventListener('keydown', (e) => {
   const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip',
                 'p': 'bad_prompt', 'd': 'drums_as_piano' };
   if (map[e.key]) { e.preventDefault(); vote(map[e.key]); return; }
-  if (e.key === ' ') { e.preventDefault(); playSequence('both'); return; }
+  if (e.key === ' ') { e.preventDefault(); togglePause(); return; }
+  if (e.key === 'Enter') { e.preventDefault(); startOver(); return; }
+  if (e.key === 'Escape') { e.preventDefault(); stopPlayback(); return; }
+  if (e.key === 'o') { e.preventDefault(); playOther(); return; }
   if (e.key === 'a') { e.preventDefault(); playSequence('left'); return; }
   if (e.key === 'b') { e.preventDefault(); playSequence('right'); return; }
   if (e.key === 'n') { e.preventDefault(); toggleTheme(); return; }
