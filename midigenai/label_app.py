@@ -56,6 +56,40 @@ def utcnow() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
+def retract_vote(labels_path: Path, pair_id: str, session_id: str = "",
+                 idx=None) -> dict | None:
+    """Remove the most recent record for `pair_id` (or the newest record of
+    all when `pair_id` is empty; and this session's, when given) from an
+    append-only labels file, and log it next door in
+    corrections.jsonl so the retraction is traceable. Returns the removed
+    record, or None when there was nothing to remove."""
+    if not labels_path.exists():
+        return None
+    lines = labels_path.read_text().splitlines()
+    hit = None
+    for i in range(len(lines) - 1, -1, -1):
+        if not lines[i].strip():
+            continue
+        r = json.loads(lines[i])
+        if pair_id and r.get("pair_id") != pair_id:   # no pair_id: the newest record
+            continue
+        if session_id and r.get("session_id") and r["session_id"] != session_id:
+            continue
+        if idx is not None and r.get("idx") is not None and r["idx"] != idx:
+            continue
+        hit = i
+        break
+    if hit is None:
+        return None
+    removed = json.loads(lines[hit])
+    del lines[hit]
+    labels_path.write_text("".join(l + "\n" for l in lines))
+    with (labels_path.parent / "corrections.jsonl").open("a") as f:
+        f.write(json.dumps({"ts": utcnow(), "action": "undo", "pair_id": pair_id,
+                            "idx": removed.get("idx"), "removed": removed}) + "\n")
+    return removed
+
+
 def discover_label_servers() -> list[dict]:
     """Other label servers on this machine, read off their command lines.
 
@@ -595,6 +629,29 @@ def build_app(args) -> Flask:
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         return jsonify({"ok": True, "name": path.name, "n": n})
+
+    @app.route("/api/undo", methods=["POST"])
+    def undo():
+        data = request.get_json(force=True)
+        removed = retract_vote(labels_path, data.get("pair_id", ""), data.get("session_id", ""))
+        if removed is None:
+            return jsonify({"error": "no vote of yours on that pair"}), 404
+        # the page needs the pair back on screen; it is re-served as it was
+        # shown if this process served it, else the page just moves on
+        again = served.get(removed.get("pair_id"))
+        if removed.get("choice") == "bad_prompt":
+            # the prompt was blacklisted by that vote; let it back in
+            meta_path = factory.pairs_dir / f"{removed['pair_id']}.json"
+            if meta_path.exists():
+                pf = Path(json.loads(meta_path.read_text())["prompt_file"])
+                if factory.blacklist_path.exists():
+                    kept = [n for n in factory.blacklist_path.read_text().split() if n != pf.name]
+                    factory.blacklist_path.write_text("".join(n + "\n" for n in kept))
+                if pf.exists() and pf not in factory.prompt_files:
+                    factory.prompt_files.append(pf)
+                    factory.prompt_order.setdefault(pf, len(factory.prompt_order))
+                    factory.prompt_uses.setdefault(pf, 1)
+        return jsonify({"ok": True, "removed": removed, "pair": again})
 
     @app.route("/api/stats")
     def stats():

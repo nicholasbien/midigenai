@@ -82,7 +82,7 @@
   .votes.primary button:hover { border-color: var(--accent); }
   .votes.secondary { grid-template-columns: 1fr 1fr 1fr; }
   .votes.secondary button { font-size: 14px; padding: 11px 10px; }
-  .votes.transport { grid-template-columns: repeat(4, 1fr); }
+  .votes.transport { grid-template-columns: repeat(5, 1fr); }
   .votes.transport button { font-size: 12px; padding: 8px 6px; color: var(--muted); }
   .votes.reports { grid-template-columns: 1fr 1fr; margin-top: 12px; }
   .votes.reports button { font-size: 12px; padding: 7px 8px; opacity: .8; }
@@ -112,6 +112,7 @@
     button { padding: 14px 10px; font-size: 15px; }
     .votes.primary button { font-size: 20px; padding: 20px 10px; }
     .votes.secondary button { padding: 14px 8px; }
+    .votes.transport { grid-template-columns: repeat(3, 1fr); }
     .votes.transport button { padding: 12px 4px; font-size: 13px; }
     .votes.reports { grid-template-columns: 1fr; }
     .votes.reports button { padding: 10px 8px; }
@@ -187,7 +188,7 @@
   <div class="sub">Each pair plays itself: prompt + take 1, a short pause, prompt + take 2, then it waits for your call. Vote by key, click, or voice.
     <kbd>1</kbd> take 1 &nbsp;<kbd>2</kbd> take 2 &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip
     &nbsp;·&nbsp; flags (before voting): <kbd>q</kbd>/<kbd>w</kbd> degrades &nbsp;<kbd>e</kbd>/<kbd>r</kbd> too long
-    &nbsp;·&nbsp; say “one”, “two”, “tie”, “both bad”, “skip”, “play again”, “play 1 again”, “next one”, “pause”, “resume”, “stop”, “start over” (on a phone the mic opens after both takes have played)</div>
+    &nbsp;·&nbsp; say “one”, “two”, “tie”, “both bad”, “skip”, “play again”, “play 1 again”, “next one”, “pause”, “resume”, “stop”, “start over”, “undo” (on a phone the mic opens after both takes have played)</div>
   <div class="statusbar" style="align-items:center">
     <label id="volwrap">
       volume <input id="vol" type="range" min="-20" max="24" step="1" value="0"
@@ -309,6 +310,11 @@ function setVolume(db) {
 let current = null;
 let sessionCount = 0;
 let totalCount = 0;
+// pairs voted this session, newest last, exactly as they were shown — undo
+// pops one and puts it back on screen; `pending` holds the pair that was on
+// screen when undo was pressed, so it returns after the re-vote
+const history = [];
+const pending = [];
 
 // status line for anything that goes wrong on the page (playback, mic)
 function note(msg) {
@@ -358,6 +364,7 @@ async function loadNext() {
   current = null;
   setPhase('idle');
   const stage = document.getElementById('stage');
+  if (pending.length) { current = pending.pop(); render(); return; }
   stage.innerHTML = '<div class="waiting">generating next pair…</div>';
   while (true) {
     let res;
@@ -723,6 +730,7 @@ function parseVoice(text) {
   const side = ordinal || (one && !two ? 'left' : two && !one ? 'right' : null);
   const v = (label, choice) => ({ label, run: () => vote(choice) });
   // controls first: "play it again" must not read as a vote
+  if (has('undo', 'oops', 'mistake', 'back', 'redo') && !has('one', '1', 'two', '2')) return { label: 'undo last', run: undoLast };
   if (has('stop', 'halt', 'quiet', 'silence', 'enough')) return { label: 'stop', run: stopPlayback };
   if (has('pause', 'hold', 'wait')) return { label: 'pause', run: pausePlayback };
   if (has('resume', 'continue', 'unpause') || (has('keep', 'go') && has('going', 'on'))) {
@@ -827,6 +835,7 @@ function render() {
       <button id="pausebtn" onclick="togglePause()">&#10074;&#10074; pause<kbd>space</kbd></button>
       <button onclick="stopPlayback()">&#9632; stop<kbd>esc</kbd></button>
       <button onclick="playOther()">&#8646; next one<kbd>o</kbd></button>
+      <button onclick="undoLast()" title="take back the last vote of this session and vote on that pair again">&#8630; undo last<kbd>u</kbd></button>
     </div>
     <div class="votes reports">
       <button onclick="vote('drums_as_piano')" style="border-color:var(--warn-br);color:var(--warn)">Drums playing as piano<kbd>d</kbd></button>
@@ -915,6 +924,7 @@ async function vote(choice) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) });
     if (!['skip', 'bad_prompt', 'drums_as_piano'].includes(choice)) { sessionCount++; totalCount++; updateCount(); }
+    history.push({ pair: p, choice });
   } catch (e) {
     alert('failed to record vote: ' + e.message);
     return;
@@ -922,8 +932,35 @@ async function vote(choice) {
   loadNext();
 }
 
+// ---- undo: retract the last vote of this session and show that pair again
+async function undoLast() {
+  // nothing voted since the page loaded: take back the newest vote in this
+  // set instead (the one cast before a reload), and let the server re-serve it
+  const fromHistory = history.length ? history.pop() : null;
+  const pair = fromHistory ? fromHistory.pair : null;
+  seqToken++; stopAll();
+  let data;
+  try {
+    const res = await fetch(rel('/api/undo'), { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pair
+        ? { session_id: SESSION_ID, source: pair.source || SOURCE || undefined, pair_id: pair.pair_id, idx: pair.idx }
+        : { source: SOURCE || undefined }) });
+    data = await res.json();
+    if (!res.ok) { note('undo failed: ' + (data.error || res.status)); if (fromHistory) history.push(fromHistory); return; }
+  } catch (e) { note('undo failed: ' + e.message); if (fromHistory) history.push(fromHistory); return; }
+  const choice = (fromHistory && fromHistory.choice) || (data.removed && data.removed.choice) || 'vote';
+  if (!['skip', 'bad_prompt', 'drums_as_piano'].includes(choice)) { sessionCount -= fromHistory ? 1 : 0; totalCount--; updateCount(); }
+  if (current) pending.push(current);
+  const again = pair || (data.pair ? Object.fromEntries(Object.entries(data.pair).map(([k, v]) => [k, k.endsWith('_url') && v ? rel(v) : v])) : null);
+  if (again) { current = again; render(); }
+  else loadNext();   // the hub put the pair back at the front of its queue
+  note(`your “${choice}” was removed — vote on that pair again (${history.length} more can be undone here)`);
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'u' || e.key === 'Backspace') { e.preventDefault(); undoLast(); return; }
   const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip',
                 'p': 'bad_prompt', 'd': 'drums_as_piano' };
   if (map[e.key]) { e.preventDefault(); vote(map[e.key]); return; }

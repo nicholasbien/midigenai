@@ -309,7 +309,7 @@ def discover_sets(sets_dir: Path) -> list[Path]:
 def build_app(args):
     from flask import Flask, Response, jsonify, request, send_from_directory
 
-    from midigenai.label_app import sources_payload
+    from midigenai.label_app import retract_vote, sources_payload
 
     sets_dir = Path(args.sets_dir).resolve() if getattr(args, "sets_dir", None) else None
     outs = list(args.out or [])
@@ -472,6 +472,24 @@ def build_app(args):
         if src.todo and src.todo[0]["pair_id"] == pid:
             src.todo.pop(0)
         return jsonify({"ok": True})
+
+    @app.route("/api/undo", methods=["POST"])
+    def undo():
+        data = request.get_json(force=True)
+        src = sources.get(data.get("source")) or ordered()[0]
+        pid = data.get("pair_id", "")
+        # with no pair named, the newest vote in this set — that covers a
+        # mistake made before the page was reloaded (its history is gone)
+        removed = retract_vote(src.labels_path, pid, data.get("session_id", "") if pid else "",
+                               data.get("idx") if pid else None)
+        if removed is None:
+            return jsonify({"error": "no vote of yours on that pair"}), 404
+        pid = removed.get("pair_id", pid)
+        # back to the front of the line so it is served again next
+        row = next((m for m in src.manifest if m["pair_id"] == pid and m["idx"] == removed.get("idx", m["idx"])), None)
+        if row is not None and row not in src.todo:
+            src.todo.insert(0, row)
+        return jsonify({"ok": True, "removed": removed})
 
     @app.route("/api/stats")
     def stats():
