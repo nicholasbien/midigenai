@@ -5,6 +5,14 @@ weighting and the GRPO length, both marked. Total wall-clock after the
 checkpoint lands: ~1.5 h of prep, then a ~5–8 h GRPO run.
 
 ## 0. The checkpoint
+
+**Header note for run 1:** `grpo-v4` predates #51, so pairgen/grpo build
+headers WITHOUT the Tempo_/Source_fma families v5 trained with — the same
+as the header dropout v5 saw, and Tempo_ was measured inert on v5 (drum
+density identical under Tempo_1 vs Tempo_5). The probe is fit on those
+headers and GRPO rolls out with the same code, so the layout is consistent
+end to end. Do NOT merge main into the branch between the probe fit and the
+GRPO run; merge after run 1 and refit for run 2.
 `midigenai-models/v5/ckpt_final.pt` + `tokenizer.json` (vocab **598**).
 Nothing from v4's 590-vocab loads against it; every command takes
 `--tokenizer` explicitly and `grpo` refuses a vocab mismatch.
