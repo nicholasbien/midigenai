@@ -144,6 +144,26 @@ def _gen_params():
     )
 
 
+ACCOMPANY_INSTRUMENTS = ("Piano", "ChromPerc", "Organ", "Guitar", "Bass", "Strings",
+                         "Ensemble", "Brass", "Reed", "Pipe", "SynthLead", "SynthPad",
+                         "SynthFX", "Ethnic", "Percussive", "SoundFX", "Drums")
+
+
+def parse_instruments(raw: str | None) -> list[str]:
+    """`instruments=Bass,Drums` -> ["Bass", "Drums"]. Case-insensitive, unknown
+    names dropped, order kept, no duplicates. Empty means "no request"."""
+    out, lut = [], {n.lower(): n for n in ACCOMPANY_INSTRUMENTS}
+    for part in (raw or "").split(","):
+        name = lut.get(part.strip().lower())
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _instruments_param() -> list[str]:
+    return parse_instruments(request.args.get("instruments") or request.form.get("instruments"))
+
+
 def _model_version() -> str:
     """The checkpoint the request asked for.
 
@@ -260,6 +280,7 @@ def accompany():
     version = _model_version()
     bars = request.args.get("bars", default=8, type=int)
     bars = max(1, min(bars, 32))
+    instruments = _instruments_param()
     upload = _read_upload()
     if isinstance(upload, Response):
         return upload
@@ -269,7 +290,7 @@ def accompany():
     try:
         result = _generator(version).accompany_batch.remote(
             midi_bytes, bars=bars, temperature=temperature, top_k=top_k,
-            n_samples=2,
+            n_samples=2, instruments=instruments,
         )
     except Exception as e:
         traceback.print_exc()
@@ -294,6 +315,8 @@ def accompany():
         "windowSeconds": result["window_seconds"],
         "conditionTrack": result["condition_track"],
         "conditionTrackName": result["condition_track_name"],
+        "conditionInstruments": result.get("condition_instruments", []),
+        "instrumentsRequested": result.get("instruments_requested", []),
         "trackNames": result["track_names"],
         "generatedNotes": result["generated_notes"],
     })

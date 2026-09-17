@@ -28,3 +28,12 @@ def test_unknown_values_fall_back_rather_than_reaching_the_filesystem(junk):
 
 def test_whitespace_is_tolerated():
     assert resolve_version(" v3 ") == "v3"
+
+
+
+def test_parse_instruments_is_lenient_and_ordered():
+    from midigenai.web_server import parse_instruments
+    assert parse_instruments("Bass,Drums") == ["Bass", "Drums"]
+    assert parse_instruments(" bass , DRUMS, bass ") == ["Bass", "Drums"]
+    assert parse_instruments("Bass,Kazoo,../etc") == ["Bass"]
+    assert parse_instruments("") == [] and parse_instruments(None) == []

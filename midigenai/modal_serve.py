@@ -283,6 +283,7 @@ class MidiGen:
         top_k: int = 50,
         n_samples: int = 1,
         tempo_bpm: float | None = None,
+        instruments: list[str] | None = None,
     ) -> dict:
         """Write parts to go *with* the upload rather than after it.
 
@@ -324,13 +325,32 @@ class MidiGen:
             raise ValueError("the chosen track has no notes in the first bars")
 
         cond_ids = self.gen.tokenizer(condition).ids
-        header = self.gen.sp.header_ids_for(
-            self.gen.tokenizer, header_for_score(window))
+        # `instruments` = families to ADD (INSTRUMENT_FAMILIES + "Drums").
+        # Training headers list condition + target, so a header naming only
+        # the condition's instrument reads as "more of the same": on v4 a
+        # piano condition with no request came back 100% piano. With a
+        # request the model follows it, and banning drum tokens unless drums
+        # were asked for roughly doubles the requested pitched family's share
+        # (bass 21% -> 36%, strings 36% -> 45%) by removing the uninvited kit.
+        from midigenai.attributes import INSTRUMENT_FAMILIES, family_of
+        cond_fams = sorted({family_of(tr.program, tr.is_drum)
+                            for tr in condition.tracks if len(tr.notes)})
+        asked = [i for i in (instruments or []) if i in INSTRUMENT_FAMILIES or i == "Drums"]
+        if asked:
+            header = self.gen.make_header(instruments=cond_fams + asked)
+        else:   # no request: describe the whole upload, as before
+            header = self.gen.sp.header_ids_for(
+                self.gen.tokenizer, header_for_score(window))
+        want_drums = (not asked) or "Drums" in asked or "Drums" in cond_fams
+        ban = [self.gen.sp.sep, self.gen.sp.mask]
+        if not want_drums:
+            V = self.gen.tokenizer.vocab
+            ban += [v for k, v in V.items() if k.startswith("PitchDrum_") or k == "Program_-1"]
 
         midis, note_counts = [], []
         for _ in range(n_samples):
             new_ids = list(self.gen.accompany(
-                cond_ids, bars, header=header,
+                cond_ids, bars, header=header, ban_ids=ban,
                 temperature=temperature, top_k=top_k))
             answer = self.gen.tokenizer.decode(new_ids)
             note_counts.append(sum(len(tr.notes) for tr in answer.tracks))
@@ -347,6 +367,8 @@ class MidiGen:
             "condition_track_name": window.tracks[cond_index].name or "",
             "track_names": [tr.name or "" for tr in window.tracks],
             "condition_notes": sum(len(tr.notes) for tr in condition.tracks),
+            "condition_instruments": cond_fams,
+            "instruments_requested": asked,
             "generated_notes": note_counts,
             "tempo_bpm": tempo_bpm,
             "window_seconds": bars * beats_per_bar * 60.0 / tempo_bpm,
