@@ -73,6 +73,11 @@
   .opt.playing { border-color: var(--playing); }
   .rows .opt { margin-bottom: 10px; }
   .legend { font-size: 11px; color: var(--faint); margin: 4px 0 8px; }
+  /* the pair's files: id, source prompt, and downloads under blind names */
+  .files { font-size: 11px; color: var(--faint); margin: 0 0 8px; word-break: break-all; }
+  .files a { color: var(--accent); text-decoration: none; margin-right: 8px; white-space: nowrap; }
+  .files a:hover { text-decoration: underline; }
+  .files code { font-size: 11px; color: var(--muted); }
   .buttons { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
   /* votes, by how often they are pressed: the two answers on top and big,
      then tie / both bad / skip, then transport, then the defect reports */
@@ -786,6 +791,13 @@ function render() {
     <div class="legend">Prompt <span style="font-weight:400;color:var(--accent)">· ${p.prompt_source || ''}</span> <span style="color:var(--faint)">${p.prompt_name || ''}</span>
       <span id="loadnote" style="color:var(--warn)"></span>
       &nbsp;·&nbsp; ${ACC ? 'each row is the SAME part you just heard, plus a different set of accompanying parts — judge how well they fit together, not what comes next. Both rows share one time and pitch scale' : 'shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays prompt + 1, pauses, then prompt + 2, and waits for you'}; <kbd>space</kbd> pauses/resumes, <kbd>enter</kbd> starts over, <kbd>esc</kbd> stops, <kbd>a</kbd> replays 1, <kbd>b</kbd> replays 2, <kbd>o</kbd> the other one${ACC ? ', <kbd>c</kbd> plays the original part alone' : ''}.</div>
+    <div class="files">${p.source ? `set <code>${p.source}</code>${p.idx !== undefined ? ` #${p.idx}` : ''} · ` : ''}pair <code>${p.pair_id}</code>${p.prompt_name ? ` · from <code>${p.prompt_name}</code>` : ''} · download:
+      <a href="#" onclick="return downloadAs('${p.prompt_url}', '${p.pair_id}_prompt.mid')">&#8681; prompt</a>
+      <a href="#" onclick="return downloadAs('${p.left_url}', '${p.pair_id}_take1.mid')">&#8681; ${ACC ? 'arrangement' : 'take'} 1</a>
+      <a href="#" onclick="return downloadAs('${p.right_url}', '${p.pair_id}_take2.mid')">&#8681; ${ACC ? 'arrangement' : 'take'} 2</a>
+      ${ACC ? '' : `<a href="#" onclick="return downloadAs('${p.left_timeline_url}', '${p.pair_id}_take1_with_prompt.mid')">&#8681; 1 with prompt tail</a>
+      <a href="#" onclick="return downloadAs('${p.right_timeline_url}', '${p.pair_id}_take2_with_prompt.mid')">&#8681; 2 with prompt tail</a>`}
+    </div>
     ${ACC ? `<div class="opt" id="opt-prompt" style="margin-bottom:10px">
         <h3>The part being accompanied &mdash; both arrangements add to this</h3>
         <div class="rollwrap"><div class="rollinner">
@@ -930,6 +942,19 @@ async function vote(choice) {
     return;
   }
   loadNext();
+}
+
+// Download through the page so the saved name says take 1 / take 2: the
+// server's own file names carry the a/b identity the blind hides.
+async function downloadAs(url, name) {
+  try {
+    const blob = await (await fetch(url)).blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { note('download failed: ' + e.message); }
+  return false;
 }
 
 // ---- undo: retract the last vote of this session and show that pair again

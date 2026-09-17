@@ -440,13 +440,13 @@ def build_app(args):
             for side in ("a", "b"):
                 rolls[side], urls[side] = build_roll(pairs_dir, pid, side, src.cache_dir)
             mp = pairs_dir / f"{pid}.json"
-            mode = (json.loads(mp.read_text()).get("mode", "continue")
-                    if mp.exists() else "continue")
+            meta = json.loads(mp.read_text()) if mp.exists() else {}
+            mode = meta.get("mode", "continue")
             prompt_roll = None
             if mode == "accompany":
                 # the condition on its own, so it can be seen as well as heard
                 prompt_roll = _roll_of(pairs_dir / f"{pid}_prompt.mid",
-                                       float(json.loads(mp.read_text()).get("tempo_bpm") or 120.0))
+                                       float(meta.get("tempo_bpm") or 120.0))
         except Exception as e:
             print(f"[relabel] skipping {pid}: {type(e).__name__}: {e}")
             todo.pop(0)
@@ -458,7 +458,7 @@ def build_app(args):
         pair = {
             "pair_id": pid, "idx": m["idx"], "source": src.id,
             "prompt_source": "repeat check",
-            "prompt_name": "",
+            "prompt_name": Path(meta.get("prompt_file", "")).name,
             "prompt_url": f"{base}/pairs/{pid}_prompt.mid",
             "left_url": f"{base}/{urls[left]}",
             "right_url": f"{base}/{urls[right]}",
