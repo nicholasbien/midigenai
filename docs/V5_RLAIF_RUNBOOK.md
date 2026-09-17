@@ -56,12 +56,16 @@ Gate: the confirm number should be at least the 113M v4's **0.789**. Below
 
 ## 2b. Accompaniment pairs, judge, reward  (the second task; same recipe)
 
-Accompaniment seeds must be MULTI-TRACK files. On day one that is the
-held-out val set (235 of its 400 files have two live tracks); the Ableton
-clip set and the FMA transcriptions are single-track and cannot seed
-accompaniment (see "Gap" below).
+Accompaniment seeds must be MULTI-TRACK files: the user's Ableton
+arrangements (`evals/prompts_ableton_arr`, 223 sets from
+`ableton_clips.py --arrangements`, model and test lanes excluded, ~175
+usable per draw) and the held-out val set (235 of 400 files have two live
+tracks). FMA transcriptions are single-track and cannot seed accompaniment.
+The 202M has SEEN the Ableton sets (165 of them were in the v4b corpus), so
+202M accompaniments on them are partly recall; v5 excludes every Ableton
+file and is clean by construction.
 
-    python -m midigenai.pairgen --prompts ~/midigenai-v4/evals/prompts_heldout \
+    python -m midigenai.pairgen --prompts evals/prompts_ableton_arr \
       --out evals/autolabel_v5_acc -n 3000 --mode accompany --bars 16 \
       --checkpoint runs/v5/ckpt_final.pt --tokenizer runs/v5/tokenizer.json --label v5
     python -m midigenai.llm_judge label --pairs evals/autolabel_v5_acc/pairs \
@@ -83,7 +87,7 @@ floor.
 
     modal run midigenai/modal_grpo.py --run-name grpo_v5_001 --version v5 \
       --reward probe_v5.json --prompts evals/prompts_pool_v5 \
-      --accompany-prompts ~/midigenai-v4/evals/prompts_heldout --reward-accompany probe_v5_acc.json \
+      --accompany-prompts evals/prompts_ableton_arr --reward-accompany probe_v5_acc.json \
       --accompany-frac 0.5 --bars 16 \
       --steps 1000 --prompts-per-step 8 --lr 5e-6 --beta 0.04 --eval-every 25
 
@@ -93,11 +97,9 @@ no shared scale); one KL reference anchors both. EVAL is reported per task
 — watch both curves. No repetition penalty (user decision); `compare_ckpt`
 is the gate afterward, per task.
 
-**Gap:** there is no Ableton accompaniment seed set yet. `ableton_clips.py`
-exports single clips; accompaniment needs multi-track windows from whole
-sets. A `--arrangements` mode on the extractor (per-project multi-track
-windows, same exclusion and dedup) would close it — a couple of hours, and
-worth doing before the second v5 run, since Ableton is the target.
+**Accompaniment seeds** for the mixed run are the Ableton arrangements; add
+the val set (`--accompany-prompts` takes one dir — build a pool with
+`prompt_pool.py` if both are wanted).
 
 ## 6. Verify — reward going up is not evidence
 
