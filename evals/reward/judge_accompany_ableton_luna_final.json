@@ -3,42 +3,52 @@
  "format": "notes",
  "prompt": "accompany",
  "split": "all",
- "n": 31,
- "n_decided": 25,
- "agreement_with_human": 0.68,
- "swap_consistency": 0.8064516129032258,
- "position_bias_pick_first": 0.45161290322580644,
- "tie_rate": 0.19354838709677424,
+ "n": 35,
+ "n_decided": 31,
+ "agreement_with_human": 0.6774193548387096,
+ "swap_consistency": 0.8857142857142857,
+ "position_bias_pick_first": 0.5428571428571428,
+ "tie_rate": 0.11428571428571432,
  "results": [
   {
-   "pair_id": "20260917115852_0647c2f7",
+   "pair_id": "20260917115847_96b44b73",
    "human": "2",
    "winner_first": false,
-   "verdict": "1",
+   "verdict": "tie",
    "first_pass": "1",
-   "second_pass": "1",
-   "consistent": true,
-   "reason": "Arrangement 1 provides varied rhythmic/harmonic accompaniment; arrangement 2 is "
-  },
-  {
-   "pair_id": "20260917115846_c91353b4",
-   "human": "2",
-   "winner_first": false,
-   "verdict": "2",
-   "first_pass": "2",
    "second_pass": "2",
-   "consistent": true,
-   "reason": "Arrangement 2 adds contrasting snares; the first duplicates kicks and ends early"
+   "consistent": false,
+   "reason": "Arrangement 1 provides a steadier, less crowded groove with fewer distracting ex"
   },
   {
-   "pair_id": "20260917115830_50b374cc",
+   "pair_id": "20260917115852_0647c2f7",
    "human": "1",
    "winner_first": true,
    "verdict": "2",
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Arrangement 2 covers full part with steady accents; arrangement 1 stops early."
+   "reason": "Arrangement 2 follows changing harmony and supplies a complementary groove despi"
+  },
+  {
+   "pair_id": "20260917115846_c91353b4",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Snare accents complement the groove; arrangement 2 duplicates the kick, then sto"
+  },
+  {
+   "pair_id": "20260917115830_50b374cc",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 runs throughout; arrangement 2 stops early, despite otherwise simi"
   },
   {
    "pair_id": "20260917115846_5f3c7653",
@@ -48,57 +58,67 @@
    "first_pass": "1",
    "second_pass": "1",
    "consistent": true,
-   "reason": "Arrangement 1's bass movement complements drums; arrangement 2 loops and ends pr"
+   "reason": "Arrangement 1 provides a restrained bass groove and continues through the full p"
   },
   {
    "pair_id": "20260917115951_62953f23",
-   "human": "1",
-   "winner_first": true,
-   "verdict": "1",
-   "first_pass": "1",
-   "second_pass": "1",
-   "consistent": true,
-   "reason": "Arrangement 1 offers cleaner harmonic alignment, restraint, and far less distrac"
-  },
-  {
-   "pair_id": "20260917115810_11c993f6",
-   "human": "1",
-   "winner_first": true,
-   "verdict": "tie",
-   "first_pass": "2",
-   "second_pass": "1",
-   "consistent": false,
-   "reason": "Arrangement 2 provides steadier groove, avoiding Arrangement 1\u2019s abrupt density "
-  },
-  {
-   "pair_id": "20260917120010_2ce0f28f",
    "human": "2",
    "winner_first": false,
    "verdict": "2",
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Arrangement 2 provides harmonically fitting bass and chordal motion without copy"
+   "reason": "Sparser sustained voicings support the part, while arrangement 1 is cluttered an"
   },
   {
-   "pair_id": "20260917120008_90273863",
-   "human": "1",
-   "winner_first": true,
-   "verdict": "tie",
-   "first_pass": "tie",
-   "second_pass": "1",
-   "consistent": false,
-   "reason": "Both choices duplicate the part exactly, offering no meaningful accompaniment di"
-  },
-  {
-   "pair_id": "20260917120023_ac49a2c8",
+   "pair_id": "20260917115810_11c993f6",
    "human": "1",
    "winner_first": true,
    "verdict": "1",
    "first_pass": "1",
    "second_pass": "1",
    "consistent": true,
-   "reason": "Arrangement 1 provides a steadier groove and clearer low accompaniment, despite "
+   "reason": "Cleaner, steadier backbeat leaves space for the bass; arrangement 2 is overly bu"
+  },
+  {
+   "pair_id": "20260917120010_2ce0f28f",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Harmonically supportive bass and groove complement the part; arrangement 2 mostl"
+  },
+  {
+   "pair_id": "20260917120008_90273863",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 adds a steady complementary hi-hat groove, while arrangement 2 mer"
+  },
+  {
+   "pair_id": "20260917115837_fcea7642",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Arrangement 1 offers coherent chordal support; arrangement 2 is relentless and c"
+  },
+  {
+   "pair_id": "20260917120023_ac49a2c8",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Steady groove, coherent low bass, and complete length outweigh arrangement one's"
   },
   {
    "pair_id": "20260917115902_5e27f19c",
@@ -108,17 +128,17 @@
    "first_pass": "1",
    "second_pass": "2",
    "consistent": false,
-   "reason": "Upper-register counterline complements the low part, while arrangement 2 closely"
+   "reason": "High-register accompaniment fits harmonically without doubling the part\u2019s low os"
   },
   {
    "pair_id": "20260917115817_0b94fb22",
-   "human": "2",
-   "winner_first": false,
-   "verdict": "2",
-   "first_pass": "2",
-   "second_pass": "2",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
    "consistent": true,
-   "reason": "Steady drums support the bass rhythm without harmonic clashes or register crowdi"
+   "reason": "Arrangement 1 provides a steady complementary groove without harmonic clutter or"
   },
   {
    "pair_id": "20260917115825_af7250af",
@@ -128,7 +148,17 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Arrangement 2 offers a coherent, varied groove; arrangement 1 is a duplicated, m"
+   "reason": "Arrangement 2 provides a coherent varied groove; arrangement 1 is mechanically r"
+  },
+  {
+   "pair_id": "20260917115840_608f2277",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arpeggiated accompaniment outlines F/C harmony more musically, despite rhythmic "
   },
   {
    "pair_id": "20260917115904_52d2cf11",
@@ -138,7 +168,7 @@
    "first_pass": "1",
    "second_pass": "1",
    "consistent": true,
-   "reason": "Arrangement 1 offers steadier, less cluttered groove with clearer bass and accom"
+   "reason": "Coherent repeating groove with restrained harmonic motion; arrangement 2 is over"
   },
   {
    "pair_id": "20260917115909_30f01abf",
@@ -148,7 +178,7 @@
    "first_pass": "1",
    "second_pass": "1",
    "consistent": true,
-   "reason": "Arrangement 1 sustains accompaniment longer and aligns more closely harmonically"
+   "reason": "Arrangement 1 sustains the form; arrangement 2 stops at bar seven."
   },
   {
    "pair_id": "20260917115919_82d35ccc",
@@ -158,27 +188,37 @@
    "first_pass": "1",
    "second_pass": "1",
    "consistent": true,
-   "reason": "Arrangement 1 provides coherent changing harmony and avoids Arrangement 2's rele"
+   "reason": "Arrangement 1 provides varied chordal motion; arrangement 2 loops cluttered, red"
+  },
+  {
+   "pair_id": "20260917115840_608f2277",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 supports the F-C foundation in a lower register with fewer sustain"
   },
   {
    "pair_id": "20260917115913_b4c8e289",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 provides steadier groove and avoids arrangement 1\u2019s catastrophic b"
+  },
+  {
+   "pair_id": "20260917115844_bcacedf1",
    "human": "1",
    "winner_first": true,
    "verdict": "1",
    "first_pass": "1",
    "second_pass": "1",
    "consistent": true,
-   "reason": "Arrangement 1\u2019s steady groove avoids Arrangement 2\u2019s severe doubling, noise, and"
-  },
-  {
-   "pair_id": "20260917115844_bcacedf1",
-   "human": "2",
-   "winner_first": false,
-   "verdict": "tie",
-   "first_pass": "1",
-   "second_pass": "2",
-   "consistent": false,
-   "reason": "Arrangement 1 better supports E-major harmony with fuller, more purposeful chord"
+   "reason": "Consistent lower-register groove, compatible chord tones, and cleaner rhythmic s"
   },
   {
    "pair_id": "20260917120010_2ce0f28f",
@@ -188,7 +228,7 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Distinct low-register chordal groove supports the part; arrangement 1 mostly dou"
+   "reason": "2's low-register harmonic groove complements the part; 1 simply doubles it."
   },
   {
    "pair_id": "20260917115958_1de14acd",
@@ -198,7 +238,7 @@
    "first_pass": "1",
    "second_pass": "1",
    "consistent": true,
-   "reason": "Sparse, coherent accompaniment leaves room; arrangement 2 duplicates percussion "
+   "reason": "Sparse bass harmony complements the offbeat percussion without duplicating or ov"
   },
   {
    "pair_id": "20260917115830_e769955e",
@@ -208,37 +248,37 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Steady drums avoid harmonic clashes, while arrangement one adds questionable pit"
+   "reason": "Arrangement 2 provides a consistent groove without harmonic clashes, despite bus"
   },
   {
    "pair_id": "20260917115810_a2117f2b",
    "human": "1",
    "winner_first": true,
-   "verdict": "tie",
-   "first_pass": "2",
-   "second_pass": "1",
-   "consistent": false,
-   "reason": "Arrangement 2 harmonizes more clearly, despite some doubling and its equally pre"
-  },
-  {
-   "pair_id": "20260917115900_55ce14b5",
-   "human": "2",
-   "winner_first": false,
-   "verdict": "1",
-   "first_pass": "1",
-   "second_pass": "1",
-   "consistent": true,
-   "reason": "Arrangement 1 provides consistent, restrained harmony; arrangement 2 stops abrup"
-  },
-  {
-   "pair_id": "20260917115912_59ee937c",
-   "human": "2",
-   "winner_first": false,
    "verdict": "2",
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Sustained chord tones support harmony; arrangement 1 crowds and duplicates the p"
+   "reason": "Arrangement 2 aligns chord tones; arrangement 1 sustains a dissonant D against C"
+  },
+  {
+   "pair_id": "20260917115900_55ce14b5",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 offers steady compatible tones; arrangement 1 is sparse and clashe"
+  },
+  {
+   "pair_id": "20260917115912_59ee937c",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Sustained chord tones support the part, while arrangement 2 crowds it with busy "
   },
   {
    "pair_id": "20260917115846_c91353b4",
@@ -248,37 +288,37 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Complementary snare accents support the groove; arrangement 1 duplicates kicks a"
+   "reason": "Arrangement 2 adds snare contrast; Arrangement 1 doubles kicks and stops early."
   },
   {
    "pair_id": "20260917115822_d44684ac",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Arrangement 1 provides coherent melodic accompaniment without duplicating or cro"
+  },
+  {
+   "pair_id": "20260917115851_fb5cf6d8",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 provides coherent repeated voicings, sustained support, and far le"
+  },
+  {
+   "pair_id": "20260917115810_11c993f6",
    "human": "1",
    "winner_first": true,
    "verdict": "2",
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Short melodic figures avoid sustained clashes and leave the drum groove room."
-  },
-  {
-   "pair_id": "20260917115851_fb5cf6d8",
-   "human": "1",
-   "winner_first": true,
-   "verdict": "1",
-   "first_pass": "1",
-   "second_pass": "1",
-   "consistent": true,
-   "reason": "Arrangement 1 offers interlock and continuity; arrangement 2 is overcrowded, uns"
-  },
-  {
-   "pair_id": "20260917115810_11c993f6",
-   "human": "1",
-   "winner_first": true,
-   "verdict": "tie",
-   "first_pass": "2",
-   "second_pass": "1",
-   "consistent": false,
-   "reason": "Arrangement 2 provides steadier groove, clearer space, and less distracting rhyt"
+   "reason": "Steadier, sparser groove leaves the bass room; arrangement 1 becomes cluttered a"
   },
   {
    "pair_id": "20260917115951_62953f23",
@@ -288,17 +328,17 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Arrangement 2 uses restrained sustained chords, leaving space and avoiding exces"
+   "reason": "Sparse sustained chord tones support the progression, avoiding clutter and chrom"
   },
   {
    "pair_id": "20260917120001_b014c99e",
-   "human": "2",
-   "winner_first": false,
-   "verdict": "2",
-   "first_pass": "2",
-   "second_pass": "2",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
    "consistent": true,
-   "reason": "Arrangement 2 provides coherent groove, varied harmony, and useful register bene"
+   "reason": "Arrangement 1 provides coherent harmonic groove; arrangement 2 is repetitive and"
   },
   {
    "pair_id": "20260917115836_0dbbcb9e",
@@ -308,17 +348,17 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Sparse low-register groove continues throughout; arrangement 1 stops abruptly af"
+   "reason": "Sparse, register-separated accompaniment spans all twelve bars and avoids Arrang"
   },
   {
    "pair_id": "20260917115956_f8eb203e",
-   "human": "1",
-   "winner_first": true,
-   "verdict": "1",
-   "first_pass": "1",
-   "second_pass": "1",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
    "consistent": true,
-   "reason": "Backbeat and groove complement the tom pattern; arrangement 2 largely duplicates"
+   "reason": "Distinct snare-and-hat groove complements the tom-heavy part; arrangement 1 most"
   }
  ]
 }

@@ -86,10 +86,11 @@ file and is clean by construction.
       --labels evals/autolabel_v5_acc/labels.jsonl --layers <winner> --l2 10 \
       --checkpoint runs/v5/ckpt_final.pt --out evals/reward/probe_v5_acc.json
 
-The accompaniment judge (`accompany` rubric, chosen from the pair meta) was
-validated at sol 0.83 / luna 0.72–0.76 on 47 human votes; its probe has no
-prior number to gate against, so treat ~0.72 (the judge's own band) as the
-floor.
+The accompaniment judge (`accompany` rubric, chosen from the pair meta) sits
+at sol 0.74 / luna 0.70 on 43/37 human-decided val pairs (after the
+condition-track slicing fix; earlier 0.83 was on a subset). Its probe has no
+prior number to gate against; expect it below the continuation probe and
+treat ~0.68 as the floor, reporting the number rather than hiding it.
 
 ## 5. GRPO — one run, both tasks  (DECISIONS: steps, accompany-frac)
 
