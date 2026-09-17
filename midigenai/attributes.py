@@ -2,9 +2,9 @@
 v4 attribute header: control tokens derived from the MIDI itself.
 
 Every v4 training document starts with a short header describing its
-contents (instrument families, note density, polyphony, pitch range, source,
-optional genre). No labels are needed: everything but Source/Genre is
-computed from the notes. At inference the header is how a caller steers the
+contents (instrument families, note density, polyphony, pitch range, tempo,
+source, optional genre). No labels are needed: everything but Source/Genre
+is computed from the notes and tempo events. At inference the header is how a caller steers the
 model ("sparse bass", "drums + piano", "curated-source style") — see
 docs/proposals/v4-structure-and-control.md §1b.
 
@@ -34,9 +34,29 @@ DENSITY_EDGES = (8, 24, 64)          # -> buckets 0..3
 POLY_EDGES = (1.5, 3.0)              # -> buckets 0..2
 # pitch span in semitones
 RANGE_EDGES = (24, 48)               # -> buckets 0..2
+# tempo in BPM: slow .. fast. The body stream is tempo-invariant (Bar /
+# Position, `use_tempos=False`), so this is the only place the model learns
+# that 90 and 170 BPM drums are different animals. Coarse on purpose: half-
+# and double-time notation is inconsistent across files (pop909 sits at a
+# median 73), so fine bins would mostly encode convention.
+TEMPO_EDGES = (70, 90, 110, 130, 150, 175)   # -> buckets 0..6
+# performance transcriptions carry a placeholder tempo, not a musical one
+# (sampled 2026-09-16: maestro 100% at 120, giantmidi 73%; aria is built
+# the same way) -- no Tempo token for them, the header simply omits the family
+TEMPO_PLACEHOLDER_SOURCES = ("aria", "maestro", "giantmidi")
+# MuScriptor's best-effort tempo detection writes exactly 120.0 when it fails;
+# 54.5% of the fma_small transcriptions carry it (measured 2026-09-16), and
+# the music inside is at whatever tempo it really is. Treat that value as a
+# placeholder for this source only -- a real detection of 120.0 is possible
+# but indistinguishable, and a wrong Tempo_ token is worse than none.
+PLACEHOLDER_BPM_BY_SOURCE = {"fma": 120.0}
 
 SOURCES = ["lakh", "lamd", "aria", "gigamidi", "maestro", "pop909",
-           "giantmidi", "user"]
+           "giantmidi", "user",
+           # audio->MIDI transcriptions (MuScriptor over FMA). Tagged so the
+           # model can tell transcribed material from authored MIDI, and so
+           # it can be asked for or steered away from at generation time.
+           "fma"]
 GENRES = ["rock", "pop", "jazz", "classical", "electronic", "hiphop", "rnb",
           "country", "folk", "latin", "blues", "metal", "reggae", "soul",
           "world", "other"]
@@ -50,8 +70,8 @@ QUALITY_BUCKETS = 4
 # (2026-09-13) emitted SEP/MASK/BOS in 40% of continuations without them
 TASKS = ["accomp", "infill"]
 
-HEADER_PREFIXES = ("Task_", "Inst_", "Density_", "Poly_", "Range_", "Source_",
-                   "Genre_", "Quality_")
+HEADER_PREFIXES = ("Task_", "Inst_", "Density_", "Poly_", "Range_", "Tempo_",
+                   "Source_", "Genre_", "Quality_")
 NEVER_DROP = ("Task_",)      # header dropout must leave the task token alone
 
 
@@ -62,6 +82,7 @@ def header_vocab() -> list[str]:
     names += [f"Density_{i}" for i in range(len(DENSITY_EDGES) + 1)]
     names += [f"Poly_{i}" for i in range(len(POLY_EDGES) + 1)]
     names += [f"Range_{i}" for i in range(len(RANGE_EDGES) + 1)]
+    names += [f"Tempo_{i}" for i in range(len(TEMPO_EDGES) + 1)]
     names += [f"Source_{s}" for s in SOURCES]
     names += [f"Genre_{g}" for g in GENRES]
     names += [f"Quality_{i}" for i in range(QUALITY_BUCKETS)]
@@ -124,11 +145,57 @@ def content_tokens(score) -> list[str]:
     ]
 
 
+def tempo_bucket(bpm: float) -> int:
+    return _bucket(bpm, TEMPO_EDGES)
+
+
+def dominant_tempo(score) -> float | None:
+    """The tempo in force for the most ticks of `score`; None without a
+    tempo event. A setup event at tick 0 that the real tempo replaces a
+    beat later, or a closing ritardando, must not decide the token."""
+    tempos = sorted(score.tempos, key=lambda t: t.time)
+    if not tempos:
+        return None
+    end = max((n.time + n.duration for t in score.tracks for n in t.notes),
+              default=0)
+    if len(tempos) == 1 or end <= 0:
+        return float(tempos[0].qpm)
+    weight: Counter[float] = Counter()
+    for i, t in enumerate(tempos):
+        start = max(0, t.time)                    # trimmed scores can sit < 0
+        stop = tempos[i + 1].time if i + 1 < len(tempos) else end
+        weight[float(t.qpm)] += max(0, min(stop, end) - start)
+    bpm, ticks = max(weight.items(), key=lambda kv: kv[1])
+    return bpm if ticks > 0 else float(tempos[0].qpm)
+
+
+def tempo_tokens(score, source: str | None = None,
+                 tempo: float | None = None) -> list[str]:
+    """[Tempo_<bucket>] or [] when the file's tempo can't be trusted (a
+    placeholder source, no tempo event). An explicit `tempo` -- the DAW
+    clock at inference -- wins over whatever the score says."""
+    if tempo is None:
+        if source in TEMPO_PLACEHOLDER_SOURCES or score is None:
+            pass  # fall through to omission below
+        elif source in PLACEHOLDER_BPM_BY_SOURCE and len(score.tempos) and \
+                abs(score.tempos[0].qpm - PLACEHOLDER_BPM_BY_SOURCE[source]) < 1e-6:
+            source = None; score = None   # treat exactly like a placeholder source
+        if source in TEMPO_PLACEHOLDER_SOURCES or score is None:
+            return []
+        tempo = dominant_tempo(score)
+    if tempo is None or tempo <= 0:
+        return []
+    return [f"Tempo_{tempo_bucket(tempo)}"]
+
+
 def header_for_score(score, source: str | None = None,
                      genres: list[str] | None = None,
-                     quality: int | None = None) -> list[str]:
-    """Full header (token names) for a document whose content is `score`."""
+                     quality: int | None = None,
+                     tempo: float | None = None) -> list[str]:
+    """Full header (token names) for a document whose content is `score`.
+    `tempo` overrides the score's own tempo events (see tempo_tokens)."""
     names = instrument_tokens(score) + content_tokens(score)
+    names += tempo_tokens(score, source, tempo)
     if source in SOURCES:
         names.append(f"Source_{source}")
     for g in genres or []:

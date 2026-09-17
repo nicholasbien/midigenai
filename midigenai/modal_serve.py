@@ -298,6 +298,20 @@ class MidiGen:
                 logits, caches = model(next_ids, kv_caches=caches)
         return [list(gen.postprocess(prompt_ids, out)) for out in outs]
 
+    def _header_for_bytes(self, midi_bytes: bytes, tempo_bpm: float) -> list[int]:
+        """v4 attribute header for an upload: describes the prompt and
+        carries the tempo the answer will play at. [] on older checkpoints."""
+        if not self.gen.v4:
+            return []
+        from io import BytesIO
+
+        from symusic import Score
+
+        from midigenai.attributes import header_for_score
+        score = Score.from_midi(BytesIO(midi_bytes).read())
+        return self.gen.sp.header_ids_for(
+            self.gen.tokenizer, header_for_score(score, tempo=tempo_bpm))
+
     def _to_midi_bytes(self, full_ids: list[int], tempo_bpm: float) -> bytes:
         return self._score_to_bytes(self.gen.tokenizer.decode(full_ids), tempo_bpm)
 
@@ -329,6 +343,7 @@ class MidiGen:
         full_prompt = self.gen.encode_midi_bytes(midi_bytes)
         if tempo_bpm is None:
             tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+        full_prompt = [*self._header_for_bytes(midi_bytes, tempo_bpm), *full_prompt]
 
         # A prompt too long for the context window is cut at the end; the
         # continuation follows the cut, so the returned MIDI is the kept
@@ -415,6 +430,12 @@ class MidiGen:
         cond_ids = self.gen.tokenizer(condition).ids
 
         names, family = accompaniment_header(window, cond_index, instrument)
+        # Tempo_ rides along with the instrument-choice header: the clock the
+        # caller passes (or the file's own) becomes the family token, same as
+        # header_for_score(window, tempo=...) does for continuation.
+        from midigenai.attributes import tempo_tokens
+        if not any(n.startswith("Tempo_") for n in names):
+            names = [*names, *tempo_tokens(window, tempo=tempo_bpm)]
         header = self.gen.sp.header_ids_for(self.gen.tokenizer, names)
 
         midis, note_counts = [], []
@@ -459,6 +480,7 @@ class MidiGen:
         prompt = self.gen.encode_midi_bytes(midi_bytes)
         if tempo_bpm is None:
             tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+        prompt = [*self._header_for_bytes(midi_bytes, tempo_bpm), *prompt]
         for note in self.gen.stream_notes(
             prompt,
             chunk_tokens=chunk_tokens,

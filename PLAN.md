@@ -61,6 +61,16 @@ we scale to 202M.
       (20 random Lakh files, see 2026-09-01 log) should fall well below the
       current 35% / mean 0.18. Inference guard already exists
       (`generate --min-new-tokens`) — the data fix is what removes the cause.
+- [ ] **Tempo_ header for the next run** (branch `tempo-header`): the body
+      is tempo-invariant, so the model can't tell 90 BPM boom-bap from 170
+      BPM drum & bass unless told. `Tempo_0..6` header family (edges
+      70/90/110/130/150/175), omitted for placeholder-tempo sources (aria,
+      maestro, giantmidi: sampled 2026-09-16, maestro 100% / giantmidi 73%
+      at exactly 120) and files with no tempo event; at inference
+      `--tempo-bpm` / the serve `tempo_bpm` set it from the DAW clock. Vocab
+      590 → 597, so it lands with the same rebuild as fragment-EOS. Check
+      it took: drum-only accompaniment for one prompt under `Tempo_1` vs
+      `Tempo_5` should differ in hat subdivision and notes-per-bar.
 
 ### 3. More data
 
