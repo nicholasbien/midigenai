@@ -142,9 +142,9 @@
     &nbsp;·&nbsp; say “one”, “two”, “tie”, “both bad”, “skip”, “again”, “play one”, “play two”</div>
   <div class="statusbar" style="align-items:center">
     <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)">
-      volume <input id="vol" type="range" min="-20" max="24" step="1" value="10"
+      volume <input id="vol" type="range" min="-20" max="24" step="1" value="0"
         oninput="setVolume(this.value)" style="width:150px">
-      <span id="voldb">+10 dB</span>
+      <span id="voldb">0 dB</span>
     </label>
     <div class="settings">
       <label><input type="checkbox" id="replayprompt" onchange="saveSettings()"> prompt before take 2</label>
@@ -183,7 +183,7 @@ function toggleTheme() {
 
 function setVolume(db) {
   db = Number(db);
-  localStorage.setItem('labelVolumeDb', String(db));
+  localStorage.setItem('labelVolumeDb0', String(db));
   const el = document.getElementById('voldb');
   if (el) el.textContent = (db >= 0 ? '+' : '') + db + ' dB';
   try {
@@ -605,7 +605,7 @@ function markInteracted(e) {
   } catch (err) { note('audio: ' + err.message); }
   const o = document.getElementById('tapstart');
   if (o) o.style.display = 'none';
-  setVolume(localStorage.getItem('labelVolumeDb') || 10);
+  setVolume(localStorage.getItem('labelVolumeDb0') ?? 0);
   if (current) playSequence('both');
 }
 document.addEventListener('keydown', markInteracted, { once: true });
@@ -707,7 +707,7 @@ document.addEventListener('drop', (e) => {
 applyTheme(document.documentElement.getAttribute('data-theme') || 'light');
 loadSettings();
 Voice.init();
-const savedVol = localStorage.getItem('labelVolumeDb') || 10;
+const savedVol = localStorage.getItem('labelVolumeDb0') ?? 0;
 document.getElementById('vol').value = savedVol;
 setVolume(savedVol);
 fetchStats();
