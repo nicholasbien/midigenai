@@ -28,6 +28,7 @@ class PairConfig:
     bars: int = 16                 # accompany: window length (training default)
     single_target_frac: float = 0.6   # v4_docs.DocBuilder default
     prompt_tokens: int = 256
+    min_prompt_bars: float = 2.0   # a window covering less is not a phrase
     max_new_tokens: int = 256
     temperature: float = 1.1
     top_k: int = 50
@@ -76,6 +77,30 @@ def _slice_with_program(gen, ids: list[int], start: int, length: int) -> list[in
     return prefix + list(ids[start:start + length])
 
 
+def _bar_aligned_start(gen, ids: list[int], length: int, rng: random.Random) -> int:
+    """A window start that lands on a Bar token when the tokenizer has them
+    (v4), so the prompt opens on a downbeat; a plain random offset otherwise."""
+    bar_id = getattr(gen, "bar_id", None)
+    limit = len(ids) - length
+    if bar_id is None:
+        return rng.randrange(0, limit)
+    starts = [i for i, t in enumerate(ids) if t == bar_id and i <= limit]
+    return rng.choice(starts) if starts else rng.randrange(0, limit)
+
+
+def _bars_spanned(gen, ids: list[int]) -> float:
+    """How much music a token window covers, in bars."""
+    try:
+        sc = gen.tokenizer.decode(list(ids))
+    except Exception:
+        return 0.0
+    notes = [n for t in sc.tracks for n in t.notes]
+    if not notes:
+        return 0.0
+    tpq = max(sc.ticks_per_quarter, 1)
+    return (max(n.start + n.duration for n in notes) - min(n.start for n in notes)) / tpq / 4
+
+
 def make_pair(gen, prompt_file: Path, cfg: PairConfig,
               rng: random.Random) -> dict | None:
     """One pair: a prompt slice and two independent continuations of it.
@@ -96,8 +121,16 @@ def make_pair(gen, prompt_file: Path, cfg: PairConfig,
     if len(prompt_ids) < 32:
         return None
     if len(prompt_ids) > cfg.prompt_tokens:
-        start = rng.randrange(0, len(prompt_ids) - cfg.prompt_tokens)
+        # A window cut at a random token starts mid-bar, mid-phrase, and in
+        # dense material covers almost nothing: whole-arrangement Ableton
+        # exports (median 8,293 notes) gave 256-token prompts of 0.2-1.8
+        # bars, and the labeler flagged them as bad prompts 10 times in 49
+        # votes. Start on a bar line, and refuse a window that spans less
+        # than `min_prompt_bars` of music.
+        start = _bar_aligned_start(gen, prompt_ids, cfg.prompt_tokens, rng)
         prompt_ids = _slice_with_program(gen, prompt_ids, start, cfg.prompt_tokens)
+        if _bars_spanned(gen, prompt_ids) < cfg.min_prompt_bars:
+            return None
 
     tempo = gen.detect_tempo(prompt_file)
     pair_id = f"{datetime.datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:8]}"
@@ -363,6 +396,9 @@ def main() -> None:
     p.add_argument("--temperature", type=float, default=1.1)
     p.add_argument("--top-k", type=int, default=50)
     p.add_argument("--prompt-tokens", type=int, default=256)
+    p.add_argument("--min-prompt-bars", type=float, default=2.0,
+                   help="skip windows that span less music than this; dense sources "
+                        "need a bigger --prompt-tokens to clear it")
     p.add_argument("--max-new-tokens", type=int, default=256)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--label", default=None,
@@ -395,6 +431,7 @@ def main() -> None:
         return
 
     cfg = PairConfig(mode=a.mode, bars=a.bars, prompt_tokens=a.prompt_tokens,
+                     min_prompt_bars=a.min_prompt_bars,
                      max_new_tokens=a.max_new_tokens, temperature=a.temperature,
                      top_k=a.top_k, model_label=a.label or label_name)
     t0 = time.time()
