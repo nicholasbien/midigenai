@@ -71,9 +71,13 @@ def cache(a) -> None:
     hooks.append(model.norm.register_forward_hook(lambda m, i, o: grabbed.__setitem__("norm", o)))
 
     def feats(prompt_ids, cont_ids):
-        # same boundary correction as the live scoring path, so a spec fitted
-        # from this cache scores identically in reward_probe
-        seq, n_p = fit_to_context(prompt_ids, cont_ids, cfg.max_seq_len, dev)
+        # same truncation policy as the live scoring path, so a spec fitted
+        # from this cache scores identically in reward_probe: prompt whole,
+        # continuation tail cut, None when there is no room to score
+        fitted = fit_to_context(prompt_ids, cont_ids, cfg.max_seq_len, dev)
+        if fitted is None:
+            return None
+        seq, n_p = fitted
         with torch.no_grad():
             logits, _ = model(seq)
         sl = slice(n_p - 1, -1) if seq.shape[1] > n_p else slice(-1, None)
@@ -88,10 +92,16 @@ def cache(a) -> None:
     for i, pid in enumerate(ids, 1):
         m = json.loads((pairs_dir / f"{pid}.json").read_text())
         try:
-            fa, la = feats(m["prompt_ids"], m["cont_a_ids"])
-            fb, lb = feats(m["prompt_ids"], m["cont_b_ids"])
+            got_a = feats(m["prompt_ids"], m["cont_a_ids"])
+            got_b = feats(m["prompt_ids"], m["cont_b_ids"])
         except Exception:
             continue
+        # Drop the pair rather than score its two sides under different
+        # amounts of prompt -- the asymmetry is length-correlated, so
+        # keeping them would fit truncation instead of preference.
+        if got_a is None or got_b is None:
+            continue
+        (fa, la), (fb, lb) = got_a, got_b
         if not (np.isfinite(fa).all() and np.isfinite(fb).all()):
             continue
         A.append(fa); B.append(fb); LPA.append(la); LPB.append(lb); G.append(m["prompt_file"]); keep.append(pid)

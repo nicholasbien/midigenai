@@ -95,44 +95,70 @@ def test_repair_recomputes_stored_counts_from_cond_ids(tmp_path, tok):
     assert repair_cond_tracks(pairs, tok, apply=True) == []
 
 
-# ---------- the prompt boundary under truncation ---------- #
+# ---------- over-long sequences keep the prompt, not the tail ---------- #
+#
+# The probe's whole value is that its activations attended over the prompt.
+# Cutting the prompt's head changes what "fits what came before" means, and
+# because the two sides of a pair share one prompt but differ in continuation
+# length, a head cut removes a DIFFERENT amount from each side. These pin the
+# policy: prompt whole, continuation tail trimmed, skip when there is no room.
 
-def test_boundary_untouched_when_the_sequence_fits():
+
+def test_nothing_is_cut_when_the_sequence_fits():
     seq, n_prompt = fit_to_context(list(range(10)), list(range(10, 20)), 64, "cpu")
     assert seq.shape[1] == 20 and n_prompt == 10
+    assert seq[0, n_prompt:].tolist() == list(range(10, 20))
 
 
-def test_boundary_moves_with_the_cut():
-    """The prompt is cut from the front, so the boundary has to move by
-    exactly what was dropped -- otherwise the pooled slice is offset."""
-    prompt, cont = list(range(100)), list(range(100, 150))
+def test_the_prompt_survives_whole_and_the_tail_goes():
+    prompt, cont = list(range(100)), list(range(100, 200))
     seq, n_prompt = fit_to_context(prompt, cont, 120, "cpu")
+    assert n_prompt == len(prompt)                 # boundary unmoved
+    assert seq[0, :n_prompt].tolist() == prompt    # prompt intact
     assert seq.shape[1] == 120
-    assert n_prompt == 70                      # 100 - (150 - 120)
-    # the continuation still starts exactly at the boundary, whole
-    assert seq[0, n_prompt:].tolist() == cont
-    assert n_prompt != len(prompt)             # what the bug used
+    assert seq[0, n_prompt:].tolist() == cont[:20]  # tail dropped, head kept
 
 
-def test_continuation_always_survives_truncation_whole():
-    prompt, cont = list(range(500)), list(range(500, 560))
-    seq, n_prompt = fit_to_context(prompt, cont, 100, "cpu")
-    assert seq[0, n_prompt:].tolist() == cont
+def test_both_sides_of_a_pair_see_the_same_prompt():
+    """The bug this replaces: sides share a prompt but differ in continuation
+    length, so a total-length cut conditioned them on different context."""
+    prompt = list(range(1700))
+    short, long_ = list(range(300)), list(range(1088))
+    seq_a, n_a = fit_to_context(prompt, short, 2048, "cpu")
+    seq_b, n_b = fit_to_context(prompt, long_, 2048, "cpu")
+    assert n_a == n_b == len(prompt)
+    assert seq_a[0, :n_a].tolist() == seq_b[0, :n_b].tolist() == prompt
 
 
-def test_a_prompt_cut_away_entirely_leaves_a_usable_slice():
-    """With the boundary at 0 the pooled slice would be empty, which reaches
-    the caller as a NaN and silently drops the pair."""
-    seq, n_prompt = fit_to_context(list(range(50)), list(range(50, 150)), 100, "cpu")
-    assert n_prompt >= 1
-    sl = slice(n_prompt - 1, -1)
-    assert len(range(*sl.indices(seq.shape[1]))) > 0
+def test_a_pair_with_no_room_to_score_is_skipped():
+    """Better no row than a row scored on three tokens of continuation."""
+    assert fit_to_context(list(range(2045)), list(range(500)), 2048, "cpu") is None
+    assert fit_to_context(list(range(3000)), list(range(500)), 2048, "cpu") is None
+
+
+def test_a_too_short_continuation_is_skipped():
+    assert fit_to_context(list(range(10)), list(range(3)), 2048, "cpu") is None
+
+
+def test_feature_vector_skips_rather_than_returning_bad_features():
+    from midigenai.model import ModelConfig, MusicTransformer
+    from midigenai.reward_probe import feature_vector
+    cfg = ModelConfig(vocab_size=590, d_model=32, n_layers=1, n_heads=2,
+                      d_ff=64, max_seq_len=64)
+    torch.manual_seed(0)
+    model = MusicTransformer(cfg).eval()
+    assert feature_vector(model, list(range(60)), list(range(100)), "cpu") is None
+    v = feature_vector(model, list(range(20)), list(range(30)), "cpu")
+    assert v is not None and np.isfinite(v).all()
 
 
 def test_the_pooled_slice_is_never_empty_across_shapes():
-    for n_p, n_c, cap in [(10, 10, 64), (100, 50, 120), (500, 60, 100),
-                          (2040, 500, 2048), (5, 8, 8)]:
-        seq, n_prompt = fit_to_context(list(range(n_p)), list(range(n_c)), cap, "cpu")
+    for n_p, n_c, cap in [(10, 10, 64), (100, 50, 120), (500, 60, 600),
+                          (1700, 1088, 2048), (5, 8, 32)]:
+        fitted = fit_to_context(list(range(n_p)), list(range(n_c)), cap, "cpu")
+        if fitted is None:
+            continue
+        seq, n_prompt = fitted
         sl = slice(n_prompt - 1, -1) if seq.shape[1] > n_prompt else slice(-1, None)
         pooled = torch.zeros(seq.shape[1], 3)[sl]
         assert pooled.shape[0] > 0, (n_p, n_c, cap)
