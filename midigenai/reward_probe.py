@@ -231,6 +231,10 @@ def fit(args) -> None:
         h.update(fh.read(8 << 20))
     spec = {"kind": "probe", "checkpoint": str(Path(args.checkpoint).resolve()),
             "layers": list(layers),
+            # corpus_v5 moves to a 598-token vocab and every musical id shifts;
+            # a probe fitted on 590-vocab activations must never score a
+            # 598-vocab model, and the hash guard alone would not say why
+            "vocab_size": int(model.cfg.vocab_size),
             # the path is where it was fitted; the hash is what it was fitted
             # ON, and only the hash survives being copied to a GPU box
             "checkpoint_sha256_8mb": h.hexdigest(),

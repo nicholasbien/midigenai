@@ -209,6 +209,12 @@ def train(cfg: GRPOConfig) -> None:
         # lives at a different path on a GPU box than on the machine that
         # fitted the probe, and refusing on a path mismatch would refuse
         # every remote run.
+        want_vocab = spec.get("vocab_size")
+        if want_vocab is not None and int(want_vocab) != int(model_cfg.vocab_size):
+            raise SystemExit(
+                f"probe spec was fitted on a {want_vocab}-token vocab; this checkpoint "
+                f"has {model_cfg.vocab_size}. Token ids are not interchangeable across "
+                "vocabs (corpus_v5 is 598, v4 is 590): refit the probe on this checkpoint.")
         want_sha = spec.get("checkpoint_sha256_8mb")
         want_bytes = spec.get("checkpoint_bytes")
         if want_sha or want_bytes:
