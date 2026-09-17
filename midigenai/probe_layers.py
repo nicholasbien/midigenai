@@ -40,6 +40,7 @@ from pathlib import Path
 import numpy as np
 
 from midigenai.reward_align import fit_bt
+from midigenai.reward_probe import fit_to_context
 
 
 def _labels(path: Path) -> dict[str, str]:
@@ -70,10 +71,9 @@ def cache(a) -> None:
     hooks.append(model.norm.register_forward_hook(lambda m, i, o: grabbed.__setitem__("norm", o)))
 
     def feats(prompt_ids, cont_ids):
-        seq = torch.tensor([list(prompt_ids) + list(cont_ids)], dtype=torch.long, device=dev)
-        if seq.shape[1] > cfg.max_seq_len:
-            seq = seq[:, -cfg.max_seq_len:]
-        n_p = len(prompt_ids)
+        # same boundary correction as the live scoring path, so a spec fitted
+        # from this cache scores identically in reward_probe
+        seq, n_p = fit_to_context(prompt_ids, cont_ids, cfg.max_seq_len, dev)
         with torch.no_grad():
             logits, _ = model(seq)
         sl = slice(n_p - 1, -1) if seq.shape[1] > n_p else slice(-1, None)

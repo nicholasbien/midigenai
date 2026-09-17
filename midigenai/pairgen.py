@@ -367,7 +367,16 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
         "prompt_file": prompt_file.name,
         "mode": "accompany", "bars": bars, "bars_requested": cfg.bars,
         "sampling": kind, "drums_banned": not target_has_drums and not cond_has_drums,
-        "n_cond_tracks": len(cond.tracks), "n_target_tracks": len(tgt.tracks),
+        # Count the DECODED condition, not the source subscore: the mix is
+        # built from cond_score, and the v4 tokenizer is one_token_stream, so
+        # two condition tracks sharing a GM program come back as one. The
+        # judge slices the mix at this number (llm_judge.render_side), so
+        # counting the source here hands it the tail of the generated parts
+        # instead of all of them, or nothing at all.
+        "n_cond_tracks": len(cond_score.tracks),
+        # informational; describes the reference target in the source file,
+        # which is not part of any mix
+        "n_target_tracks": len(tgt.tracks),
         "cond_is_drums": any(t.is_drum for t in cond.tracks),
         "model_a": cfg.model_label, "model_b": cfg.model_label,
         "cross_model": False, "on_policy": True,
@@ -421,6 +430,36 @@ def generate_pairs(gen, prompt_files: list[Path], n: int, cfg: PairConfig,
     return out
 
 
+def repair_cond_tracks(pairs_dir: Path, tokenizer, apply: bool = False) -> list[tuple[str, int, int]]:
+    """Recompute `n_cond_tracks` for accompaniment pairs already on disk.
+
+    Pairs written before the decoded-count fix recorded the SOURCE track
+    count, so the judge sliced their mixes in the wrong place. The true
+    number is recoverable without regenerating anything: every accompaniment
+    meta carries `cond_ids`, and decoding those gives exactly the tracks the
+    mix was built from. Returns (pair_id, stored, actual) for each pair whose
+    count was wrong; writes the corrections back only when `apply`.
+    """
+    changed = []
+    for meta_path in sorted(pairs_dir.glob("*.json")):
+        try:
+            m = json.loads(meta_path.read_text())
+        except (OSError, ValueError):
+            continue
+        if m.get("mode") != "accompany" or not m.get("cond_ids"):
+            continue
+        actual = len(tokenizer.decode(list(m["cond_ids"])).tracks)
+        stored = int(m.get("n_cond_tracks", 0))
+        if actual == stored:
+            continue
+        changed.append((m.get("pair_id", meta_path.stem), stored, actual))
+        if apply:
+            m["n_cond_tracks"] = actual
+            m["n_cond_tracks_repaired_from"] = stored
+            meta_path.write_text(json.dumps(m))
+    return changed
+
+
 def main() -> None:
     import argparse
     import time
@@ -447,7 +486,26 @@ def main() -> None:
     p.add_argument("--mode", choices=("continue", "accompany"), default="continue")
     p.add_argument("--bars", type=int, default=16,
                    help="accompany: window length (training uses 16)")
+    p.add_argument("--repair-cond-tracks", action="store_true",
+                   help="recompute n_cond_tracks for pairs already in --out "
+                        "(dry run; add --apply to write). Fixes pairs written "
+                        "before the decoded-count fix, no regeneration needed.")
+    p.add_argument("--apply", action="store_true",
+                   help="with --repair-cond-tracks, write the corrections")
     a = p.parse_args()
+
+    if a.repair_cond_tracks:
+        from midigenai.tokenizer import load_tokenizer
+        if not a.tokenizer:
+            raise SystemExit("--repair-cond-tracks needs --tokenizer "
+                             "(the decode has to match the run that wrote the pairs)")
+        changed = repair_cond_tracks(Path(a.out) / "pairs",
+                                     load_tokenizer(a.tokenizer), apply=a.apply)
+        for pid, stored, actual in changed:
+            print(f"  {pid}: {stored} -> {actual}")
+        verb = "repaired" if a.apply else "would repair (dry run; pass --apply)"
+        print(f"[pairs] {verb} {len(changed)} pair(s)")
+        return
 
     if a.checkpoint:
         from midigenai.generate import Generator

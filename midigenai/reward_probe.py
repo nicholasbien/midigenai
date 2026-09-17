@@ -50,6 +50,31 @@ def _layer_module(model, name: str):
     raise ValueError(f"unknown layer {name!r}: expected 'norm' or 'block<N>'")
 
 
+def fit_to_context(prompt_ids, cont_ids, max_seq_len: int, device):
+    """(seq, n_prompt) with the prompt boundary corrected for truncation.
+
+    A sequence longer than the context is cut from the FRONT, so the
+    continuation always survives whole and it is the prompt that loses
+    tokens. The boundary has to move with the cut. Keeping the original
+    length instead pools activations from the wrong positions -- and once
+    the cut is deeper than the prompt, `slice(n_prompt - 1, -1)` selects a
+    region that is partly or wholly continuation, or nothing at all, which
+    reaches the caller as a NaN and silently drops the pair.
+
+    Reachable wherever prompt + continuation passes the context: an
+    accompaniment prompt plus up to 64*bars+64 new tokens gets there.
+    Clamped to 1 so a prompt cut away entirely still leaves one position
+    of context rather than an empty slice.
+    """
+    seq = torch.tensor([list(prompt_ids) + list(cont_ids)], dtype=torch.long,
+                       device=device)
+    n_prompt = len(prompt_ids)
+    if seq.shape[1] > max_seq_len:
+        n_prompt = max(1, n_prompt - (seq.shape[1] - max_seq_len))
+        seq = seq[:, -max_seq_len:]
+    return seq, n_prompt
+
+
 def _hidden_and_logprob(model, seq: torch.Tensor, n_prompt: int,
                         layers=DEFAULT_LAYERS):
     """(concat of mean continuation activations from each layer, mean log-prob).
@@ -85,11 +110,9 @@ def feature_vector(model, prompt_ids, cont_ids, device,
                    layers=DEFAULT_LAYERS) -> np.ndarray | None:
     if len(cont_ids) < 8:
         return None
-    seq = torch.tensor([list(prompt_ids) + list(cont_ids)], dtype=torch.long,
-                       device=device)
-    if seq.shape[1] > model.cfg.max_seq_len:
-        seq = seq[:, -model.cfg.max_seq_len:]
-    h, lp = _hidden_and_logprob(model, seq, len(prompt_ids), layers)
+    seq, n_prompt = fit_to_context(prompt_ids, cont_ids,
+                                   model.cfg.max_seq_len, device)
+    h, lp = _hidden_and_logprob(model, seq, n_prompt, layers)
     v = np.concatenate([h, [lp]])
     return v if np.isfinite(v).all() else None
 
