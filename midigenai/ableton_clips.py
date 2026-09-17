@@ -30,6 +30,18 @@ Filters are musical, not cosmetic: at least `min_notes` enabled notes,
 spanning at least `min_bars` bars.
 
     python -m midigenai.ableton_clips --root ~/Music/Ableton --out evals/prompts_ableton
+
+Accompaniment seeds need the opposite shape: not one clip but the whole
+arrangement, several tracks sounding together, so the sampler can hold one
+part back as the condition and ask for the rest. `--arrangements` walks the
+same projects through data/ableton.extract (arrangement view, loop regions
+expanded, muted tracks dropped), removes model-written lanes track by track,
+and keeps sets with at least two live tracks over `min_bars` bars.
+Session-view clips are not arrangements (they have no shared timeline) and
+are left to the clip mode.
+
+    python -m midigenai.ableton_clips --arrangements --root ~/Music/Ableton \
+        --out evals/prompts_ableton_arr --min-bars 16
 """
 
 from __future__ import annotations
@@ -121,6 +133,82 @@ def write_clip(notes, tempo: float, out: Path) -> None:
     sc.dump_midi(str(out))
 
 
+def arrangement_of(path: Path, min_track_notes: int):
+    """The project's arrangement as a multi-track Score with model-written
+    lanes removed, or None. A project whose PATH matches EXCLUDE is a jam
+    session and is dropped whole; inside a project only the tracks whose
+    names match are dropped, since the user's own parts in a jam are still
+    the user's."""
+    from midigenai.data.ableton import extract
+    if EXCLUDE.search(str(path)):
+        return None, "project"
+    sc = extract(path)
+    if sc is None:
+        return None, "empty"
+    kept = [t for t in sc.tracks
+            if not EXCLUDE.search(t.name or "") and len(t.notes) >= min_track_notes]
+    if len(kept) < 2:
+        return None, "solo" if kept else "empty"
+    sc.tracks = kept
+    return sc, None
+
+
+def _arrangement_key(sc) -> str:
+    tups = sorted((n.time, n.duration, n.pitch, n.velocity)
+                  for t in sc.tracks for n in t.notes)
+    return hashlib.sha1(repr(tups).encode()).hexdigest()
+
+
+def run_arrangements(a) -> None:
+    import json
+    projects = sorted(p for p in glob.glob(os.path.join(a.root, "**", "*.als"), recursive=True)
+                      if "Backup" not in Path(p).parts)     # auto-saves of the same set
+    if a.limit:
+        projects = projects[:a.limit]
+    a.out.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    n_kept = n_bad = n_short = n_dup = 0
+    drop_by: dict[str, int] = {}
+    manifest = []
+    t0 = time.time()
+    for i, p in enumerate(projects, 1):
+        try:
+            sc, why = arrangement_of(Path(p), a.min_notes)
+        except Exception:
+            n_bad += 1
+            continue
+        if sc is None:
+            drop_by[why] = drop_by.get(why, 0) + 1
+            continue
+        first = min(n.time for t in sc.tracks for n in t.notes)
+        last = max(n.time + n.duration for t in sc.tracks for n in t.notes)
+        if (last - first) < a.min_bars * 4 * TPQ:
+            n_short += 1
+            continue
+        key = _arrangement_key(sc)
+        if key in seen:
+            n_dup += 1
+            continue
+        seen.add(key)
+        dst = a.out / f"val_abletonarr_{key[:16]}.mid"
+        sc.dump_midi(str(dst))
+        n_kept += 1
+        manifest.append({"path": dst.name, "source_als": p,
+                         "n_tracks": len(sc.tracks),
+                         "n_drum_tracks": sum(1 for t in sc.tracks if t.is_drum),
+                         "tracks": [t.name for t in sc.tracks],
+                         "bars": round((last - first) / (4 * TPQ), 1),
+                         "n_notes": sum(len(t.notes) for t in sc.tracks)})
+        if i % 200 == 0:
+            print(f"[ableton] {i}/{len(projects)} projects  kept {n_kept}  dropped {drop_by}  "
+                  f"short {n_short}  dup {n_dup}  unreadable {n_bad}  {time.time()-t0:.0f}s", flush=True)
+    (a.out / "manifest.jsonl").write_text("".join(json.dumps(m) + "\n" for m in manifest))
+    print(f"[ableton] done: {len(projects)} projects (Backup/ skipped), {n_kept} unique arrangements "
+          f"kept (>= 2 live tracks of >= {a.min_notes} notes, >= {a.min_bars} bars), "
+          f"dropped {drop_by}, {n_short} too short, {n_dup} duplicate, {n_bad} unreadable -> {a.out}  "
+          f"({time.time()-t0:.0f}s)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", default=os.path.expanduser("~/Music/Ableton"))
@@ -131,7 +219,13 @@ def main() -> None:
                     help="drum fallback when a track has no device chain: fewer "
                          "distinct pitches than this counts as a kit")
     ap.add_argument("--limit", type=int, default=0, help="projects to scan (0 = all)")
+    ap.add_argument("--arrangements", action="store_true",
+                    help="whole multi-track arrangements (accompaniment seeds) instead of single clips; "
+                         "--min-notes is then per track and --min-bars should be the window (16)")
     a = ap.parse_args()
+    if a.arrangements:
+        run_arrangements(a)
+        return
 
     projects = sorted(glob.glob(os.path.join(a.root, "**", "*.als"), recursive=True))
     if a.limit:

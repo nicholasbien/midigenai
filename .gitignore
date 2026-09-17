@@ -67,3 +67,7 @@ evals/prompts_ableton/
 
 # weighted RL prompt pools: symlinks into the held-out seed sets
 evals/prompts_pool*/
+
+# the user's own Ableton material: seeds and pairs built on it stay local
+evals/prompts_ableton*/
+evals/pairs_ableton*/
