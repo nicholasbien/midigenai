@@ -153,6 +153,7 @@
     <div class="settings">
       <label><input type="checkbox" id="replayprompt" onchange="saveSettings()"> prompt before take 2</label>
       <label>pause <input type="number" id="pausems" min="0" max="5000" step="100" onchange="saveSettings()"> ms</label>
+      <label title="one gain per pair from its velocities and density; playback only"><input type="checkbox" id="normalize" onchange="saveSettings()"> even out loudness</label>
     </div>
     <div class="voice">
       <span id="heard"></span>
@@ -219,16 +220,39 @@ function toggleTheme() {
   applyTheme(now === 'dark' ? 'light' : 'dark');
 }
 
+// ---- listening-level normalization: one gain per pair, from the velocities
+// and note density of everything in it, so successive pairs sit at a similar
+// loudness while the two takes keep their relative level. Playback only —
+// the files and the recorded votes are untouched. ----
+let pairGainDb = 0;
+const NORM_TARGET_VEL = 99;   // p80 velocity a pair is brought to (the median across the label sets)
+const NORM_TARGET_NPS = 9;    // notes per second treated as neutral (median; the sets span 2–34)
+function pairGain(p) {
+  const rolls = ['left_roll', 'right_roll', 'prompt_roll'].map(k => (p[k] && p[k].notes) || []).filter(r => r.length);
+  const notes = rolls.flat();
+  if (notes.length < 4) return 0;
+  const vs = notes.map(n => n.v).sort((a, b) => a - b);
+  const p80 = Math.max(1, vs[Math.min(vs.length - 1, Math.floor(vs.length * 0.8))]);
+  const nps = rolls.map(r => r.length / Math.max(1, Math.max(...r.map(n => n.e)) - Math.min(...r.map(n => n.s))));
+  const dens = Math.max(0.5, nps.reduce((a, b) => a + b, 0) / nps.length);
+  // velocity is roughly amplitude (20 log); density adds energy, counted at
+  // half weight since simultaneous notes are only part of the note rate
+  const db = 20 * Math.log10(NORM_TARGET_VEL / p80) - 5 * Math.log10(dens / NORM_TARGET_NPS);
+  return Math.round(Math.max(-10, Math.min(10, db)));
+}
+
 function setVolume(db) {
   db = Number(db);
   localStorage.setItem('labelVolumeDb0', String(db));
+  const auto = settings.normalize ? pairGainDb : 0;
   const el = document.getElementById('voldb');
-  if (el) el.textContent = (db >= 0 ? '+' : '') + db + ' dB';
+  if (el) el.textContent = (db >= 0 ? '+' : '') + db + ' dB' +
+    (settings.normalize ? ` (auto ${auto >= 0 ? '+' : ''}${auto})` : '');
   try {
     // html-midi-player renders through Tone's destination; a player's own
     // volume is per-element and resets with every new pair, so set the master
     const dest = window.Tone && (Tone.getDestination ? Tone.getDestination() : Tone.Destination);
-    if (dest && dest.volume) dest.volume.value = db;
+    if (dest && dest.volume) dest.volume.value = db + auto;
   } catch (e) {}
 }
 let current = null;
@@ -246,20 +270,24 @@ function note(msg) {
 // replayPrompt: hear the prompt again before take 2 (both takes then start
 // from the same place in your ear); off plays take 2 from the handoff only.
 // pauseMs: silence between the two takes.
-const settings = { replayPrompt: true, pauseMs: 800 };
+const settings = { replayPrompt: true, pauseMs: 800, normalize: true };
 function loadSettings() {
   try {
     const s = JSON.parse(localStorage.getItem('labelPlaySettings') || '{}');
     if (typeof s.replayPrompt === 'boolean') settings.replayPrompt = s.replayPrompt;
     if (Number.isFinite(s.pauseMs)) settings.pauseMs = s.pauseMs;
+    if (typeof s.normalize === 'boolean') settings.normalize = s.normalize;
   } catch (e) {}
   document.getElementById('replayprompt').checked = settings.replayPrompt;
   document.getElementById('pausems').value = settings.pauseMs;
+  document.getElementById('normalize').checked = settings.normalize;
 }
 function saveSettings() {
   settings.replayPrompt = document.getElementById('replayprompt').checked;
   settings.pauseMs = Math.max(0, Number(document.getElementById('pausems').value) || 0);
+  settings.normalize = document.getElementById('normalize').checked;
   try { localStorage.setItem('labelPlaySettings', JSON.stringify(settings)); } catch (e) {}
+  setVolume(document.getElementById('vol').value);
 }
 
 async function fetchStats() {
@@ -626,6 +654,8 @@ function render() {
   const lo = Math.max(0, Math.min(48, ...allP) - 2), hi = Math.min(127, Math.max(72, ...allP) + 2);
   p.left_roll.url = p.left_timeline_url; p.right_roll.url = p.right_timeline_url;
   if (p.prompt_roll) p.prompt_roll.url = p.prompt_url;
+  pairGainDb = pairGain(p);
+  setVolume(document.getElementById('vol').value);
   stage.innerHTML = `
     <div class="legend">Prompt <span style="font-weight:400;color:var(--accent)">· ${p.prompt_source || ''}</span> <span style="color:var(--faint)">${p.prompt_name || ''}</span>
       <span id="loadnote" style="color:var(--warn)"></span>

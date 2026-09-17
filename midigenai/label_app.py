@@ -356,8 +356,10 @@ class PairFactory:
                 for n in tt.notes:
                     n.start -= tail0
                 for n in tt.notes:
+                    # the roll carries the velocities the served file plays at
+                    # (scaled below), so the page's loudness estimate is right
                     notes.append({"s": round(n.start * spt, 3), "e": round((n.start + n.duration) * spt, 3),
-                                  "p": int(n.pitch), "v": int(n.velocity),
+                                  "p": int(n.pitch), "v": max(1, min(127, int(round(n.velocity * vscale)))),
                                   "d": bool(track.is_drum), "prompt": n.start < (cut_tick - tail0)})
             cont.tempos = [Tempo(time=0, qpm=tempo)]
             timeline.tempos = [Tempo(time=0, qpm=tempo)]
