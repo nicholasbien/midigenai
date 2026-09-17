@@ -41,11 +41,18 @@ from pathlib import Path
 #   judge_base.txt      the rubric: fit, then musicality, then defects
 #   judge_taste.txt     base + what the labeler's own votes revealed
 #                       (restraint over busyness, groove over scattering)
-#   judge_strict.txt    taste + "abstain rather than guess"  <- THE DEFAULT,
-#                       0.816 against the labeler, at their 0.881 ceiling
-#   judge_fit_only.txt  ablation: judge only whether it belongs to the piece
+#   judge_strict.txt    taste + "abstain rather than guess". Was the default:
+#                       0.787 on the full val corpus, but 0.632 on the user's
+#                       own Ableton clips, where its musical opinions mislead it.
+#   judge_fit_only.txt  judge only whether it belongs to the piece  <- THE DEFAULT.
+#                       One rubric for every prompt distribution: 0.752 on the
+#                       full val corpus (within noise of strict, decides more
+#                       pairs, more swap-consistent), ties strict on FMA, and
+#                       +10 points on Ableton. Picked by best worst-case across
+#                       distributions on dev halves, reported on test halves;
+#                       see evals/reward/rubric_battery/.
 PROMPT_DIR = Path(__file__).parent / "prompts"
-DEFAULT_PROMPT = "strict"
+DEFAULT_PROMPT = "fit_only"
 
 PROMPTS: dict[str, str] = {
     f.stem[len("judge_"):]: f.read_text().rstrip()
