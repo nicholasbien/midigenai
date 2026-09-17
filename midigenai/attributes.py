@@ -152,3 +152,104 @@ def family_token(names: list[str], prefix: str) -> str | None:
         if n.startswith(prefix):
             return n
     return None
+
+
+# ---------- picking an instrument at inference ---------- #
+#
+# The header's Inst_ tokens name what the finished document contains, so for
+# accompaniment "add a bass" is written as the condition's family plus
+# Inst_Bass (see data/v4_docs.py, where accompaniment headers are built from
+# condition + target). Callers speak in instrument names, not GM families, so
+# map the common ones here rather than making every caller know that an
+# electric piano is a Piano and a sax is a Reed.
+INSTRUMENT_ALIASES = {
+    "acoustic piano": "Piano",
+    "electric piano": "Piano",
+    "keys": "Piano",
+    "keyboard": "Piano",
+    "rhodes": "Piano",
+    "chromatic percussion": "ChromPerc",
+    "vibraphone": "ChromPerc",
+    "electric guitar": "Guitar",
+    "acoustic guitar": "Guitar",
+    "electric bass": "Bass",
+    "bassline": "Bass",
+    "sub": "Bass",
+    "808": "Bass",
+    "string section": "Strings",
+    "violin": "Strings",
+    "cello": "Strings",
+    "choir": "Ensemble",
+    "horns": "Brass",
+    "trumpet": "Brass",
+    "sax": "Reed",
+    "saxophone": "Reed",
+    "clarinet": "Reed",
+    "flute": "Pipe",
+    "lead": "SynthLead",
+    "synth": "SynthLead",
+    "pad": "SynthPad",
+    "synth bass": "Bass",
+    "fx": "SynthFX",
+    "sound effects": "SoundFX",
+    "percussion": "Percussive",
+    "drum": "Drums",
+    "drum kit": "Drums",
+    "beat": "Drums",
+}
+
+# Values meaning "no preference, let the model choose" rather than a family.
+# The site's playback picker sends "original", so accept that too: an unknown
+# name is an error, and a deliberate "don't care" should not look like one.
+AUTO_INSTRUMENT = {"", "auto", "any", "none", "original", "model"}
+
+
+def _norm(name: str) -> str:
+    return "".join(ch for ch in name.lower() if ch.isalnum())
+
+
+_FAMILY_BY_NAME = {_norm(f): f for f in INSTRUMENT_FAMILIES + [DRUMS]}
+_FAMILY_BY_NAME.update({_norm(k): v for k, v in INSTRUMENT_ALIASES.items()})
+
+
+def resolve_family(name: str | None) -> str | None:
+    """GM family for an instrument name, or None if it isn't one we know.
+
+    Case and separators are ignored, so "SynthLead", "synth lead" and
+    "synth_lead" all land on the same family. Returns None for both unknown
+    names and the AUTO_INSTRUMENT values, so callers that need to tell those
+    apart should check `is_auto_instrument` first.
+    """
+    if not name:
+        return None
+    return _FAMILY_BY_NAME.get(_norm(name))
+
+
+def is_auto_instrument(name: str | None) -> bool:
+    """True when the caller asked for no particular instrument."""
+    return (name or "").strip().lower() in AUTO_INSTRUMENT
+
+
+def sort_header(names: list[str]) -> list[str]:
+    """Canonical family order, as the dataset builder writes it. Stable, so
+    the order within a family (e.g. several Inst_ tokens) is preserved."""
+    rank = {p: i for i, p in enumerate(HEADER_PREFIXES)}
+    return sorted(
+        names,
+        key=lambda n: rank[next(p for p in HEADER_PREFIXES if n.startswith(p))])
+
+
+def with_instruments(names: list[str], families: list[str]) -> list[str]:
+    """`names` with its Inst_ tokens replaced by exactly `families`.
+
+    Duplicates are dropped and the result is capped at MAX_INST_TOKENS, the
+    same ceiling the builder applies, so a header written here stays in the
+    shape the model was trained on.
+    """
+    order = {f: i for i, f in enumerate(INSTRUMENT_FAMILIES + [DRUMS])}
+    unknown = [f for f in families if f not in order]
+    if unknown:
+        raise ValueError(f"not instrument families: {unknown}")
+    picked = sorted(dict.fromkeys(families), key=order.__getitem__)[:MAX_INST_TOKENS]
+    return sort_header([f"Inst_{f}" for f in picked]
+                       + [n for n in names if not n.startswith("Inst_")])
