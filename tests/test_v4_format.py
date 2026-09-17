@@ -485,3 +485,20 @@ def test_fma_is_a_source_and_keeps_its_tempo():
     assert "fma" not in TEMPO_PLACEHOLDER_SOURCES
     assert source_from_path("/x/midigenai_data/raw/fma/012345.mid") == "fma"
     assert source_from_path("/x/midigenai_data/raw/fma_small_train/012345.mid") is None
+
+
+def test_fma_placeholder_tempo_gets_no_tempo_token():
+    """MuScriptor writes exactly 120.0 when beat tracking fails (54.5% of
+    fma_small). A wrong Tempo_ token is worse than none, so fma at exactly
+    120.0 is treated as a placeholder; a real detection keeps its token, and
+    an authored source at 120 is still tagged."""
+    from symusic import Note, Score, Tempo, Track
+    from midigenai.attributes import header_for_score
+    def sc(bpm):
+        s = Score(480); s.tempos.append(Tempo(0, bpm)); tr = Track(program=0)
+        for i in range(16): tr.notes.append(Note(i * 480, 240, 60 + i % 5, 80))
+        s.tracks.append(tr); return s
+    tempo = lambda names: [n for n in names if n.startswith("Tempo_")]
+    assert tempo(header_for_score(sc(120.0), source="fma")) == []
+    assert tempo(header_for_score(sc(97.3), source="fma")) == ["Tempo_2"]
+    assert tempo(header_for_score(sc(120.0), source="lakh")) == ["Tempo_3"]

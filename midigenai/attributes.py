@@ -44,6 +44,12 @@ TEMPO_EDGES = (70, 90, 110, 130, 150, 175)   # -> buckets 0..6
 # (sampled 2026-09-16: maestro 100% at 120, giantmidi 73%; aria is built
 # the same way) -- no Tempo token for them, the header simply omits the family
 TEMPO_PLACEHOLDER_SOURCES = ("aria", "maestro", "giantmidi")
+# MuScriptor's best-effort tempo detection writes exactly 120.0 when it fails;
+# 54.5% of the fma_small transcriptions carry it (measured 2026-09-16), and
+# the music inside is at whatever tempo it really is. Treat that value as a
+# placeholder for this source only -- a real detection of 120.0 is possible
+# but indistinguishable, and a wrong Tempo_ token is worse than none.
+PLACEHOLDER_BPM_BY_SOURCE = {"fma": 120.0}
 
 SOURCES = ["lakh", "lamd", "aria", "gigamidi", "maestro", "pop909",
            "giantmidi", "user",
@@ -169,6 +175,11 @@ def tempo_tokens(score, source: str | None = None,
     placeholder source, no tempo event). An explicit `tempo` -- the DAW
     clock at inference -- wins over whatever the score says."""
     if tempo is None:
+        if source in TEMPO_PLACEHOLDER_SOURCES or score is None:
+            pass  # fall through to omission below
+        elif source in PLACEHOLDER_BPM_BY_SOURCE and len(score.tempos) and \
+                abs(score.tempos[0].qpm - PLACEHOLDER_BPM_BY_SOURCE[source]) < 1e-6:
+            source = None; score = None   # treat exactly like a placeholder source
         if source in TEMPO_PLACEHOLDER_SOURCES or score is None:
             return []
         tempo = dominant_tempo(score)
