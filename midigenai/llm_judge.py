@@ -166,7 +166,15 @@ def pair_mode(pairs_dir: Path, pid: str) -> tuple[str, int]:
     if not mp.exists():
         return "continue", 0
     m = json.loads(mp.read_text())
-    return m.get("mode", "continue"), int(m.get("n_cond_tracks", 0))
+    mode, n_cond = m.get("mode", "continue"), int(m.get("n_cond_tracks", 0))
+    # The mix leads with the DECODED condition, and the tokenizer merges
+    # same-program tracks, so the meta's count (taken before tokenization)
+    # can overstate it; the prompt file is the decoded condition as written.
+    pf = pairs_dir / f"{pid}_prompt.mid"
+    if mode == "accompany" and pf.exists():
+        from symusic import Score
+        n_cond = len(Score(str(pf)).tracks)
+    return mode, n_cond
 
 
 def render_side(pairs_dir: Path, pid: str, side: str, fmt: str) -> str | None:
