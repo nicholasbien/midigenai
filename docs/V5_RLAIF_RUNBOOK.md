@@ -18,7 +18,7 @@ One pool, one judge, one reward. Default weights: Ableton 0.5, FMA 0.25,
 val 0.25 — Ableton highest because it is the target distribution and the
 one the old judge was worst on.
 
-    python -m midigenai.prompt_pool --out evals/prompts_pool_v5 -n 1200 \
+    python -m midigenai.prompt_pool --out evals/prompts_pool_v5_noabl -n 600 \
       --source ableton=evals/prompts_ableton:0.5 \
       --source fma=~/midigenai-v4/evals/prompts_fma:0.25 \
       --source val=~/midigenai-v4/evals/prompts_heldout:0.25
@@ -27,7 +27,7 @@ one the old judge was worst on.
 512-token bar-aligned windows: dense Ableton clips need it, the others do
 not mind.
 
-    python -m midigenai.pairgen --prompts evals/prompts_pool_v5 --out evals/autolabel_v5 \
+    python -m midigenai.pairgen --prompts evals/prompts_pool_v5_noabl --out evals/autolabel_v5 \
       -n 4000 --mode continue --prompt-tokens 512 \
       --checkpoint runs/v5/ckpt_final.pt --tokenizer runs/v5/tokenizer.json --label v5
 
@@ -65,7 +65,7 @@ The 202M has SEEN the Ableton sets (165 of them were in the v4b corpus), so
 202M accompaniments on them are partly recall; v5 excludes every Ableton
 file and is clean by construction.
 
-    python -m midigenai.pairgen --prompts evals/prompts_ableton_arr \
+    python -m midigenai.pairgen --prompts ~/midigenai-v4/evals/prompts_heldout \   # run 2: evals/prompts_ableton_arr
       --out evals/autolabel_v5_acc -n 3000 --mode accompany --bars 16 \
       --checkpoint runs/v5/ckpt_final.pt --tokenizer runs/v5/tokenizer.json --label v5
     python -m midigenai.llm_judge label --pairs evals/autolabel_v5_acc/pairs \
@@ -85,9 +85,17 @@ floor.
 
 ## 5. GRPO — one run, both tasks  (DECISIONS: steps, accompany-frac)
 
+**Run 1 has NO Ableton data (user decision, 2026-09-17):** continuation
+seeds from `evals/prompts_pool_v5_noabl` (FMA 0.4 / val 0.6), accompaniment
+seeds from val `prompts_heldout`. The goal of run 1 is the fastest clean
+GRPO-vs-base comparison on v5. Ableton continuation + accompaniment seeds
+join run 2 once the accompaniment judge is re-validated on v5 pairs over
+`evals/prompts_ableton_arr` (~40 human votes). Substitute the Ableton dirs
+below for run 2.
+
     modal run midigenai/modal_grpo.py --run-name grpo_v5_001 --version v5 \
-      --reward probe_v5.json --prompts evals/prompts_pool_v5 \
-      --accompany-prompts evals/prompts_ableton_arr --reward-accompany probe_v5_acc.json \
+      --reward probe_v5.json --prompts evals/prompts_pool_v5_noabl \
+      --accompany-prompts ~/midigenai-v4/evals/prompts_heldout --reward-accompany probe_v5_acc.json \
       --accompany-frac 0.5 --bars 16 \
       --steps 1000 --prompts-per-step 8 --lr 5e-6 --beta 0.04 --eval-every 25
 
@@ -105,7 +113,7 @@ the val set (`--accompany-prompts` takes one dir — build a pool with
 
     modal volume get midigenai-runs grpo_v5_001/ckpt_001000.pt runs/grpo_v5_001/
     python -m midigenai.compare_ckpt --a runs/v5/ckpt_final.pt --b runs/grpo_v5_001/ckpt_001000.pt \
-      --tokenizer runs/v5/tokenizer.json --prompts evals/prompts_pool_v5 -n 80 \
+      --tokenizer runs/v5/tokenizer.json --prompts evals/prompts_pool_v5_noabl -n 80 \
       --probe evals/reward/probe_v5.json --device mps
 
 Then a blind A/B via the labeling hub (pairgen on the pool with
@@ -114,4 +122,4 @@ Then a blind A/B via the labeling hub (pairgen on the pool with
 scorecard against the base before anything ships:
 
     python -m midigenai.eval_checkpoint --checkpoint <ckpt> --tokenizer runs/v5/tokenizer.json \
-      --prompts evals/prompts_pool_v5 --max-new-tokens 512 --out evals/scorecards/<name>.json
+      --prompts evals/prompts_pool_v5_noabl --max-new-tokens 512 --out evals/scorecards/<name>.json
