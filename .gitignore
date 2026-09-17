@@ -64,3 +64,6 @@ evals/reward/cache/
 
 # your own Ableton clips, extracted as prompts: personal material, rebuilt from ~/Music/Ableton
 evals/prompts_ableton/
+
+# weighted RL prompt pools: symlinks into the held-out seed sets
+evals/prompts_pool*/
