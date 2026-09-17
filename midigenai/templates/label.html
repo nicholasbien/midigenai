@@ -78,6 +78,9 @@
   .files a { color: var(--accent); text-decoration: none; margin-right: 8px; white-space: nowrap; }
   .files a:hover { text-decoration: underline; }
   .files code { font-size: 11px; color: var(--muted); }
+  /* every take names itself: short pair id, side, and a download arrow */
+  .hid { float: right; font-weight: 400; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); }
+  .hid a { color: var(--accent); text-decoration: none; font-size: 13px; margin-left: 4px; }
   .buttons { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
   /* votes, by how often they are pressed: the two answers on top and big,
      then tie / both bad / skip, then transport, then the defect reports */
@@ -799,7 +802,7 @@ function render() {
       <a href="#" onclick="return downloadAs('${p.right_timeline_url}', '${p.pair_id}_take2_with_prompt.mid')">&#8681; 2 with prompt tail</a>`}
     </div>
     ${ACC ? `<div class="opt" id="opt-prompt" style="margin-bottom:10px">
-        <h3>The part being accompanied &mdash; both arrangements add to this</h3>
+        <h3>The part being accompanied &mdash; both arrangements add to this <span class="hid">${p.prompt_name || ''} <a href="#" onclick="return downloadAs('${p.prompt_url}', '${p.pair_id}_prompt.mid')">&#8681;</a></span></h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-prompt"></midi-visualizer>
         </div></div>
@@ -807,7 +810,7 @@ function render() {
       </div>` : ''}
     <div class="rows">
       <div class="opt" id="opt-left">
-        <h3>${ACC ? 'Arrangement 1' : 'Continuation 1'}</h3>
+        <h3>${ACC ? 'Arrangement 1' : 'Continuation 1'} <span class="hid">${short(p.pair_id)}·1 <a href="#" onclick="return downloadAs('${p.left_url}', '${p.pair_id}_take1.mid')" title="download take 1">&#8681;</a></span></h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-left"></midi-visualizer>
           <div class="shade" id="shade-left"></div><div class="cutline" id="cut-left"></div>
@@ -819,7 +822,7 @@ function render() {
         <div class="chips" id="flags-left"></div>
       </div>
       <div class="opt" id="opt-right">
-        <h3>${ACC ? 'Arrangement 2' : 'Continuation 2'}</h3>
+        <h3>${ACC ? 'Arrangement 2' : 'Continuation 2'} <span class="hid">${short(p.pair_id)}·2 <a href="#" onclick="return downloadAs('${p.right_url}', '${p.pair_id}_take2.mid')" title="download take 2">&#8681;</a></span></h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-right"></midi-visualizer>
           <div class="shade" id="shade-right"></div><div class="cutline" id="cut-right"></div>
@@ -943,6 +946,9 @@ async function vote(choice) {
   }
   loadNext();
 }
+
+// the tail of a pair id is enough to tell pairs apart on screen
+const short = (id) => String(id || '').split('_').pop().slice(-8);
 
 // Download through the page so the saved name says take 1 / take 2: the
 // server's own file names carry the a/b identity the blind hides.
