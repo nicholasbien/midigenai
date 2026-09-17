@@ -89,7 +89,7 @@
     body { margin: 6px auto; padding: 0 8px; }
     /* both continuations have to fit one screen: drop the prose, the chrome,
        and the built-in transport (the roll already shows position) */
-    h1, .sub, .legend, .hint, .statusbar, .eid { display: none; }
+    h1, .sub, .legend, .hint, .eid { display: none; }
     midi-player { display: none; }
     .card { padding: 8px; }
     .opt { padding: 8px; margin-bottom: 6px; }
@@ -113,6 +113,7 @@
   /* voice control: one pill in the status bar, plus what was last heard */
   .voice { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
   #voicebtn { padding: 4px 9px; font-size: 12px; }
+  #morebtn { display: none; }   /* phone only: opens the folded controls */
   #voicebtn.on { border-color: var(--playing); color: var(--playing); }
   #voicebtn.err { border-color: var(--warn-br); color: var(--warn); }
   #heard { color: var(--faint); font-style: italic; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -123,7 +124,10 @@
   .ask b { color: var(--accent); }
   .settings { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
   .settings input[type=number] { width: 52px; font-size: 12px; }
-  @media (max-width: 760px) { .settings, #heard { display: none; } }
+  /* tap-to-listen: the phone fallback when the recognizer will not start on
+     its own (iOS wants a touch behind the first start) */
+  #listenbtn { display: none; margin-top: 8px; padding: 12px 18px; font-size: 16px; border-color: var(--playing); color: var(--playing); }
+  #listenbtn.show { display: inline-block; }
   /* seed upload: a file picker in the status bar, or drop a .mid anywhere */
   .seed { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
   /* source selector: this server's sets, then the other label servers on the machine */
@@ -136,6 +140,31 @@
   body.dropping::after { content: "drop the .mid to seed the next pairs"; position: fixed; inset: 0;
     display: flex; align-items: center; justify-content: center; font-size: 20px;
     background: var(--scrim); color: var(--accent); border: 3px dashed var(--accent); z-index: 60; }
+  #volwrap { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+  /* phone rules last: same specificity as the base rules, so order decides */
+  @media (max-width: 760px) {
+    /* phone: the top row keeps source, mic and theme; volume, settings, seed
+       upload and counts sit behind the gear, stacked full-width when open */
+    .statusbar { margin: 4px 0; gap: 8px; flex-wrap: wrap; align-items: center; }
+    #volwrap, .settings, .seed, #count, #queue { display: none; }
+    body.more #volwrap, body.more .settings, body.more .seed { display: flex; width: 100%; }
+    body.more #count, body.more #queue { display: inline; font-size: 13px; }
+    #volwrap { font-size: 14px !important; } #volwrap input { flex: 1; }
+    .settings { flex-direction: column; align-items: stretch; gap: 10px; padding: 8px 0; border-top: 1px solid var(--card-br); }
+    .settings label, .seed label { font-size: 14px; display: flex; align-items: center; gap: 8px; }
+    .settings input[type=number], .settings select, .seed input[type=number] { font-size: 16px; padding: 4px; }
+    .settings input[type=checkbox] { width: 20px; height: 20px; }
+    .seed { flex-direction: column; align-items: stretch; gap: 8px; }
+    .seed input[type=file] { max-width: 100%; font-size: 14px; }
+    #heard { display: block; max-width: 100%; white-space: normal; font-size: 12px; }
+    #voicebtn, #morebtn, #theme { padding: 8px 12px; font-size: 14px; }
+    #morebtn { display: inline-block; }
+    /* a long set name must shrink the select, not widen the page */
+    #source { flex: 1; min-width: 0; width: 100%; font-size: 14px; padding: 8px 6px; }
+    .statusbar > label { min-width: 0; }
+    .voice { width: 100%; justify-content: flex-end; }
+    body { overflow-x: hidden; }
+  }
 </style>
 </head>
 <body>
@@ -143,9 +172,9 @@
   <div class="sub">Each pair plays itself: prompt + take 1, a short pause, prompt + take 2, then it waits for your call. Vote by key, click, or voice.
     <kbd>1</kbd> take 1 &nbsp;<kbd>2</kbd> take 2 &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip
     &nbsp;·&nbsp; flags (before voting): <kbd>q</kbd>/<kbd>w</kbd> degrades &nbsp;<kbd>e</kbd>/<kbd>r</kbd> too long
-    &nbsp;·&nbsp; say “one”, “two”, “tie”, “both bad”, “skip”, “play again”, “play 1 again”, “next one”, “pause”, “resume”, “stop”, “start over”</div>
+    &nbsp;·&nbsp; say “one”, “two”, “tie”, “both bad”, “skip”, “play again”, “play 1 again”, “next one”, “pause”, “resume”, “stop”, “start over” (on a phone the mic opens after both takes have played)</div>
   <div class="statusbar" style="align-items:center">
-    <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)">
+    <label id="volwrap">
       volume <input id="vol" type="range" min="-20" max="24" step="1" value="0"
         oninput="setVolume(this.value)" style="width:150px">
       <span id="voldb">0 dB</span>
@@ -154,15 +183,18 @@
       <label><input type="checkbox" id="replayprompt" onchange="saveSettings()"> prompt before take 2</label>
       <label>pause <input type="number" id="pausems" min="0" max="5000" step="100" onchange="saveSettings()"> ms</label>
       <label title="one gain per pair from its velocities and density; playback only"><input type="checkbox" id="normalize" onchange="saveSettings()"> even out loudness</label>
+      <label title="always: the mic stays open, also while the takes play. after playback: it opens once both takes have played (phones; keeps the mic away from the music)">voice
+        <select id="voicemode" onchange="Voice.setMode(this.value)"><option value="always">always on</option><option value="after">after playback</option></select></label>
     </div>
     <div class="voice">
       <span id="heard"></span>
       <button id="voicebtn" onclick="Voice.toggle()" title="voice votes (v)">🎤 voice off</button>
+      <button id="morebtn" onclick="document.body.classList.toggle('more')" title="volume, settings, seed upload">⚙</button>
       <button id="theme" onclick="toggleTheme()" title="light / dark (n)">🌙</button>
     </div>
   </div>
   <div class="statusbar" style="align-items:center">
-    <label style="display:flex;gap:6px;align-items:center">source
+    <label style="display:flex;gap:6px;align-items:center;flex:1">source
       <select id="source" onchange="switchSource(this)"><option>…</option></select><span id="srcmode"></span></label>
   </div>
   <div class="statusbar"><span id="count">0 labeled this session</span>
@@ -394,6 +426,7 @@ function setPhase(p) {
   }
   const pb = document.getElementById('pausebtn');
   if (pb) pb.innerHTML = p === 'playing' ? '&#10074;&#10074; pause<kbd>space</kbd>' : '&#9654; resume<kbd>space</kbd>';
+  Voice.onPhase(p);
   Voice.paint();
 }
 
@@ -513,33 +546,75 @@ function stopPlayback() {
 // because "one" is usually transcribed as "1". A transcript naming both
 // takes without "first"/"second" is ambiguous and ignored. ----
 const Voice = {
-  rec: null, enabled: false, active: false, err: '',
+  rec: null, enabled: false, active: false, err: '', wantsTap: false, fails: 0,
   supported: !!(window.SpeechRecognition || window.webkitSpeechRecognition) && window.isSecureContext,
+  // 'always': one continuous recognizer, restarted whenever it stops (desktop).
+  // 'after': a one-shot recognizer opened when both takes have played and the
+  // page is waiting, closed when playback starts. Phones default to this:
+  // iOS Safari does not really do continuous recognition, Android beeps on
+  // every restart, and an open mic makes iOS route the music to the earpiece.
+  mode: 'always',
+  isPhone: matchMedia('(hover: none)').matches,
   init() {
-    if (!this.supported) return;
-    let on = false;
-    try { on = localStorage.getItem('labelVoice') === 'on'; } catch (e) {}
-    if (on) this.start();
+    if (!this.supported) { this.paint(); return; }
+    let on = false, mode = null;
+    try { on = localStorage.getItem('labelVoice') === 'on'; mode = localStorage.getItem('labelVoiceMode'); } catch (e) {}
+    this.mode = mode || (this.isPhone ? 'after' : 'always');
+    const sel = document.getElementById('voicemode');
+    if (sel) sel.value = this.mode;
+    // remembered on: the recognizer is created now and opened at the first
+    // touch (phones refuse a start with no gesture behind it)
+    if (on) { this.enabled = true; if (!this.isPhone && this.mode === 'always') this.open(); }
+    this.paint();
+  },
+  setMode(m) {
+    this.mode = m === 'after' ? 'after' : 'always';
+    try { localStorage.setItem('labelVoiceMode', this.mode); } catch (e) {}
+    this.close();
+    if (this.enabled) this.onPhase(phase);
     this.paint();
   },
   toggle() {
-    if (!this.supported) { note('voice needs Chrome/Safari on localhost or https'); return; }
-    if (this.enabled) this.stop(); else this.start();
+    if (!this.supported) {
+      note(window.isSecureContext ? 'this browser has no speech recognition (try Chrome or Safari)'
+                                  : 'voice needs https (the tunnel link) or localhost');
+      return;
+    }
+    if (this.enabled) { this.enabled = false; this.close(); }
+    else { this.enabled = true; this.err = ''; this.fails = 0; this.onPhase(phase); }
     try { localStorage.setItem('labelVoice', this.enabled ? 'on' : 'off'); } catch (e) {}
     setPhase(phase);
   },
-  start() {
+  // called from the first touch on a phone: open from inside the gesture
+  onGesture() {
+    if (this.enabled && !this.active && (this.mode === 'always' || phase === 'awaiting')) this.open();
+  },
+  // "tap, then say 1 or 2": the user's touch is what iOS needs
+  listenNow() { this.wantsTap = false; this.fails = 0; this.open(); this.paint(); },
+  onPhase(p) {
+    if (!this.enabled || !this.supported) return;
+    if (this.mode === 'always') { if (!this.active) this.open(); return; }
+    if (p === 'awaiting') this.open();
+    else this.close();
+  },
+  shouldListen() {
+    return this.enabled && (this.mode === 'always' || phase === 'awaiting');
+  },
+  open() {
+    if (this.active || !this.supported) return;
     const R = window.SpeechRecognition || window.webkitSpeechRecognition;
     const rec = new R();
     rec.lang = 'en-US';
-    rec.continuous = true;
+    rec.continuous = this.mode === 'always';
     rec.interimResults = false;
     rec.maxAlternatives = 3;
-    rec.onstart = () => { this.active = true; this.err = ''; this.paint(); };
+    let heardSomething = false;
+    rec.onstart = () => { this.active = true; this.err = ''; this.wantsTap = false; this.paint(); };
     rec.onresult = (ev) => {
       for (let i = ev.resultIndex; i < ev.results.length; i++) {
         const r = ev.results[i];
         if (!r.isFinal) continue;
+        heardSomething = true;
         // try every alternative until one parses: "won" vs "one" etc.
         let handled = false;
         for (let k = 0; k < r.length && !handled; k++) handled = this.hear(r[k].transcript);
@@ -547,38 +622,61 @@ const Voice = {
       }
     };
     rec.onerror = (ev) => {
-      // no-speech / aborted are routine on a quiet room; everything else sticks
+      // no-speech / aborted are routine; everything else sticks on the button
       if (ev.error === 'no-speech' || ev.error === 'aborted') return;
       this.err = ev.error;
-      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') this.enabled = false;
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        // iOS: a start with no touch behind it lands here — offer the tap
+        if (this.isPhone && !this.wantsTap && this.fails < 1) this.wantsTap = true;
+        else this.enabled = false;
+      }
       this.paint();
     };
     rec.onend = () => {
-      // the recognizer stops itself after silence or a timeout; keep it up
       this.active = false;
-      if (this.enabled) setTimeout(() => { try { rec.start(); } catch (e) {} }, 250);
+      if (this.rec !== rec) return;                  // closed on purpose
+      this.rec = null;
+      if (!this.shouldListen()) { this.paint(); return; }
+      // the recognizer stops itself after silence or a timeout; reopen, but
+      // back off when it keeps ending with nothing (a phone with the mic
+      // blocked ends instantly and would otherwise loop)
+      this.fails = heardSomething ? 0 : this.fails + 1;
+      if (this.fails >= 6) { this.wantsTap = true; this.paint(); return; }
+      const delay = Math.min(2000, 250 * Math.pow(2, Math.max(0, this.fails - 1)));
+      setTimeout(() => { if (this.shouldListen() && !this.active) this.open(); }, delay);
       this.paint();
     };
     this.rec = rec;
-    this.enabled = true;
-    try { rec.start(); } catch (e) { this.err = e.message; }
+    try { rec.start(); }
+    catch (e) {
+      // InvalidStateError when a previous one is still winding down; a
+      // security error on iOS without a gesture — the tap button covers both
+      this.rec = null;
+      this.wantsTap = true;
+    }
     this.paint();
   },
-  stop() {
-    this.enabled = false;
-    if (this.rec) { try { this.rec.onend = null; this.rec.stop(); } catch (e) {} }
-    this.rec = null; this.active = false;
+  close() {
+    const rec = this.rec;
+    this.rec = null;
+    if (rec) { try { rec.abort(); } catch (e) { try { rec.stop(); } catch (e2) {} } }
+    this.active = false;
+    this.wantsTap = false;
     this.paint();
   },
   paint() {
     const b = document.getElementById('voicebtn');
-    if (!b) return;
-    b.classList.toggle('on', this.enabled && this.active && !this.err);
-    b.classList.toggle('err', !!this.err);
-    b.textContent = !this.supported ? '🎤 voice n/a'
-      : !this.enabled ? '🎤 voice off'
-      : this.err ? `🎤 ${this.err}`
-      : this.active ? '🎤 listening' : '🎤 starting…';
+    if (b) {
+      b.classList.toggle('on', this.enabled && this.active && !this.err);
+      b.classList.toggle('err', !!this.err);
+      b.textContent = !this.supported ? '🎤 voice n/a'
+        : !this.enabled ? '🎤 voice off'
+        : this.err ? `🎤 ${this.err === 'not-allowed' ? 'mic blocked' : this.err}`
+        : this.active ? '🎤 listening'
+        : this.mode === 'after' ? '🎤 after playback' : '🎤 starting…';
+    }
+    const l = document.getElementById('listenbtn');
+    if (l) l.classList.toggle('show', this.enabled && !this.active && (this.wantsTap || (this.isPhone && phase === 'awaiting')));
   },
   show(text, action) {
     const h = document.getElementById('heard');
@@ -694,6 +792,7 @@ function render() {
       </div>
     </div>
     <div class="ask" id="ask"></div>
+    <div style="text-align:center"><button type="button" id="listenbtn" onclick="Voice.listenNow()">🎤 tap, then say 1 or 2</button></div>
     <div class="buttons">
       <button onclick="startOver()">&#8635; start over<kbd>enter</kbd></button>
       <button id="pausebtn" onclick="togglePause()">&#10074;&#10074; pause<kbd>space</kbd></button>
@@ -754,6 +853,7 @@ function markInteracted(e) {
   const o = document.getElementById('tapstart');
   if (o) o.style.display = 'none';
   setVolume(localStorage.getItem('labelVolumeDb0') ?? 0);
+  Voice.onGesture();
   if (current) playSequence('both');
 }
 document.addEventListener('keydown', markInteracted, { once: true });
@@ -858,6 +958,7 @@ document.addEventListener('drop', (e) => {
 });
 
 applyTheme(document.documentElement.getAttribute('data-theme') || 'light');
+if (location.hash === '#more') document.body.classList.add('more');   // link straight to the folded controls
 loadSettings();
 Voice.init();
 const savedVol = localStorage.getItem('labelVolumeDb0') ?? 0;
