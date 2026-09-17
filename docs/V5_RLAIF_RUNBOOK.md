@@ -95,7 +95,7 @@ below for run 2.
 
     modal run midigenai/modal_grpo.py --run-name grpo_v5_001 --version v5 \
       --reward probe_v5.json --prompts evals/prompts_pool_v5_noabl \
-      --accompany-prompts ~/midigenai-v4/evals/prompts_heldout --reward-accompany probe_v5_acc.json \
+      --accompany-prompts evals/prompts_accomp_v5_train --reward-accompany probe_v5_acc.json \
       --accompany-frac 0.5 --bars 16 \
       --steps 1000 --prompts-per-step 8 --lr 5e-6 --beta 0.04 --eval-every 25
 
@@ -116,7 +116,13 @@ the val set (`--accompany-prompts` takes one dir — build a pool with
       --tokenizer runs/v5/tokenizer.json --prompts evals/prompts_pool_v5_noabl -n 80 \
       --probe evals/reward/probe_v5.json --device mps
 
-Then a blind A/B via the labeling hub (pairgen on the pool with
+**Held-out for the A/B:** `evals/prompts_ab_v5_heldout` (55 val + 25 FMA seeds
+removed from the GRPO pool; the 55 val files are also removed from the
+accompaniment seeds `evals/prompts_accomp_v5_train`). Run the blind A/B on
+THESE, never on pool prompts — otherwise the comparison is on prompts the
+policy trained on.
+
+Then a blind A/B via the labeling hub (pairgen on prompts_ab_v5_heldout with
 `--checkpoint runs/v5/ckpt_final.pt` vs the GRPO checkpoint through
 `label_app --checkpoint-b`, or two pairgen runs merged), and the 512-token
 scorecard against the base before anything ships:
