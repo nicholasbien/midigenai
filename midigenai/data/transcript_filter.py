@@ -90,7 +90,11 @@ def cut_tail(score, max_seconds: float):
     cut_tick = int(max_seconds * bpm / 60 * tpq)
     out = score.copy()
     for track in out.tracks:
-        track.notes = [n for n in track.notes if n.start < cut_tick]
+        kept = [n for n in track.notes if n.start < cut_tick]
+        for n in kept:                      # a note that starts before the cut
+            if n.end > cut_tick:            # must not sound past it either
+                n.duration = cut_tick - n.start
+        track.notes = kept
     return out
 
 
