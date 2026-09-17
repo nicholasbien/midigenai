@@ -735,7 +735,7 @@ if (matchMedia('(hover: none)').matches) {
 }
 
 async function vote(choice) {
-  if (!current) return;
+  if (!current) { note('no pair on screen yet — that ' + choice + ' was not recorded'); return; }
   const p = current;
   seqToken++;           // cancel a running sequence before the players go away
   paused = null; seq = null; lastSide = null;
