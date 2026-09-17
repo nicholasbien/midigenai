@@ -61,3 +61,6 @@ evals/autolabel*/pairs/
 
 # per-layer probe feature caches: hundreds of MB, rebuilt from pairs + checkpoint
 evals/reward/cache/
+
+# your own Ableton clips, extracted as prompts: personal material, rebuilt from ~/Music/Ableton
+evals/prompts_ableton/
