@@ -331,10 +331,8 @@ class Generator:
         if source is not None and midi_path is not None:
             override("Source_", [f"Source_{source}"])
         # canonical family order, as the builder writes it
-        from .attributes import HEADER_PREFIXES
-        rank = {p: i for i, p in enumerate(HEADER_PREFIXES)}
-        names.sort(key=lambda n: rank[next(p for p in HEADER_PREFIXES if n.startswith(p))])
-        return self.sp.header_ids_for(self.tokenizer, names)
+        from .attributes import sort_header
+        return self.sp.header_ids_for(self.tokenizer, sort_header(names))
 
     def count_bars(self, ids) -> int:
         return sum(1 for t in ids if t == self.bar_id) if self.v4 else 0

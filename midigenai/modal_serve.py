@@ -47,14 +47,51 @@ DEFAULT_VERSION = "v4"
 # stray query param can't make the server look for an arbitrary path.
 SERVED_VERSIONS = {
     "v4": "v4",
+    "v4-large": "v4-large",
     "v3": "v3",
     "v2": "v2-100m",
 }
+
+# Volume subfolders that can answer /api/accompany: accompaniment is a v4
+# document type (Task_accomp + SEP), and v2/v3 were never trained on it.
+# These are SERVED_VERSIONS *values*, since that is what resolve_version
+# hands back -- for the v4 line the key and the folder are the same string.
+# Kept next to the allowlist so the server and the site's mode lock can't
+# drift apart; the health endpoint publishes it.
+ACCOMPANIMENT_VERSIONS = ("v4", "v4-large")
 
 
 def resolve_version(name: str | None) -> str:
     """Map a `model=` value to a volume subfolder, falling back to the default."""
     return SERVED_VERSIONS.get((name or "").strip(), SERVED_VERSIONS[DEFAULT_VERSION])
+
+
+def accompaniment_header(window, cond_index: int, instrument: str | None = None):
+    """(header token names, family asked for) for an accompaniment document.
+
+    The v4 header names what the finished document contains -- condition plus
+    target, the way data/v4_docs.py builds it -- so asking for a part means
+    listing the condition's own family alongside the requested one. With no
+    request the header keeps the families the upload carries, which is what
+    the model is left to interpret.
+
+    Module level, and taking the window rather than reading it off the class,
+    so the header the model is steered with can be checked without a GPU.
+    """
+    from midigenai.attributes import (
+        family_of, header_for_score, is_auto_instrument, resolve_family,
+        with_instruments,
+    )
+
+    names = header_for_score(window)
+    if is_auto_instrument(instrument):
+        return names, None
+    family = resolve_family(instrument)
+    if family is None:
+        raise ValueError(f"unknown instrument {instrument!r}")
+    cond_track = window.tracks[cond_index]
+    return with_instruments(
+        names, [family_of(cond_track.program, cond_track.is_drum), family]), family
 
 app = modal.App("midigenai-serve")
 
@@ -283,6 +320,7 @@ class MidiGen:
         top_k: int = 50,
         n_samples: int = 1,
         tempo_bpm: float | None = None,
+        instrument: str | None = None,
     ) -> dict:
         """Write parts to go *with* the upload rather than after it.
 
@@ -291,12 +329,18 @@ class MidiGen:
         stacked. The upload is narrowed to its densest track, since the model
         is trained to answer a single part, and each returned MIDI is that
         condition overlaid with one generated answer.
+
+        `instrument` asks for a particular part -- "bass", "drums", "piano",
+        or any name attributes.resolve_family understands. It is written into
+        the attribute header, which names what the finished document holds,
+        so the request goes in as the condition's own family plus the one
+        asked for. Left unset, the header keeps the families the upload
+        already has and the model picks the part itself.
         """
         from io import BytesIO
 
         from symusic import Score
 
-        from midigenai.attributes import header_for_score
         from midigenai.data.v4_docs import _subscore, _window, bar_edges, trim_leading
         from midigenai.generate import densest_track, overlay
         from midigenai.tokenizer import normalize_drums
@@ -324,8 +368,9 @@ class MidiGen:
             raise ValueError("the chosen track has no notes in the first bars")
 
         cond_ids = self.gen.tokenizer(condition).ids
-        header = self.gen.sp.header_ids_for(
-            self.gen.tokenizer, header_for_score(window))
+
+        names, family = accompaniment_header(window, cond_index, instrument)
+        header = self.gen.sp.header_ids_for(self.gen.tokenizer, names)
 
         midis, note_counts = [], []
         for _ in range(n_samples):
@@ -348,6 +393,8 @@ class MidiGen:
             "track_names": [tr.name or "" for tr in window.tracks],
             "condition_notes": sum(len(tr.notes) for tr in condition.tracks),
             "generated_notes": note_counts,
+            "instrument": family,
+            "header": names,
             "tempo_bpm": tempo_bpm,
             "window_seconds": bars * beats_per_bar * 60.0 / tempo_bpm,
             "midi": midis[0],

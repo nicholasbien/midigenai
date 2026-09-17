@@ -33,6 +33,30 @@ for note in gen.stream_notes(prompt, tempo_bpm=120):
     ...  # {pitch, start, end, velocity, program}, emitted as the model plays
 ```
 
+### Accompaniment
+
+Continuation answers "what comes next"; accompaniment answers "what else is
+playing" — a new part over the same bars as the input, rather than after it.
+v4 only, since it is a v4 document type.
+
+Which instrument the new part uses is set through the attribute header. The
+header names what the finished piece contains — the condition's own family
+plus whatever is being added — so "put a bass under this piano" is:
+
+```python
+cond = gen.tokenizer(condition_score).ids           # the part to play along with
+header = gen.make_header(instruments=["Piano", "Bass"])
+new_part = list(gen.accompany(cond, bars=8, header=header))
+```
+
+Leave `Inst_` out of the header and the model chooses the part itself.
+Families are the GM groups in `attributes.INSTRUMENT_FAMILIES` plus `Drums`;
+`attributes.resolve_family` maps everyday names ("bass", "electric piano",
+"sax", "drum kit") onto them.
+
+Over HTTP the same choice is `instrument=` on `/api/accompany`
+(`instrument=bass|drums|piano|...`, omitted or `auto` to leave it open).
+
 ## Live jamming
 
 Jamming with the model now lives in [fluidclaude](https://github.com/nicholasbien/fluidclaude):
@@ -59,9 +83,17 @@ and [docs/jam-timing.md](docs/jam-timing.md). The Live socket client moved to
 | Tag | Params | Final loss | Best sampling | HF |
 |---|---|---|---|---|
 | `v4` ← default | 113M (`medium`) | 0.64 val | t=1.0, top_k=50 | [tree/main/v4](https://huggingface.co/nicholasbien/midigenai/tree/main/v4) |
+| `v4-large` | 202M (`large`) | — | t=1.0, top_k=50 (not re-tuned) | [tree/main/v4-large](https://huggingface.co/nicholasbien/midigenai/tree/main/v4-large) |
 
 Earlier versions stay on the Hub and load with `load_from_hub(version=...)`
 or `MIDIGENAI_VERSION`, but v4 is the one to use.
+
+`v4-large` is the same tokenizer, vocabulary and document types at the 200M
+`large` config (d_model 1024, 12 layers, 16 heads), trained to 180k steps. It
+is offered alongside v4 rather than as the default: it has not been through
+the same sampling sweep or judge evaluation, so its sliders start at v4's
+settings. The Hub checkpoint carries weights only, where `v4`'s also carries
+optimizer state — hence the smaller file for the bigger model.
 
 ## Performance
 
