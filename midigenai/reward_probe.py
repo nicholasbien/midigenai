@@ -50,6 +50,23 @@ def _layer_module(model, name: str):
     raise ValueError(f"unknown layer {name!r}: expected 'norm' or 'block<N>'")
 
 
+def portable_path(path) -> str:
+    """An absolute path with the home directory written back as `~`.
+
+    Specs and scorecards record which checkpoint produced them, and a
+    resolved path bakes one machine's home directory into a file that gets
+    committed. `~` still points at the same checkpoint on the machine that
+    wrote it, and names nobody on any other. Nothing loads a spec by this
+    field -- grpo.py verifies the checkpoint by content hash -- so it is
+    provenance, and provenance does not need a username in it.
+    """
+    resolved = Path(path).resolve()
+    try:
+        return "~/" + str(resolved.relative_to(Path.home()))
+    except ValueError:
+        return str(resolved)
+
+
 MIN_CONT_TOKENS = 8      # a continuation shorter than this is not worth a row
 
 
@@ -268,7 +285,7 @@ def fit(args) -> None:
     h = hashlib.sha256()
     with open(args.checkpoint, "rb") as fh:            # 8 MB is plenty to identify
         h.update(fh.read(8 << 20))
-    spec = {"kind": "probe", "checkpoint": str(Path(args.checkpoint).resolve()),
+    spec = {"kind": "probe", "checkpoint": portable_path(args.checkpoint),
             "layers": list(layers),
             # corpus_v5 moves to a 598-token vocab and every musical id shifts;
             # a probe fitted on 590-vocab activations must never score a

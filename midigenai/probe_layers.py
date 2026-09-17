@@ -40,7 +40,7 @@ from pathlib import Path
 import numpy as np
 
 from midigenai.reward_align import fit_bt
-from midigenai.reward_probe import fit_to_context
+from midigenai.reward_probe import fit_to_context, portable_path
 
 
 def _labels(path: Path) -> dict[str, str]:
@@ -209,7 +209,7 @@ def confirm(a) -> None:
         h = hashlib.sha256()
         with open(ck, "rb") as fh:
             h.update(fh.read(8 << 20))
-        spec = {"kind": "probe", "checkpoint": str(Path(ck).resolve()), "layers": layers, "l2": a.l2,
+        spec = {"kind": "probe", "checkpoint": portable_path(ck), "layers": layers, "l2": a.l2,
                 "weights": w.tolist(), "diff_std": sd.tolist(),
                 "heldout_accuracy": acc, "train_accuracy": train,
                 "n_pairs": int(n), "n_prompt_groups": len(groups),
