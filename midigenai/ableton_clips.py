@@ -60,7 +60,7 @@ TPQ = 480
 
 # what the other session applied to its 341 clips (58 excluded), plus the
 # jam harness's own answer lanes
-EXCLUDE = re.compile(r"claude|pilot|_gen|mcp|midigen|openmuse|\bmodel\b", re.I)
+EXCLUDE = re.compile(r"claude|pilot|_gen|mcp|midigen|openmuse|\bmodel\b|test_midi|midi_test", re.I)
 
 
 def _tempo(root) -> float:
