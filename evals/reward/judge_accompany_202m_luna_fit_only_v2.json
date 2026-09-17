@@ -1,0 +1,164 @@
+{
+ "model": "gpt-5.6-luna",
+ "format": "notes",
+ "prompt": "fit_only",
+ "split": "all",
+ "n": 15,
+ "n_decided": 13,
+ "agreement_with_human": 0.7692307692307693,
+ "swap_consistency": 0.8666666666666667,
+ "position_bias_pick_first": 0.5333333333333333,
+ "tie_rate": 0.1333333333333333,
+ "results": [
+  {
+   "pair_id": "20260916114026_96eed2a4",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Arrangement 1 mirrors the prompt\u2019s chromatic pitches, register, and rhythmic tex"
+  },
+  {
+   "pair_id": "20260916114337_cdb4bd4a",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 matches the part\u2019s harmony, register, sustained density, and restr"
+  },
+  {
+   "pair_id": "20260916114208_de38814a",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 matches harmony and orchestral texture; arrangement 2 is rhythmica"
+  },
+  {
+   "pair_id": "20260916114234_d938e6e8",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Adds coherent upper-register F-sharp-minor harmony while preserving the prompt's"
+  },
+  {
+   "pair_id": "20260916114037_09ffb59f",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 preserves the B-centered harmony, steady subdivision, register, an"
+  },
+  {
+   "pair_id": "20260916113934_ccadd9fe",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 reinforces the prompt\u2019s F\u266f/D/A harmony with matching bass motion a"
+  },
+  {
+   "pair_id": "20260916114121_d95b428c",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 supplies coherent harmonic motion and varied bass support for the "
+  },
+  {
+   "pair_id": "20260916114004_c0ea4e2e",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 closely reinforces the melody\u2019s pitches, register, harmony, and rh"
+  },
+  {
+   "pair_id": "20260916113944_65abf097",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 follows the prompt\u2019s harmonic bass movement and matches its D-mino"
+  },
+  {
+   "pair_id": "20260916114417_f4ff559b",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 reinforces the prompt\u2019s harmony, voicing, groove, and sustained ac"
+  },
+  {
+   "pair_id": "20260916114405_5a193e8a",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 matches part\u2019s restrained density, register, harmony, and sustaine"
+  },
+  {
+   "pair_id": "20260916114151_5372f90b",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 reinforces the part's C/F harmony with compatible sustained chord "
+  },
+  {
+   "pair_id": "20260916114044_66f88c97",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Arrangement 1 reinforces the established harmony, register, density, and rhythmi"
+  },
+  {
+   "pair_id": "20260916114252_3f1a4298",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 maintains a consistent low-register ostinato and subdivision suppo"
+  },
+  {
+   "pair_id": "20260916113958_cb1cc6ee",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Arrangement 2 preserves the prompt's melody, rhythm, register, and harmonic mate"
+  }
+ ]
+}

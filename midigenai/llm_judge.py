@@ -77,7 +77,7 @@ GM_DRUMS = {35: "Kick", 36: "Kick", 37: "Rim", 38: "Snare", 39: "Clap", 40: "Sna
             51: "Ride", 53: "Bell", 55: "Splash", 57: "Crash", 59: "Ride"}
 
 
-def to_notes(midi_path: Path, max_bars: int = 12) -> str | None:
+def to_notes(midi_path: Path, max_bars: int = 12, tracks: slice | None = None) -> str | None:
     """Bar-by-bar note list: unambiguous where our ABC is not.
 
     midi2abc renders machine-generated polyphony as walls of tied chord
@@ -100,7 +100,8 @@ def to_notes(midi_path: Path, max_bars: int = 12) -> str | None:
     bpm = sc.tempos[0].qpm if len(sc.tempos) else 120.0
 
     bars: dict[int, list[str]] = {}
-    for track in sc.tracks:
+    chosen = list(sc.tracks)[tracks] if tracks is not None else sc.tracks
+    for track in chosen:
         for n in track.notes:
             beat = n.start / tpq
             bar = int(beat // beats_per_bar)
@@ -142,11 +143,41 @@ def to_abc(midi_path: Path) -> str | None:
     return text or None
 
 
-def build_prompt(prompt_abc: str, a_abc: str, b_abc: str) -> str:
+def build_prompt(prompt_abc: str, a_abc: str, b_abc: str, mode: str = "continue") -> str:
+    if mode == "accompany":
+        # The judge is shown the part and, separately, ONLY the parts each
+        # candidate added, on the same bar numbering. Before this it was
+        # shown the full mix and had to subtract the part from it in its
+        # head to find what the model wrote.
+        return (f"PART (already playing; identical in both arrangements):\n{prompt_abc}\n\n"
+                f"ARRANGEMENT 1 — the parts ADDED alongside it (same bar numbers):\n{a_abc}\n\n"
+                f"ARRANGEMENT 2 — the parts ADDED alongside it (same bar numbers):\n{b_abc}\n\n"
+                "Which arrangement's added parts fit the part better? JSON only.")
     return (f"PROMPT:\n{prompt_abc}\n\n"
             f"CONTINUATION 1:\n{a_abc}\n\n"
             f"CONTINUATION 2:\n{b_abc}\n\n"
             "Which continuation is better? JSON only.")
+
+
+def pair_mode(pairs_dir: Path, pid: str) -> tuple[str, int]:
+    """(mode, number of condition tracks) from the pair's meta; continuation
+    pairs have no meta field and no condition tracks in their side files."""
+    mp = pairs_dir / f"{pid}.json"
+    if not mp.exists():
+        return "continue", 0
+    m = json.loads(mp.read_text())
+    return m.get("mode", "continue"), int(m.get("n_cond_tracks", 0))
+
+
+def render_side(pairs_dir: Path, pid: str, side: str, fmt: str) -> str | None:
+    """A candidate as the judge should see it: the whole file for a
+    continuation; only the added tracks for an accompaniment (pairgen writes
+    the mix with the condition tracks first, then the generated ones)."""
+    mode, n_cond = pair_mode(pairs_dir, pid)
+    path = pairs_dir / f"{pid}_{side}.mid"
+    if mode == "accompany" and fmt == "notes" and n_cond:
+        return to_notes(path, tracks=slice(n_cond, None))
+    return render(path, fmt)
 
 
 def ask(client, model: str, user: str, temperature: float = 0.0,
@@ -170,10 +201,11 @@ def ask(client, model: str, user: str, temperature: float = 0.0,
     return (w if w in ("1", "2", "tie") else "tie"), str(d.get("reason", ""))[:80]
 
 
-def judge_pair(client, model, prompt_abc, a_abc, b_abc, system=None) -> dict:
+def judge_pair(client, model, prompt_abc, a_abc, b_abc, system=None,
+               mode: str = "continue") -> dict:
     """Judged twice with the sides swapped; a stable judge gives mirrored answers."""
-    w1, r1 = ask(client, model, build_prompt(prompt_abc, a_abc, b_abc), system=system)
-    w2, r2 = ask(client, model, build_prompt(prompt_abc, b_abc, a_abc), system=system)
+    w1, r1 = ask(client, model, build_prompt(prompt_abc, a_abc, b_abc, mode), system=system)
+    w2, r2 = ask(client, model, build_prompt(prompt_abc, b_abc, a_abc, mode), system=system)
     flip = {"1": "2", "2": "1", "tie": "tie"}
     w2_unswapped = flip[w2]
     consistent = w1 == w2_unswapped
@@ -228,8 +260,11 @@ def validate(args) -> None:
 
     def one(case):
         pid, _win, p, w, l = case
-        pa, aw, al = (render(p, args.format), render(w, args.format),
-                      render(l, args.format))
+        pairs_dir = p.parent
+        mode, _ = pair_mode(pairs_dir, pid)
+        pa = render(p, args.format)
+        aw = render_side(pairs_dir, pid, w.name[len(pid) + 1:-4], args.format)
+        al = render_side(pairs_dir, pid, l.name[len(pid) + 1:-4], args.format)
         if not (pa and aw and al):
             return None
         # randomise which side the human's winner is shown as, so the judge
@@ -237,7 +272,7 @@ def validate(args) -> None:
         winner_first = rng.random() < 0.5
         first, second = (aw, al) if winner_first else (al, aw)
         try:
-            res = judge_pair(client, args.model, pa, first, second, system=system)
+            res = judge_pair(client, args.model, pa, first, second, system=system, mode=mode)
         except Exception as e:
             return {"pair_id": pid, "error": f"{type(e).__name__}: {e}"[:120]}
         human_side = "1" if winner_first else "2"
@@ -324,9 +359,10 @@ def label(args) -> None:
     counts = {"a": 0, "b": 0, "tie": 0, "error": 0}
 
     def one(pid: str):
+        mode, _ = pair_mode(pairs_dir, pid)
         pa = render(pairs_dir / f"{pid}_prompt.mid", args.format)
-        ra = render(pairs_dir / f"{pid}_a.mid", args.format)
-        rb = render(pairs_dir / f"{pid}_b.mid", args.format)
+        ra = render_side(pairs_dir, pid, "a", args.format)
+        rb = render_side(pairs_dir, pid, "b", args.format)
         if not (pa and ra and rb):
             return {"pair_id": pid, "error": "unrenderable"}
         # Show a first half the time, so a side-biased judge cannot look
@@ -338,7 +374,7 @@ def label(args) -> None:
         a_first = int(hashlib.sha1(f"{args.seed}:{pid}".encode()).hexdigest(), 16) & 1 == 0
         first, second = (ra, rb) if a_first else (rb, ra)
         try:
-            res = judge_pair(client, args.model, pa, first, second, system=system)
+            res = judge_pair(client, args.model, pa, first, second, system=system, mode=mode)
         except Exception as e:
             return {"pair_id": pid, "error": f"{type(e).__name__}: {e}"[:120]}
         if res["verdict"] == "tie":
