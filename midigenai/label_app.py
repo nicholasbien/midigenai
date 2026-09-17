@@ -14,11 +14,19 @@ Compare two checkpoints instead of self-vs-self:
     python -m midigenai.label_app --prompts evals/prompts \\
         --hub-version v3 --hub-version-b v2-100m
 
-Keyboard: 1 = left, 2 = right, t = tie, x = both bad, s = skip.
+Each pair plays itself: prompt + take 1, a short pause, prompt + take 2,
+then the page waits for a vote and the next pair starts once it lands.
+Keyboard: 1 = left, 2 = right, t = tie, x = both bad, s = skip, v = voice.
+Voice (Chrome/Safari, localhost or https): say "one" / "two" / "tie" /
+"both bad" / "skip" / "again" / "play one" / "play two".
+Seed with your own MIDI: drop a .mid on the page (or use the file picker).
+It is saved under <out>/uploads/, the next N pairs continue from it (head of
+the file, as in production), and it then joins the regular prompt rotation.
 Open http://localhost:7788.
 
 Output layout (default --out evals/labeling):
     labels.jsonl          one line per vote
+    uploads/user_*.mid    seeds dropped onto the page
     pairs/<id>.json       per-pair metadata (token ids, models, params)
     pairs/<id>_prompt.mid
     pairs/<id>_a.mid      prompt + continuation A
@@ -28,10 +36,12 @@ Output layout (default --out evals/labeling):
 from __future__ import annotations
 
 import argparse
+import collections
 import datetime
 import json
 import queue
 import random
+import re
 import threading
 import uuid
 from pathlib import Path
@@ -112,6 +122,7 @@ class PairFactory:
         self.out_dir = out_dir
         self.pairs_dir = out_dir / "pairs"
         self.pairs_dir.mkdir(parents=True, exist_ok=True)
+        self.uploads_dir = out_dir / "uploads"
 
         self.gen_a, self.label_a = load_generator(args, "a")
         gen_b, label_b = load_generator(args, "b")
@@ -125,7 +136,8 @@ class PairFactory:
             blacklisted = set(self.blacklist_path.read_text().split())
         self.prompt_files = [
             f for f in sorted(Path(args.prompts).glob("*.mid")) +
-                       sorted(Path(args.prompts).glob("*.midi"))
+                       sorted(Path(args.prompts).glob("*.midi")) +
+                       sorted(self.uploads_dir.glob("user_*.mid"))   # earlier seeds stay in rotation
             if f.name not in blacklisted]
         self.prompt_order = {f: i for i, f in enumerate(
             random.Random(12345).sample(self.prompt_files, len(self.prompt_files)))} \
@@ -146,6 +158,13 @@ class PairFactory:
               f"models: {self.label_a} vs {self.label_b}")
 
         self.queue: queue.Queue[dict] = queue.Queue(maxsize=args.queue_size)
+        # Seeds dropped onto the page jump the line: the worker generates from
+        # them before anything else and /api/next serves them first, so an
+        # upload is heard within one generation rather than after the whole
+        # pre-generated queue has drained.
+        self.priority: collections.deque[Path] = collections.deque()
+        self.priority_queue: queue.Queue[dict] = queue.Queue()
+        self.priority_pending = 0          # requested, not yet in priority_queue
         self.rng = random.Random()
         self._stop = threading.Event()
         self.worker = threading.Thread(target=self._run, daemon=True)
@@ -181,9 +200,13 @@ class PairFactory:
             self.prompt_uses[f] += 1
             return f
 
-    def _generate_one(self) -> dict:
+    def _generate_one(self, prompt_file: Path | None = None) -> dict:
         args = self.args
-        prompt_file = self._next_prompt()
+        if prompt_file is None:
+            prompt_file = self._next_prompt()
+        else:   # a seed served out of turn still counts as used in the rotation
+            with self._prompt_lock:
+                self.prompt_uses[prompt_file] = self.prompt_uses.get(prompt_file, 0) + 1
         from symusic import Score
 
         from midigenai.tokenizer import normalize_drums
@@ -192,7 +215,11 @@ class PairFactory:
         normalize_drums(prompt_score, prompt_file.name)
         prompt_ids = self.gen_a.tokenizer(prompt_score).ids
         if len(prompt_ids) > args.prompt_tokens:
-            start = self.rng.randrange(0, len(prompt_ids) - args.prompt_tokens)
+            # a dropped seed is continued from its head, as production does
+            # with an upload; corpus prompts take a random window so one long
+            # file yields many different pairs
+            start = 0 if prompt_file.name.startswith("user_") else \
+                self.rng.randrange(0, len(prompt_ids) - args.prompt_tokens)
             prompt_ids = self._slice_with_program(prompt_ids, start, args.prompt_tokens)
         tempo = self.gen_a.detect_tempo(prompt_file)
 
@@ -355,14 +382,63 @@ class PairFactory:
             "right_model": meta[f"model_{right}"],
         }
 
+    def _pop_priority(self) -> Path | None:
+        with self._prompt_lock:
+            return self.priority.popleft() if self.priority else None
+
     def _run(self):
+        held = None   # a regular pair waiting for room in the queue
         while not self._stop.is_set():
-            try:
-                pair = self._generate_one()
-            except Exception as e:  # keep the worker alive on bad prompt files
-                print(f"[label] generation error: {e}")
+            seed = self._pop_priority()
+            if seed is not None:
+                try:
+                    self.priority_queue.put(self._generate_one(seed))
+                except Exception as e:
+                    print(f"[label] generation error on upload {seed.name}: {e}")
+                finally:
+                    with self._prompt_lock:
+                        self.priority_pending -= 1
                 continue
-            self.queue.put(pair)  # blocks while the queue is full
+            if held is None:
+                try:
+                    held = self._generate_one()
+                except Exception as e:  # keep the worker alive on bad prompt files
+                    print(f"[label] generation error: {e}")
+                    continue
+            # a short wait, not a blocking put: a seed dropped while the queue
+            # is full must not sit behind it
+            try:
+                self.queue.put(held, timeout=1.0)
+                held = None
+            except queue.Full:
+                pass
+
+    def add_upload(self, data: bytes, filename: str, n_pairs: int) -> Path:
+        """Save a dropped MIDI file as a seed and queue `n_pairs` pairs from
+        it ahead of everything else. Afterwards it stays in the rotation like
+        any other prompt. Raises ValueError for a file symusic cannot read."""
+        from symusic import Score
+        stem = re.sub(r"[^A-Za-z0-9_-]+", "_", Path(filename).stem).strip("_")[:40] or "seed"
+        self.uploads_dir.mkdir(parents=True, exist_ok=True)
+        path = self.uploads_dir / f"user_{stem}_{uuid.uuid4().hex[:6]}.mid"
+        path.write_bytes(data)
+        try:
+            score = Score(str(path))
+        except Exception as e:
+            path.unlink(missing_ok=True)
+            raise ValueError(f"not a readable MIDI file: {e}") from None
+        if sum(len(t.notes) for t in score.tracks) == 0:
+            path.unlink(missing_ok=True)
+            raise ValueError("the file has no notes")
+        with self._prompt_lock:
+            self.prompt_files.append(path)
+            self.prompt_order[path] = len(self.prompt_order)
+            self.prompt_uses[path] = 0
+            for _ in range(n_pairs):
+                self.priority.append(path)
+            self.priority_pending += n_pairs
+        print(f"[label] seed uploaded: {path.name} -> next {n_pairs} pair(s)")
+        return path
 
     def stop(self):
         self._stop.set()
@@ -414,6 +490,21 @@ def build_app(args) -> Flask:
 
     @app.route("/api/next")
     def next_pair():
+        # pairs from a dropped seed come first, and while one is still being
+        # generated the client waits for it rather than taking a corpus pair
+        try:
+            pair = factory.priority_queue.get_nowait()
+        except queue.Empty:
+            pair = None
+            if factory.priority_pending > 0:
+                try:
+                    pair = factory.priority_queue.get(timeout=args.next_timeout)
+                except queue.Empty:
+                    return jsonify({"status": "generating"}), 202
+        if pair is not None:
+            served[pair["pair_id"]] = pair
+            return jsonify({"status": "ok", "pair": pair,
+                            "queued": factory.queue.qsize()})
         if repeat_rng.random() < args.dup_rate:
             repeat = make_repeat()
             if repeat is not None:
@@ -431,7 +522,10 @@ def build_app(args) -> Flask:
     def vote():
         data = request.get_json(force=True)
         choice = data.get("choice")  # left | right | tie | bad | skip | bad_prompt
-        if choice not in ("left", "right", "tie", "bad", "skip", "bad_prompt"):
+        # "drums_as_piano" is a defect report about the pair, not a preference:
+        # recorded as a non-vote so the rendering bug can be traced later
+        if choice not in ("left", "right", "tie", "bad", "skip", "bad_prompt",
+                          "drums_as_piano"):
             return jsonify({"error": f"bad choice {choice!r}"}), 400
         if choice == "bad_prompt" and data.get("pair_id"):
             # the source example itself is unusable: blacklist it from future
@@ -473,13 +567,31 @@ def build_app(args) -> Flask:
                 voted_pairs.setdefault(record["pair_id"], full)
         return jsonify({"ok": True})
 
+    @app.route("/api/upload", methods=["POST"])
+    def upload():
+        f = request.files.get("midi")
+        if f is None or not f.filename:
+            return jsonify({"error": "no file"}), 400
+        if Path(f.filename).suffix.lower() not in (".mid", ".midi"):
+            return jsonify({"error": "not a .mid file"}), 400
+        try:
+            n = max(1, min(20, int(request.form.get("n", 3))))
+        except ValueError:
+            n = 3
+        try:
+            path = factory.add_upload(f.read(), f.filename, n)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        return jsonify({"ok": True, "name": path.name, "n": n})
+
     @app.route("/api/stats")
     def stats():
         n = 0
         if labels_path.exists():
             with labels_path.open() as f:
                 n = sum(1 for line in f if line.strip())
-        return jsonify({"total_labels": n, "queued": factory.queue.qsize()})
+        return jsonify({"total_labels": n, "queued": factory.queue.qsize(),
+                        "upload_pending": factory.priority_pending})
 
     @app.route("/midi/<path:name>")
     def serve_midi(name):
