@@ -1,14 +1,14 @@
 {
  "model": "gpt-5.6-sol",
  "format": "notes",
- "prompt": "strict",
+ "prompt": "accompany",
  "split": "all",
  "n": 18,
- "n_decided": 15,
- "agreement_with_human": 0.6666666666666666,
- "swap_consistency": 0.8333333333333334,
- "position_bias_pick_first": 0.3888888888888889,
- "tie_rate": 0.16666666666666663,
+ "n_decided": 16,
+ "agreement_with_human": 0.8125,
+ "swap_consistency": 0.8888888888888888,
+ "position_bias_pick_first": 0.2222222222222222,
+ "tie_rate": 0.11111111111111116,
  "results": [
   {
    "pair_id": "20260916114026_96eed2a4",
@@ -18,7 +18,7 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "It adds coherent, restrained accompaniment without overcrowding the phrase."
+   "reason": "Restrained accompaniment provides clearer harmony, register separation, and rhyt"
   },
   {
    "pair_id": "20260916114337_cdb4bd4a",
@@ -28,17 +28,17 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Restrained upper voices complement the harmony without continuation 1's chromati"
+   "reason": "Continuation 2 is restrained, chordal, and avoids the first's chromatic clutter."
   },
   {
    "pair_id": "20260916114325_59e6014f",
    "human": "1",
    "winner_first": true,
-   "verdict": "tie",
+   "verdict": "1",
    "first_pass": "1",
-   "second_pass": "2",
-   "consistent": false,
-   "reason": "Its steadier hat pattern better supports the phrase despite excessive fills."
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Its recurring kick-hat framework interlocks coherently despite occasional excess"
   },
   {
    "pair_id": "20260916114208_de38814a",
@@ -48,7 +48,7 @@
    "first_pass": "1",
    "second_pass": "1",
    "consistent": true,
-   "reason": "Its harmonic accompaniment is more coherent despite excessive density."
+   "reason": "It sustains accompaniment throughout, while arrangement two abandons the part ea"
   },
   {
    "pair_id": "20260916114401_9bc24e42",
@@ -58,27 +58,27 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Restrained melodic phrasing complements the established harmony and steady groov"
+   "reason": "Restrained melodic line fits harmony better, avoiding continuation 1's clashes."
   },
   {
    "pair_id": "20260916114314_6085ea52",
    "human": "1",
    "winner_first": true,
-   "verdict": "2",
-   "first_pass": "2",
+   "verdict": "tie",
+   "first_pass": "1",
    "second_pass": "2",
-   "consistent": true,
-   "reason": "Its restrained countermelody follows the harmony with fewer intrusive clashes."
+   "consistent": false,
+   "reason": "Better harmonic fit; continuation two sustains F-sharp against F harmony."
   },
   {
    "pair_id": "20260916114234_d938e6e8",
    "human": "2",
    "winner_first": false,
-   "verdict": "1",
-   "first_pass": "1",
-   "second_pass": "1",
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
    "consistent": true,
-   "reason": "Preserves the sparse octave groove and register without overcrowding the phrase."
+   "reason": "Upper triads fit each harmony; continuation one merely doubles in octaves."
   },
   {
    "pair_id": "20260916114037_09ffb59f",
@@ -88,7 +88,7 @@
    "first_pass": "1",
    "second_pass": "1",
    "consistent": true,
-   "reason": "Its consistent chordal groove fits the ostinato better than rhythmic clutter."
+   "reason": "Its steady groove is more coherent; arrangement two is overcrowded and erratic."
   },
   {
    "pair_id": "20260916113934_ccadd9fe",
@@ -98,7 +98,7 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Lower-register accompaniment provides clearer harmonic grounding and steadier ph"
+   "reason": "Clearer bass movement tracks chord changes and avoids midrange crowding."
   },
   {
    "pair_id": "20260916114121_d95b428c",
@@ -108,27 +108,27 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Coherent bass motion supports melodic cadences while preserving the 6/8 groove."
+   "reason": "Bass movement better outlines implied F, C, G minor harmonies."
   },
   {
    "pair_id": "20260916114004_c0ea4e2e",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Its lower-register accompaniment is more coherent and less clash-prone."
+  },
+  {
+   "pair_id": "20260916113944_65abf097",
    "human": "2",
    "winner_first": false,
    "verdict": "tie",
    "first_pass": "2",
    "second_pass": "1",
    "consistent": false,
-   "reason": "More coherent accompaniment and groove, with fewer chaotic overlaps and register"
-  },
-  {
-   "pair_id": "20260916113944_65abf097",
-   "human": "2",
-   "winner_first": false,
-   "verdict": "1",
-   "first_pass": "1",
-   "second_pass": "1",
-   "consistent": true,
-   "reason": "Cleaner, more restrained bass writing supports the implied harmony without overc"
+   "reason": "Coherent low-register arpeggios support chord changes with steady motion."
   },
   {
    "pair_id": "20260916114417_f4ff559b",
@@ -138,7 +138,7 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "More coherent, restrained accompaniment preserves the phrase\u2019s harmonic and rhyt"
+   "reason": "Its accompaniment is more restrained and harmonically coherent despite early cro"
   },
   {
    "pair_id": "20260916114405_5a193e8a",
@@ -148,7 +148,7 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Adds a coherent midrange line while preserving the prompt's harmonic groove."
+   "reason": "More restrained, chord-aware comping leaves space and avoids frantic upper-regis"
   },
   {
    "pair_id": "20260916114151_5372f90b",
@@ -158,17 +158,17 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Sustained diatonic layers preserve the groove; continuation 1 becomes chromatic "
+   "reason": "Sustained diatonic accompaniment is cleaner and more coherent than chromatic clu"
   },
   {
    "pair_id": "20260916114044_66f88c97",
    "human": "1",
    "winner_first": true,
-   "verdict": "1",
-   "first_pass": "1",
-   "second_pass": "1",
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
    "consistent": true,
-   "reason": "Its added harmonies follow the phrase better than scattered high notes."
+   "reason": "Upper counterline preserves register separation; arrangement one excessively dou"
   },
   {
    "pair_id": "20260916114252_3f1a4298",
@@ -178,17 +178,17 @@
    "first_pass": "2",
    "second_pass": "2",
    "consistent": true,
-   "reason": "Steady bass groove complements the snare pattern; continuation one is overcrowde"
+   "reason": "Steady low-register groove interlocks cleanly while leaving the snare ample spac"
   },
   {
    "pair_id": "20260916113958_cb1cc6ee",
    "human": "2",
    "winner_first": false,
-   "verdict": "tie",
-   "first_pass": "1",
+   "verdict": "2",
+   "first_pass": "2",
    "second_pass": "2",
-   "consistent": false,
-   "reason": "Adds harmonic development; continuation 2 merely duplicates and loops the prompt"
+   "consistent": true,
+   "reason": "Exact doubling is harmonically clean; arrangement 1 is overcrowded and clash-pro"
   }
  ]
 }

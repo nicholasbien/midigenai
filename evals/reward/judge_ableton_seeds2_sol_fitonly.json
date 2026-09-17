@@ -1,0 +1,184 @@
+{
+ "model": "gpt-5.6-sol",
+ "format": "notes",
+ "prompt": "fit_only",
+ "split": "all",
+ "n": 17,
+ "n_decided": 13,
+ "agreement_with_human": 0.7692307692307693,
+ "swap_consistency": 0.7647058823529411,
+ "position_bias_pick_first": 0.35294117647058826,
+ "tie_rate": 0.23529411764705888,
+ "results": [
+  {
+   "pair_id": "20260916215317_93b43485",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Retains A-major harmony, register, and sparse overlapping texture more convincin"
+  },
+  {
+   "pair_id": "20260916215437_df48394f",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Maintains the repeated G# pulse, register, harmony, and sparse texture."
+  },
+  {
+   "pair_id": "20260916215339_352da047",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Preserves the exact ostinato rhythm and pitches before adding compatible bass."
+  },
+  {
+   "pair_id": "20260916215431_d4b916c8",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Matches recurring C-sharp, D-sharp, and F harmony, register, and staggered chord"
+  },
+  {
+   "pair_id": "20260916215432_c5213844",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Preserves the G-rooted voicing pattern before a coherent harmonic shift."
+  },
+  {
+   "pair_id": "20260916215243_72981992",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Matches the established low register, pitch vocabulary, and steady quarter-note "
+  },
+  {
+   "pair_id": "20260916215402_8d862b3e",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Preserves the sparse offbeat bass groove, register, duration, and density."
+  },
+  {
+   "pair_id": "20260916215228_7ec07988",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Matches the syncopated dyads, varied durations, harmonic cycle, and phrase densi"
+  },
+  {
+   "pair_id": "20260916215231_71410e5c",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Maintains the established B-flat harmony, register, and characteristic melodic p"
+  },
+  {
+   "pair_id": "20260916215431_d4b916c8",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Reuses the prompt\u2019s chord voicings, register, and staggered rhythmic texture."
+  },
+  {
+   "pair_id": "20260916215344_1ae76537",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Precisely preserves the repeating chord sequence, voicings, timing, and sustaine"
+  },
+  {
+   "pair_id": "20260916215226_941e73ca",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Matches established register, diatonic palette, quarter-note groove, and density"
+  },
+  {
+   "pair_id": "20260916215346_a808839e",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Maintains C-minor pitch vocabulary, dense subdivision, register, and arpeggiated"
+  },
+  {
+   "pair_id": "20260916215354_ecbadfbd",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Exact phrase repetition preserves groove, register, density, and tonal pattern."
+  },
+  {
+   "pair_id": "20260916215245_ee2d6c99",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Matches short-note subdivisions and C-minor pitch language more closely."
+  },
+  {
+   "pair_id": "20260916215257_bb47d467",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Matches the sustained clustered textures, register, density, and C-minor harmony"
+  },
+  {
+   "pair_id": "20260916215314_ba01bcfb",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Preserves the exact harmonic cycle, voicing, rhythm, register, and density."
+  }
+ ]
+}

@@ -1,0 +1,184 @@
+{
+ "model": "gpt-5.6-sol",
+ "format": "notes",
+ "prompt": "strict",
+ "split": "all",
+ "n": 17,
+ "n_decided": 11,
+ "agreement_with_human": 0.8181818181818182,
+ "swap_consistency": 0.6470588235294118,
+ "position_bias_pick_first": 0.47058823529411764,
+ "tie_rate": 0.3529411764705882,
+ "results": [
+  {
+   "pair_id": "20260916215317_93b43485",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Coherent related-key progression outweighs continuation two\u2019s scattered, overcro"
+  },
+  {
+   "pair_id": "20260916215437_df48394f",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Maintains the quarter-note groove while adding purposeful bass harmonic movement"
+  },
+  {
+   "pair_id": "20260916215339_352da047",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Maintains the motif while adding restrained, harmonically plausible bass movemen"
+  },
+  {
+   "pair_id": "20260916215431_d4b916c8",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "It extends the established chord cycle with coherent voicings and repetition."
+  },
+  {
+   "pair_id": "20260916215432_c5213844",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Keeps groove, moving coherently from C minor toward G minor."
+  },
+  {
+   "pair_id": "20260916215243_72981992",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Maintains the established low-register pulse and diatonic G-minor harmonic motio"
+  },
+  {
+   "pair_id": "20260916215402_8d862b3e",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Preserves the offbeat bass groove while giving the harmony clear direction."
+  },
+  {
+   "pair_id": "20260916215228_7ec07988",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "It sustains the established syncopated dyad cycle with coherent harmonic motion."
+  },
+  {
+   "pair_id": "20260916215231_71410e5c",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Maintains the B-flat tonal center and develops the established chord-tone motif."
+  },
+  {
+   "pair_id": "20260916215431_d4b916c8",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "2",
+   "second_pass": "1",
+   "consistent": false,
+   "reason": "Sustained harmony follows the progression coherently with greater restraint."
+  },
+  {
+   "pair_id": "20260916215344_1ae76537",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Develops the established harmony coherently instead of exactly looping the promp"
+  },
+  {
+   "pair_id": "20260916215226_941e73ca",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Steady quarter-note groove preserves the pitch language and avoids abrupt sparsi"
+  },
+  {
+   "pair_id": "20260916215346_a808839e",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "1",
+   "first_pass": "1",
+   "second_pass": "1",
+   "consistent": true,
+   "reason": "Maintains the dense C-minor arpeggiation and develops it coherently."
+  },
+  {
+   "pair_id": "20260916215354_ecbadfbd",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Develops the D-major motif coherently while preserving its measured rhythmic cha"
+  },
+  {
+   "pair_id": "20260916215245_ee2d6c99",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Steady C-minor arpeggiation develops the fragment coherently and avoids awkward "
+  },
+  {
+   "pair_id": "20260916215257_bb47d467",
+   "human": "1",
+   "winner_first": true,
+   "verdict": "tie",
+   "first_pass": "1",
+   "second_pass": "2",
+   "consistent": false,
+   "reason": "Its restrained ascending line develops the minor harmony more coherently."
+  },
+  {
+   "pair_id": "20260916215314_ba01bcfb",
+   "human": "2",
+   "winner_first": false,
+   "verdict": "2",
+   "first_pass": "2",
+   "second_pass": "2",
+   "consistent": true,
+   "reason": "Preserves the established harmonic rhythm, voicing, and restrained repeating str"
+  }
+ ]
+}
