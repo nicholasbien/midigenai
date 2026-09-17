@@ -19,9 +19,9 @@ val 0.25 — Ableton highest because it is the target distribution and the
 one the old judge was worst on.
 
     python -m midigenai.prompt_pool --out evals/prompts_pool_v5_noabl -n 600 \
-      --source ableton=evals/prompts_ableton:0.5 \
-      --source fma=~/midigenai-v4/evals/prompts_fma:0.25 \
-      --source val=~/midigenai-v4/evals/prompts_heldout:0.25
+      --source fma=~/midigenai-v4/evals/prompts_fma:0.4 \
+      --source val=~/midigenai-v4/evals/prompts_heldout:0.6
+    # run 2 adds --source ableton=evals/prompts_ableton:0.5 (-> evals/prompts_pool_v5)
 
 ## 2. On-policy pairs  (~70 min for 4,000 at ~1 s/pair)
 512-token bar-aligned windows: dense Ableton clips need it, the others do
