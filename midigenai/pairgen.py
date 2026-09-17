@@ -206,6 +206,19 @@ def make_pair(gen, prompt_file: Path, cfg: PairConfig,
             "a": sides["a"]["bytes"], "b": sides["b"]["bytes"]}
 
 
+_DRUM_IDS: dict[int, list[int]] = {}
+
+
+def _drum_token_ids(tokenizer) -> list[int]:
+    """Every token that can only produce percussion: PitchDrum_* and the drum
+    program (Program_-1). 63 ids on the v4 tokenizer."""
+    key = id(tokenizer)
+    if key not in _DRUM_IDS:
+        _DRUM_IDS[key] = [i for name, i in tokenizer.vocab.items()
+                          if name.startswith("PitchDrum_") or name == "Program_-1"]
+    return _DRUM_IDS[key]
+
+
 def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
                         rng: random.Random) -> dict | None:
     """One accompaniment pair, sampled the way TRAINING samples them.
@@ -283,6 +296,19 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
         return None
 
     cond_ids = gen.tokenizer(cond).ids
+    # Unless a kit was asked for, keep one out. With the header naming
+    # condition + target the v4 model still puts an uninvited drum kit in
+    # 30-45% of the notes of a pitched target — its prior for "more than
+    # one instrument" is "there are drums" — so an "add a bass" pair is
+    # really "add a bass and a kit", and a vote on it is partly a vote about
+    # the kit. Banning the drum tokens removed that and roughly doubled the
+    # requested family's share (bass 21% -> 36% of notes). Production's
+    # /api/accompany applies the same ban, which keeps these pairs on-policy.
+    ban = [i for i in (gen.sp.sep, gen.sp.mask) if i is not None]
+    target_has_drums = any(t.is_drum for t in tgt.tracks)
+    cond_has_drums = any(t.is_drum for t in cond.tracks)
+    if not target_has_drums and not cond_has_drums:
+        ban += _drum_token_ids(gen.tokenizer)
     have = gen.count_bars(cond_ids)
     bars = max(cfg.bars, have)
     if have > cfg.bars * 2:
@@ -301,7 +327,7 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
         seed = rng.randrange(1 << 30)
         new_ids = list(gen.accompany(cond_ids, bars, header=header,
                                      temperature=cfg.temperature,
-                                     top_k=cfg.top_k, seed=seed))
+                                     top_k=cfg.top_k, seed=seed, ban_ids=ban))
         if not new_ids:
             return None
         try:
@@ -331,7 +357,7 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
         "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "prompt_file": prompt_file.name,
         "mode": "accompany", "bars": bars, "bars_requested": cfg.bars,
-        "sampling": kind,
+        "sampling": kind, "drums_banned": not target_has_drums and not cond_has_drums,
         "n_cond_tracks": len(cond.tracks), "n_target_tracks": len(tgt.tracks),
         "cond_is_drums": any(t.is_drum for t in cond.tracks),
         "model_a": cfg.model_label, "model_b": cfg.model_label,
