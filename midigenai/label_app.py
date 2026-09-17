@@ -39,9 +39,12 @@ import argparse
 import collections
 import datetime
 import json
+import os
 import queue
 import random
 import re
+import shlex
+import subprocess
 import threading
 import uuid
 from pathlib import Path
@@ -51,6 +54,60 @@ from flask import Flask, jsonify, request, send_from_directory
 
 def utcnow() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def discover_label_servers() -> list[dict]:
+    """Other label servers on this machine, read off their command lines.
+
+    Each `label_app` / `relabel_app serve` process names its output dir(s)
+    and port in argv, which is enough for the page's source selector to
+    link across servers — including ones started by another session, which
+    have no way to register themselves anywhere.
+    """
+    try:
+        ps = subprocess.run(["ps", "-axo", "pid=,command="],
+                            capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return []
+    found = []
+    for line in ps.splitlines():
+        # only a python process running the module — not a shell whose
+        # command string merely mentions it (the `zsh -c` that launched it)
+        m = re.search(r"^\s*(\d+)\s+\S*python[\d.]* -m midigenai\.(re)?label_app\b(.*)$", line, re.I)
+        if not m:
+            continue
+        pid, kind, rest = int(m.group(1)), ("relabel" if m.group(2) else "live"), m.group(3)
+        if pid == os.getpid():
+            continue
+        try:
+            argv = shlex.split(rest)
+        except ValueError:
+            argv = rest.split()
+        val = lambda flag: [argv[i + 1] for i, a in enumerate(argv) if a == flag and i + 1 < len(argv)]
+        outs = val("--out") or (["evals/labeling"] if kind == "live" else ["evals/ceiling"])
+        try:
+            port = int(val("--port")[0])
+        except (IndexError, ValueError):
+            port = 7788 if kind == "live" else 7789
+        found.append({"pid": pid, "kind": kind, "port": port,
+                      "outs": [Path(o).name for o in outs]})
+    return sorted(found, key=lambda f: f["port"])
+
+
+def sources_payload(local: list[dict], current: str, host: str) -> dict:
+    """The selector's entries: this server's own sources first (`local`,
+    each with id/label/mode/counts), then every other label server found
+    on the machine as a plain link."""
+    entries = [{**src, "url": f"/?source={src['id']}", "here": True,
+                "current": src["id"] == current} for src in local]
+    for srv in discover_label_servers():
+        for out in srv["outs"]:
+            entries.append({
+                "id": f"{srv['port']}:{out}", "here": False, "current": False,
+                "label": f"{out} ({'live pairs' if srv['kind'] == 'live' else 'pre-generated'}) · :{srv['port']}",
+                "url": f"http://{host}:{srv['port']}/" + (f"?source={out}" if srv["kind"] == "relabel" and len(srv["outs"]) > 1 else ""),
+            })
+    return {"current": current, "sources": entries}
 
 
 def velocity_scale(prompt_score, target_peak: int = 118) -> float:
@@ -592,6 +649,12 @@ def build_app(args) -> Flask:
                 n = sum(1 for line in f if line.strip())
         return jsonify({"total_labels": n, "queued": factory.queue.qsize(),
                         "upload_pending": factory.priority_pending})
+
+    @app.route("/api/sources")
+    def sources():
+        me = {"id": out_dir.name, "mode": "continuation",
+              "label": f"{out_dir.name} · live {factory.label_a} vs {factory.label_b}"}
+        return jsonify(sources_payload([me], me["id"], request.host.split(":")[0]))
 
     @app.route("/midi/<path:name>")
     def serve_midi(name):

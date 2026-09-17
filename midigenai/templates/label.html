@@ -126,6 +126,10 @@
   @media (max-width: 760px) { .settings, #heard { display: none; } }
   /* seed upload: a file picker in the status bar, or drop a .mid anywhere */
   .seed { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+  /* source selector: this server's sets, then the other label servers on the machine */
+  #source { font-size: 12px; max-width: 360px; padding: 3px 6px; border: 1px solid var(--btn-br); border-radius: 5px; background: var(--btn); color: var(--fg); }
+  #srcmode { font-size: 11px; color: var(--accent); margin-left: 6px; }
+  @media (max-width: 760px) { #source { max-width: 60vw; } }
   .seed input[type=file] { font-size: 12px; max-width: 200px; }
   .seed input[type=number] { width: 44px; font-size: 12px; }
   #seednote { color: var(--accent); }
@@ -156,6 +160,10 @@
       <button id="theme" onclick="toggleTheme()" title="light / dark (n)">🌙</button>
     </div>
   </div>
+  <div class="statusbar" style="align-items:center">
+    <label style="display:flex;gap:6px;align-items:center">source
+      <select id="source" onchange="switchSource(this)"><option>…</option></select><span id="srcmode"></span></label>
+  </div>
   <div class="statusbar"><span id="count">0 labeled this session</span>
     <span class="seed">
       <span id="seednote"></span>
@@ -168,6 +176,36 @@
 
 <script>
 const SESSION_ID = crypto.randomUUID();
+// which of this server's sets to serve; empty = the server's first (default)
+const SOURCE = new URLSearchParams(location.search).get('source') || '';
+const withSource = (path) => SOURCE ? `${path}${path.includes('?') ? '&' : '?'}source=${encodeURIComponent(SOURCE)}` : path;
+
+async function loadSources() {
+  const sel = document.getElementById('source');
+  try {
+    const d = await (await fetch(withSource('/api/sources'))).json();
+    sel.innerHTML = '';
+    let mode = '';
+    for (const s of d.sources) {
+      const o = document.createElement('option');
+      o.value = s.url;
+      o.textContent = (s.here ? '' : '↗ ') + s.label;
+      o.dataset.here = s.here ? '1' : '';
+      if (s.current) { o.selected = true; mode = s.mode || ''; }
+      sel.appendChild(o);
+    }
+    document.getElementById('srcmode').textContent = mode;
+  } catch (e) {
+    sel.innerHTML = '<option>(no source list)</option>';
+  }
+}
+
+function switchSource(sel) {
+  const o = sel.selectedOptions[0];
+  if (!o || !o.value) return;
+  stopPlayback();
+  location.href = o.value;
+}
 
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
@@ -226,7 +264,7 @@ function saveSettings() {
 
 async function fetchStats() {
   try {
-    const s = await (await fetch('/api/stats')).json();
+    const s = await (await fetch(withSource('/api/stats'))).json();
     totalCount = s.total_labels;
     updateCount();
   } catch (e) {}
@@ -244,7 +282,7 @@ async function loadNext() {
   stage.innerHTML = '<div class="waiting">generating next pair…</div>';
   while (true) {
     let res;
-    try { res = await fetch('/api/next'); }
+    try { res = await fetch(withSource('/api/next')); }
     catch (e) { await new Promise(r => setTimeout(r, 1500)); continue; }
     if (res.status === 202) continue;   // still generating; server long-polls
     const data = await res.json();
@@ -252,6 +290,11 @@ async function loadNext() {
       current = data.pair;
       document.getElementById('queue').textContent = `${data.queued} queued`;
       render();
+      return;
+    }
+    if (data.status === 'done') {
+      stage.innerHTML = '<div class="waiting">every pair in this set has a vote — pick another source above</div>';
+      loadSources();
       return;
     }
   }
@@ -703,6 +746,7 @@ async function vote(choice) {
   }
   const body = {
     session_id: SESSION_ID,
+    source: p.source || SOURCE || undefined,
     pair_id: p.pair_id,
     idx: p.idx,          // distinguishes a blind repeat from its first showing
     choice,
@@ -790,6 +834,7 @@ const savedVol = localStorage.getItem('labelVolumeDb0') ?? 0;
 document.getElementById('vol').value = savedVol;
 setVolume(savedVol);
 fetchStats();
+loadSources();
 loadNext();
 </script>
 </body>

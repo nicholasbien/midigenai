@@ -229,23 +229,91 @@ def build_roll(pairs_dir: Path, pid: str, side: str, cache: Path) -> tuple[dict,
     return roll, f"{'pairs' if served_from is pairs_dir else 'cache'}/{url_name}"
 
 
+class Source:
+    """One pre-generated set served blind: its manifest, what is left to
+    vote on, and where the votes go. A server holds several and the page
+    switches between them with `?source=<name>`."""
+
+    def __init__(self, out: str, seed: int):
+        self.out_dir = Path(out).resolve()
+        self.id = self.out_dir.name
+        self.cache_dir = self.out_dir / "timeline_cache"
+        self.labels_path = self.out_dir / "labels.jsonl"
+        self.manifest = [json.loads(l) for l in (self.out_dir / "manifest.jsonl").read_text().splitlines()
+                         if l.strip()]
+        for i, m in enumerate(self.manifest):
+            m.setdefault("idx", i)
+        already = set()
+        if self.labels_path.exists():
+            already = {json.loads(l).get("idx", json.loads(l)["pair_id"])
+                       for l in self.labels_path.read_text().splitlines() if l.strip()}
+        self.todo = [m for m in self.manifest if m["idx"] not in already]
+        random.Random(seed).shuffle(self.todo)
+        # the sets this manifest actually references — a directory of
+        # generated pairs is not one of DEFAULT_SETS, and validating against
+        # that list is what made every MIDI request 403
+        self.set_dirs = {m["set"]: Path(m["pairs_dir"]).resolve() for m in self.manifest}
+        self.mode = self._mode()
+        print(f"[relabel] {self.id}: {len(self.todo)} pairs left of {len(self.manifest)} ({self.mode})")
+
+    def _mode(self) -> str:
+        for m in self.manifest[:5]:
+            mp = Path(m["pairs_dir"]) / f"{m['pair_id']}.json"
+            try:
+                if json.loads(mp.read_text()).get("mode") == "accompany":
+                    return "accompaniment"
+            except Exception:
+                continue
+        return "continuation"
+
+    def voted(self) -> set:
+        if not self.labels_path.exists():
+            return set()
+        return {json.loads(l).get("idx", json.loads(l)["pair_id"])
+                for l in self.labels_path.read_text().splitlines() if l.strip()}
+
+    def skip_voted(self) -> None:
+        """Drop pairs voted since startup — by another server on the same
+        set, or another tab — so nothing is served twice."""
+        done = self.voted()
+        while self.todo and self.todo[0]["idx"] in done:
+            self.todo.pop(0)
+
+    def counts(self) -> dict:
+        total = decided = 0
+        if self.labels_path.exists():
+            for l in self.labels_path.read_text().splitlines():
+                if not l.strip():
+                    continue
+                total += 1
+                if json.loads(l).get("choice") in ("left", "right"):
+                    decided += 1
+        return {"total_labels": total, "decided": decided, "queued": len(self.todo)}
+
+    def entry(self) -> dict:
+        c = self.counts()
+        return {"id": self.id, "mode": self.mode, **c,
+                "label": f"{self.id} · {self.mode} · {c['decided']} decided, {c['queued']} left"}
+
+
 def build_app(args):
     from flask import Flask, jsonify, request, send_from_directory
 
-    out_dir = Path(args.out).resolve()
-    cache_dir = out_dir / "timeline_cache"
-    labels_path = out_dir / "labels.jsonl"
-    manifest = [json.loads(l) for l in (out_dir / "manifest.jsonl").read_text().splitlines() if l.strip()]
+    from midigenai.label_app import sources_payload
 
-    for i, m in enumerate(manifest):
-        m.setdefault("idx", i)
-    already = set()
-    if labels_path.exists():
-        already = {json.loads(l).get("idx", json.loads(l)["pair_id"])
-                   for l in labels_path.read_text().splitlines() if l.strip()}
-    todo = [m for m in manifest if m["idx"] not in already]
-    random.Random(args.seed).shuffle(todo)
-    print(f"[relabel] {len(todo)} pairs left of {len(manifest)}")
+    outs = args.out if isinstance(args.out, list) else [args.out]
+    sources = {}
+    for out in outs:
+        src = Source(out, args.seed)
+        sources[src.id] = src
+    first = next(iter(sources))
+
+    def pick() -> Source:
+        # a set named in the query or the vote body; the first one otherwise,
+        # so a single-set server behaves exactly as before
+        name = request.args.get("source") or (
+            (request.get_json(silent=True) or {}).get("source") if request.method == "POST" else None)
+        return sources.get(name, sources[first])
 
     app = Flask(__name__, template_folder=str(Path(__file__).parent / "templates"))
 
@@ -253,17 +321,25 @@ def build_app(args):
     def index():
         return send_from_directory(app.template_folder, "label.html")
 
+    @app.route("/api/sources")
+    def api_sources():
+        return jsonify(sources_payload([s.entry() for s in sources.values()],
+                                       pick().id, request.host.split(":")[0]))
+
     @app.route("/api/next")
     def next_pair():
+        src = pick()
+        src.skip_voted()
+        todo = src.todo
         if not todo:
-            return jsonify({"status": "done"}), 200
+            return jsonify({"status": "done", "source": src.id}), 200
         m = todo[0]
         pairs_dir = Path(m["pairs_dir"])
         pid = m["pair_id"]
         try:
             rolls, urls = {}, {}
             for side in ("a", "b"):
-                rolls[side], urls[side] = build_roll(pairs_dir, pid, side, cache_dir)
+                rolls[side], urls[side] = build_roll(pairs_dir, pid, side, src.cache_dir)
             mp = pairs_dir / f"{pid}.json"
             mode = (json.loads(mp.read_text()).get("mode", "continue")
                     if mp.exists() else "continue")
@@ -279,15 +355,16 @@ def build_app(args):
         # sides re-randomised independently of the original session: a repeat
         # that always showed the same way round would measure memory, not taste
         left, right = ("a", "b") if random.random() < 0.5 else ("b", "a")
+        base = f"/midi/{src.id}/{m['set']}"
         pair = {
-            "pair_id": pid, "idx": m["idx"],
+            "pair_id": pid, "idx": m["idx"], "source": src.id,
             "prompt_source": "repeat check",
             "prompt_name": "",
-            "prompt_url": f"/midi/{m['set']}/pairs/{pid}_prompt.mid",
-            "left_url": f"/midi/{m['set']}/{urls[left]}",
-            "right_url": f"/midi/{m['set']}/{urls[right]}",
-            "left_timeline_url": f"/midi/{m['set']}/{urls[left]}",
-            "right_timeline_url": f"/midi/{m['set']}/{urls[right]}",
+            "prompt_url": f"{base}/pairs/{pid}_prompt.mid",
+            "left_url": f"{base}/{urls[left]}",
+            "right_url": f"{base}/{urls[right]}",
+            "left_timeline_url": f"{base}/{urls[left]}",
+            "right_timeline_url": f"{base}/{urls[right]}",
             "left_roll": rolls[left], "right_roll": rolls[right],
             "mode": mode, "prompt_roll": prompt_roll,
             "left_is": left, "right_is": right,
@@ -298,6 +375,7 @@ def build_app(args):
     @app.route("/api/vote", methods=["POST"])
     def vote():
         data = request.get_json(force=True)
+        src = sources.get(data.get("source"), sources[first])
         choice = data.get("choice")
         # the shared template can also post "drums_as_piano": a defect report
         # about the pair, not a preference, so it is recorded as a non-vote
@@ -313,28 +391,22 @@ def build_app(args):
                           if choice in ("left", "right") else choice),
             "replay": True,
         }
-        with labels_path.open("a") as f:
+        with src.labels_path.open("a") as f:
             f.write(json.dumps(rec) + "\n")
-        if todo and todo[0]["pair_id"] == pid:
-            todo.pop(0)
+        if src.todo and src.todo[0]["pair_id"] == pid:
+            src.todo.pop(0)
         return jsonify({"ok": True})
 
     @app.route("/api/stats")
     def stats():
-        n = sum(1 for l in labels_path.read_text().splitlines() if l.strip()) \
-            if labels_path.exists() else 0
-        return jsonify({"total_labels": n, "queued": len(todo)})
+        return jsonify(pick().counts())
 
-    # the sets this manifest actually references — a directory of generated
-    # pairs is not one of DEFAULT_SETS, and validating against that list is
-    # what made every MIDI request 403
-    set_dirs = {m["set"]: Path(m["pairs_dir"]).resolve() for m in manifest}
-
-    @app.route("/midi/<set_name>/<kind>/<path:name>")
-    def serve_midi(set_name, kind, name):
-        if set_name not in set_dirs or kind not in ("pairs", "cache"):
+    @app.route("/midi/<src_id>/<set_name>/<kind>/<path:name>")
+    def serve_midi(src_id, set_name, kind, name):
+        src = sources.get(src_id)
+        if src is None or set_name not in src.set_dirs or kind not in ("pairs", "cache"):
             return "forbidden", 403
-        base = cache_dir.resolve() if kind == "cache" else set_dirs[set_name]
+        base = src.cache_dir.resolve() if kind == "cache" else src.set_dirs[set_name]
         full = (base / name).resolve()
         if base not in full.parents or full.suffix.lower() not in (".mid", ".midi"):
             return "forbidden", 403
@@ -435,7 +507,9 @@ def main() -> None:
     sd.add_argument("--seed", type=int, default=0)
 
     v = sub.add_parser("serve", help="serve them blind for re-voting")
-    v.add_argument("--out", default="evals/ceiling")
+    v.add_argument("--out", action="append", default=None,
+                   help="a set to serve; repeat for several (the page switches "
+                        "between them; the first is the default)")
     v.add_argument("--port", type=int, default=7789)
     v.add_argument("--seed", type=int, default=1)
 
@@ -450,6 +524,7 @@ def main() -> None:
     elif a.cmd == "score":
         score(a)
     else:
+        a.out = a.out or ["evals/ceiling"]
         build_app(a).run(port=a.port, debug=False)
 
 
