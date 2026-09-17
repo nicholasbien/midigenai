@@ -196,11 +196,16 @@ def main(
     files = sorted(src.glob("*.mid"))
     if not files:
         raise SystemExit(f"no .mid files in {src}")
+    # dereference: prompt pools are directories of symlinks (prompt_pool.py),
+    # and a tar of links ships no notes — every prompt is then unreadable on
+    # the worker and GRPO runs 1000 steps of "no usable groups".
     buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tf:
+    with tarfile.open(fileobj=buf, mode="w:gz", dereference=True) as tf:
         for f in files:
             tf.add(f, arcname=f.name)
     blob = buf.getvalue()
+    if len(blob) < 100 * len(files):
+        raise SystemExit(f"prompt tar is {len(blob)} bytes for {len(files)} files — links without content?")
     print(f"shipping {len(files)} prompts ({len(blob)/1e6:.1f} MB) with the call")
 
     acc_blob = None
@@ -209,10 +214,12 @@ def main(
         if not afiles:
             raise SystemExit(f"no .mid files in {accompany_prompts}")
         abuf = io.BytesIO()
-        with tarfile.open(fileobj=abuf, mode="w:gz") as tf:
+        with tarfile.open(fileobj=abuf, mode="w:gz", dereference=True) as tf:
             for f in afiles:
                 tf.add(f, arcname=f.name)
         acc_blob = abuf.getvalue()
+        if len(acc_blob) < 100 * len(afiles):
+            raise SystemExit(f"accompaniment tar is {len(acc_blob)} bytes for {len(afiles)} files — links without content?")
         print(f"shipping {len(afiles)} accompaniment seeds ({len(acc_blob)/1e6:.1f} MB)")
     out = grpo.remote(run_name=run_name, version=version, reward=reward,
                       prompts_tar=blob, accompany_tar=acc_blob, accompany_frac=accompany_frac,
