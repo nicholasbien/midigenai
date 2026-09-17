@@ -59,9 +59,13 @@ and [docs/jam-timing.md](docs/jam-timing.md). The Live socket client moved to
 | Tag | Params | Final loss | Best sampling | HF |
 |---|---|---|---|---|
 | `v4` ← default | 113M (`medium`) | 0.64 val | t=1.0, top_k=50 | [tree/main/v4](https://huggingface.co/nicholasbien/midigenai/tree/main/v4) |
+| `v4-large` | 202M (`large`) | 0.63 val | t=1.0, top_k=50 | [tree/main/v4-large](https://huggingface.co/nicholasbien/midigenai/tree/main/v4-large) |
 
+`v4-large` is the same corpus and tokenizer at 202M: 0.630 vs 0.649 val loss on
+identical windows, better prompt coherence, more repetitive. It is not the
+default because blind pairwise labels between the two were near even.
 Earlier versions stay on the Hub and load with `load_from_hub(version=...)`
-or `MIDIGENAI_VERSION`, but v4 is the one to use.
+or `MIDIGENAI_VERSION`.
 
 ## Performance
 
