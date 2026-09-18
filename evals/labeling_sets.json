@@ -1,6 +1,8 @@
 {
  "_": "labeling hub: listed sets come first in this order (first unfinished one is the default); hidden sets are never listed. Re-read every rescan, no restart needed.",
  "order": [
+  "labeling_ab_v5_mixed_cont",
+  "labeling_ab_v5_mixed_acc",
   "labeling_ab_v5_cont",
   "labeling_accompany_ableton",
   "labeling_accompany_202m",
