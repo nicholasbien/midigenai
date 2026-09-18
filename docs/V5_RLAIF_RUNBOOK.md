@@ -120,6 +120,10 @@ the val set (`--accompany-prompts` takes one dir — build a pool with
 
 ## 6. Verify — reward going up is not evidence
 
+Checkpoints are saved every 50 steps; EVAL runs every 25. Pick the
+checkpoint among SAVED steps (900/950/1000), by the sum of per-task EVAL
+for a mixed run — a picker over EVAL steps chose 925 once and found no file.
+
     modal volume get midigenai-runs grpo_v5_001/ckpt_001000.pt runs/grpo_v5_001/
     python -m midigenai.compare_ckpt --a runs/v5/ckpt_final.pt --b runs/grpo_v5_001/ckpt_001000.pt \
       --tokenizer runs/v5/tokenizer.json --prompts evals/prompts_pool_v5_noabl -n 80 \
