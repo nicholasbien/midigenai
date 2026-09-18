@@ -37,6 +37,7 @@ class PairConfig:
     v4_close_bar: bool = False
     model_label: str = "v4"
     extra: dict = field(default_factory=dict)
+    model_label_b: str = ""        # side b's model when a second generator is given
 
 
 def _accomp_prompt(gen, header, cond_ids, bars) -> list[int]:
@@ -107,8 +108,12 @@ def _bars_spanned(gen, ids: list[int]) -> float:
 
 
 def make_pair(gen, prompt_file: Path, cfg: PairConfig,
-              rng: random.Random) -> dict | None:
+              rng: random.Random, gen_b=None) -> dict | None:
     """One pair: a prompt slice and two independent continuations of it.
+
+    With `gen_b`, side b comes from that model instead (a blind A/B of two
+    checkpoints on the same prompt); the meta then records both labels and
+    cross_model=True.
 
     Returns None when the prompt or either take is unusable, so a caller can
     simply skip it — a silent take is not a preference, it is a defect, and
@@ -162,9 +167,10 @@ def make_pair(gen, prompt_file: Path, cfg: PairConfig,
         ids = list(prompt_ids)
 
     sides = {}
+    gens = {"a": gen, "b": gen_b or gen}
     for name in ("a", "b"):
         seed = rng.randrange(1 << 30)
-        new_ids = list(gen.generate_ids(
+        new_ids = list(gens[name].generate_ids(
             list(ids), max_new_tokens=cfg.max_new_tokens,
             temperature=cfg.temperature, top_k=cfg.top_k, seed=seed))
         if not new_ids:
@@ -190,9 +196,10 @@ def make_pair(gen, prompt_file: Path, cfg: PairConfig,
         "pair_id": pair_id,
         "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "prompt_file": prompt_file.name,
-        "model_a": cfg.model_label, "model_b": cfg.model_label,
-        "cross_model": False,
-        "on_policy": True,
+        "model_a": cfg.model_label,
+        "model_b": cfg.model_label_b if gen_b is not None else cfg.model_label,
+        "cross_model": gen_b is not None,
+        "on_policy": gen_b is None,
         "tempo_bpm": tempo,
         "temperature": cfg.temperature, "top_k": cfg.top_k,
         "max_new_tokens": cfg.max_new_tokens,
@@ -266,7 +273,7 @@ def sample_accompany_window(score, bars: int, rng: random.Random,
 
 
 def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
-                        rng: random.Random) -> dict | None:
+                        rng: random.Random, gen_b=None) -> dict | None:
     """One accompaniment pair, sampled the way TRAINING samples them.
 
     This deliberately mirrors `v4_docs.DocBuilder`'s accompaniment windows
@@ -332,9 +339,10 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
                     for t in cond_score.tracks for n in t.notes), default=0)
 
     sides = {}
+    gens = {"a": gen, "b": gen_b or gen}
     for name in ("a", "b"):
         seed = rng.randrange(1 << 30)
-        new_ids = list(gen.accompany(cond_ids, bars, header=header,
+        new_ids = list(gens[name].accompany(cond_ids, bars, header=header,
                                      temperature=cfg.temperature,
                                      top_k=cfg.top_k, seed=seed, ban_ids=ban))
         if not new_ids:
@@ -369,8 +377,9 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
         "sampling": kind, "drums_banned": not target_has_drums and not cond_has_drums,
         "n_cond_tracks": len(cond.tracks), "n_target_tracks": len(tgt.tracks),
         "cond_is_drums": any(t.is_drum for t in cond.tracks),
-        "model_a": cfg.model_label, "model_b": cfg.model_label,
-        "cross_model": False, "on_policy": True,
+        "model_a": cfg.model_label,
+        "model_b": cfg.model_label_b if gen_b is not None else cfg.model_label,
+        "cross_model": gen_b is not None, "on_policy": gen_b is None,
         "tempo_bpm": tempo,
         "temperature": cfg.temperature, "top_k": cfg.top_k,
         # exactly what the model was prompted with — BOS, Task_accomp, header,
@@ -400,7 +409,7 @@ def write_pair(pair: dict, pairs_dir: Path) -> None:
 
 
 def generate_pairs(gen, prompt_files: list[Path], n: int, cfg: PairConfig,
-                   seed: int = 0, on_pair=None) -> list[dict]:
+                   seed: int = 0, on_pair=None, gen_b=None) -> list[dict]:
     """`n` pairs, cycling the prompt list; unusable prompts are skipped."""
     rng = random.Random(seed)
     order = list(prompt_files)
@@ -411,8 +420,8 @@ def generate_pairs(gen, prompt_files: list[Path], n: int, cfg: PairConfig,
         attempts += 1
         pf = order[i % len(order)]
         i += 1
-        pair = (make_accompany_pair(gen, pf, cfg, rng) if cfg.mode == "accompany"
-                else make_pair(gen, pf, cfg, rng))
+        pair = (make_accompany_pair(gen, pf, cfg, rng, gen_b=gen_b) if cfg.mode == "accompany"
+                else make_pair(gen, pf, cfg, rng, gen_b=gen_b))
         if pair is None:
             continue
         out.append(pair)
@@ -444,6 +453,9 @@ def main() -> None:
                    help="model name written to each pair's meta; defaults to the "
                         "hub version or the checkpoint's stem, which is ckpt_final "
                         "for every run and says nothing about which one")
+    p.add_argument("--checkpoint-b", type=Path, default=None,
+                   help="second model for side b: a blind A/B of two checkpoints on the same prompts")
+    p.add_argument("--label-b", default=None)
     p.add_argument("--mode", choices=("continue", "accompany"), default="continue")
     p.add_argument("--bars", type=int, default=16,
                    help="accompany: window length (training uses 16)")
@@ -457,6 +469,11 @@ def main() -> None:
         from midigenai.hub import load_from_hub
         gen = load_from_hub(version=a.version)
         label_name = a.version
+
+    gen_b = None
+    if a.checkpoint_b:
+        from midigenai.generate import Generator
+        gen_b = Generator(checkpoint_path=a.checkpoint_b, tokenizer_path=a.tokenizer)
 
     prompts = sorted(Path(a.prompts).glob("*.mid"))
     if not prompts:
@@ -472,7 +489,8 @@ def main() -> None:
     cfg = PairConfig(mode=a.mode, bars=a.bars, prompt_tokens=a.prompt_tokens,
                      min_prompt_bars=a.min_prompt_bars,
                      max_new_tokens=a.max_new_tokens, temperature=a.temperature,
-                     top_k=a.top_k, model_label=a.label or label_name)
+                     top_k=a.top_k, model_label=a.label or label_name,
+                     model_label_b=a.label_b or (a.checkpoint_b.stem if a.checkpoint_b else ""))
     t0 = time.time()
 
     def on_pair(pair, i):
@@ -482,7 +500,7 @@ def main() -> None:
             print(f"[pairs] {i}/{todo}  {el/i:.2f}s/pair  "
                   f"eta {(todo - i) * el / i / 60:.0f} min", flush=True)
 
-    made = generate_pairs(gen, prompts, todo, cfg, seed=a.seed + have, on_pair=on_pair)
+    made = generate_pairs(gen, prompts, todo, cfg, seed=a.seed + have, on_pair=on_pair, gen_b=gen_b)
     el = time.time() - t0
     n = len(made)
     print(f"[pairs] done: {n} pairs in {el/60:.1f} min "
