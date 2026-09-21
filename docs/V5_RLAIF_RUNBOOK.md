@@ -137,8 +137,13 @@ policy trained on.
 
 Then a blind A/B via the labeling hub (pairgen on prompts_ab_v5_heldout with
 `--checkpoint runs/v5/ckpt_final.pt` vs the GRPO checkpoint through
-`label_app --checkpoint-b`, or two pairgen runs merged), and the 512-token
-scorecard against the base before anything ships:
+`label_app --checkpoint-b`, or two pairgen runs merged):
+
+    scripts/labeling_hub.sh   # every evals/labeling_*/ set, one server on :7789
+
+The hub only serves what is on the machine it runs on — pair MIDI is
+gitignored, so it has to be the worktree pairgen wrote to. Then the
+512-token scorecard against the base, before anything ships:
 
     python -m midigenai.eval_checkpoint --checkpoint <ckpt> --tokenizer runs/v5/tokenizer.json \
       --prompts evals/prompts_pool_v5_noabl --max-new-tokens 512 --out evals/scorecards/<name>.json
