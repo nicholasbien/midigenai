@@ -42,7 +42,7 @@ Over HTTP: `/api/accompany?instrument=bass` (or `auto`).
 
 | Version | Params | Notes |
 |---|---|---|
-| **`v5-rl`** (default) | 113M | v5 after GRPO. Preferred over v5 in blind A/B: 10–1 continuation, 8–1 accompaniment |
+| **`v5-rl`** (default) | 113M | v5 after GRPO. Preferred over v5 in blind A/B: 13–1 continuation, 8–1 accompaniment |
 | `v5` | 113M | base model: rebuilt corpus, audio transcriptions, drum-label fix |
 | `v4` | 113M | previous default |
 | `v4-large` | 202M | v4 at 202M; near-even with v4 in blind labels |
