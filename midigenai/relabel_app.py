@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import time
 import urllib.error
@@ -29,14 +30,33 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-# the four label sets and where their pair MIDI actually lives (the pairs/
-# dirs are gitignored, so most of them are only in the v4 worktree)
-DEFAULT_SETS = {
-    "v1": "/Users/nicholasbien/midigenai/evals/labeling",
-    "v3_same": "/Users/nicholasbien/midigenai-v4/evals/labeling_v3_same",
-    "v4": "/Users/nicholasbien/midigenai-v4/evals/labeling_v4",
-    "v4_final": "/Users/nicholasbien/midigenai-v4/evals/labeling_v4_final",
+# The four label sets and where their pair MIDI actually lives. The pairs/
+# dirs are gitignored, so these are local working copies rather than repo
+# paths -- hence home-relative defaults plus an override, instead of one
+# machine's absolute layout baked into a committed module.
+#
+#   MIDIGENAI_SETS="v4=/some/where,v1=/else"    overrides individual sets
+#   MIDIGENAI_WORKTREE=~/src/midigenai-v4       moves the v4-era sets together
+_V4_WORKTREE = os.environ.get("MIDIGENAI_WORKTREE", "~/midigenai-v4")
+_DEFAULT_SETS = {
+    "v1": "~/midigenai/evals/labeling",
+    "v3_same": f"{_V4_WORKTREE}/evals/labeling_v3_same",
+    "v4": f"{_V4_WORKTREE}/evals/labeling_v4",
+    "v4_final": f"{_V4_WORKTREE}/evals/labeling_v4_final",
 }
+
+
+def _resolve_sets(defaults: dict) -> dict:
+    """Expand `~` and apply MIDIGENAI_SETS overrides (`name=path`, comma-separated)."""
+    out = {k: os.path.expanduser(v) for k, v in defaults.items()}
+    for item in os.environ.get("MIDIGENAI_SETS", "").split(","):
+        name, _, path = item.partition("=")
+        if name.strip() and path.strip():
+            out[name.strip()] = os.path.expanduser(path.strip())
+    return out
+
+
+DEFAULT_SETS = _resolve_sets(_DEFAULT_SETS)
 PROMPT_TAIL_BEATS = 8.0  # label_app's default; only used when no timeline exists
 
 
