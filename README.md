@@ -70,8 +70,8 @@ python -m midigenai.data.build_dataset --manifest ... --out ... --exclude-ids ..
 python -m midigenai.modal_launch spawn --run-name <name> --corpus <corpus> --size medium --resume
 ```
 
-Launch with `--resume` so a preempted run picks up from its last checkpoint. Design notes and
-past decisions are in `docs/proposals/`.
+Launch with `--resume` so a preempted run picks up from its last checkpoint. What went into v5 and
+how it was measured is in [docs/v5.md](docs/v5.md); design proposals are in `docs/proposals/`.
 
 ## License
 
