@@ -26,7 +26,7 @@ from midigenai import load_from_hub, list_hub_versions
 gen = load_from_hub()
 
 # explicit version
-gen = load_from_hub(version="v3")        # pin an older checkpoint; default is v4
+gen = load_from_hub(version="v3")        # pin an older checkpoint; default is v5-rl
 
 # discover what's available on the hub
 print(list_hub_versions())   # ["v4", "v3", ...]
@@ -46,7 +46,7 @@ from pathlib import Path
 from typing import Optional
 
 DEFAULT_REPO = os.environ.get("MIDIGENAI_REPO_ID", "nicholasbien/midigenai")
-DEFAULT_VERSION = os.environ.get("MIDIGENAI_VERSION", "v4")
+DEFAULT_VERSION = os.environ.get("MIDIGENAI_VERSION", "v5-rl")
 
 CKPT_FILENAME = "ckpt_final.pt"
 TOKENIZER_FILENAME = "tokenizer.json"

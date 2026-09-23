@@ -39,13 +39,15 @@ MODELS_ROOT = "/models"
 CKPT_FILENAME = "ckpt_final.pt"
 TOKENIZER_FILENAME = "tokenizer.json"
 
-DEFAULT_VERSION = "v4"
+DEFAULT_VERSION = "v5-rl"
 
 # Versions this deployment will serve, keyed by the name the site sends as
 # `model=`. The value is the subfolder in both the Hub repo and the volume.
 # Anything not listed here is rejected rather than passed through, so a
 # stray query param can't make the server look for an arbitrary path.
 SERVED_VERSIONS = {
+    "v5-rl": "v5-rl",   # v5 after GRPO; the default
+    "v5": "v5",         # v5 base
     "v4": "v4",
     "v4-large": "v4-large",
     "v3": "v3",
@@ -58,7 +60,7 @@ SERVED_VERSIONS = {
 # hands back -- for the v4 line the key and the folder are the same string.
 # Kept next to the allowlist so the server and the site's mode lock can't
 # drift apart; the health endpoint publishes it.
-ACCOMPANIMENT_VERSIONS = ("v4", "v4-large")
+ACCOMPANIMENT_VERSIONS = ("v5-rl", "v5", "v4", "v4-large")
 
 
 def resolve_version(name: str | None) -> str:
