@@ -103,11 +103,18 @@ def _select(root, genres: list[str] | None, limit: int) -> list[str]:
 MAX_CONTAINERS = int(os.environ.get("MIDIGENAI_TRANSCRIBE_CONTAINERS", "4"))
 
 
-@app.function(image=image, gpu=GPU, volumes={"/data": vol}, timeout=12 * 3600,
+@app.function(image=image, gpu=GPU, volumes={"/data": vol}, timeout=24 * 3600,
               max_containers=MAX_CONTAINERS,
               secrets=[modal.Secret.from_name("huggingface")])
 def transcribe(paths: list[str], size: str = "large", out_dir: str = "/data/midi") -> dict:
-    """Transcribe a shard of audio files; writes <stem>.mid onto the volume."""
+    """Transcribe a shard of audio files; writes <stem>.mid onto the volume.
+
+    Shard SIZE matters more than shard count: containers are capped
+    (MAX_CONTAINERS), so extra shards queue rather than run, but a shard
+    holding more clips than fit in the function timeout is killed mid-way and
+    its remainder is simply never transcribed. At ~50 s/clip, keep shards
+    under ~800 clips. Re-running is free -- finished files are skipped.
+    """
     import time
     from pathlib import Path
     from muscriptor import TranscriptionModel
