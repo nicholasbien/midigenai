@@ -209,6 +209,7 @@ no labels are needed:
 | `Density_*` | 4 buckets of notes per bar | file |
 | `Poly_*` | 3 buckets of mean simultaneous notes | file |
 | `Range_*` | 3 buckets of pitch range | file |
+| `Tempo_*` | 7 BPM buckets (edges 70/90/110/130/150/175), the tempo in force for most of the file; omitted for placeholder-tempo sources (aria, maestro, giantmidi) and files without a tempo event. At inference the DAW clock sets it. The body is tempo-invariant, so this is the model's only tempo signal | file / clock |
 | `Genre_*` | ~16 tags | GigaMIDI metadata only; token omitted elsewhere |
 | `Source_*` | maestro / pop909 / giantmidi / lakh / lamd / aria / gigamidi | manifest |
 

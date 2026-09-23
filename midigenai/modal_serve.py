@@ -39,22 +39,61 @@ MODELS_ROOT = "/models"
 CKPT_FILENAME = "ckpt_final.pt"
 TOKENIZER_FILENAME = "tokenizer.json"
 
-DEFAULT_VERSION = "v4"
+DEFAULT_VERSION = "v5-rl"
 
 # Versions this deployment will serve, keyed by the name the site sends as
 # `model=`. The value is the subfolder in both the Hub repo and the volume.
 # Anything not listed here is rejected rather than passed through, so a
 # stray query param can't make the server look for an arbitrary path.
 SERVED_VERSIONS = {
+    "v5-rl": "v5-rl",   # v5 after GRPO; the default
+    "v5": "v5",         # v5 base
     "v4": "v4",
+    "v4-large": "v4-large",
     "v3": "v3",
     "v2": "v2-100m",
 }
+
+# Volume subfolders that can answer /api/accompany: accompaniment is a v4
+# document type (Task_accomp + SEP), and v2/v3 were never trained on it.
+# These are SERVED_VERSIONS *values*, since that is what resolve_version
+# hands back -- for the v4 line the key and the folder are the same string.
+# Kept next to the allowlist so the server and the site's mode lock can't
+# drift apart; the health endpoint publishes it.
+ACCOMPANIMENT_VERSIONS = ("v5-rl", "v5", "v4", "v4-large")
 
 
 def resolve_version(name: str | None) -> str:
     """Map a `model=` value to a volume subfolder, falling back to the default."""
     return SERVED_VERSIONS.get((name or "").strip(), SERVED_VERSIONS[DEFAULT_VERSION])
+
+
+def accompaniment_header(window, cond_index: int, instrument: str | None = None):
+    """(header token names, family asked for) for an accompaniment document.
+
+    The v4 header names what the finished document contains -- condition plus
+    target, the way data/v4_docs.py builds it -- so asking for a part means
+    listing the condition's own family alongside the requested one. With no
+    request the header keeps the families the upload carries, which is what
+    the model is left to interpret.
+
+    Module level, and taking the window rather than reading it off the class,
+    so the header the model is steered with can be checked without a GPU.
+    """
+    from midigenai.attributes import (
+        family_of, header_for_score, is_auto_instrument, resolve_family,
+        with_instruments,
+    )
+
+    names = header_for_score(window)
+    if is_auto_instrument(instrument):
+        return names, None
+    family = resolve_family(instrument)
+    if family is None:
+        raise ValueError(f"unknown instrument {instrument!r}")
+    cond_track = window.tracks[cond_index]
+    return with_instruments(
+        names, [family_of(cond_track.program, cond_track.is_drum), family]), family
 
 app = modal.App("midigenai-serve")
 
@@ -100,6 +139,51 @@ def sync_from_hub(version: str = DEFAULT_VERSION, repo_id: str = "nicholasbien/m
     volume.commit()
     return sorted(os.listdir(dest))
 
+
+@app.function(
+    image=image,
+    volumes={MODELS_ROOT: volume,
+             "/runs": modal.Volume.from_name("midigenai-runs"),
+             "/corpus": modal.Volume.from_name("midigenai-corpus")},
+    timeout=1800,
+    memory=16_384,
+)
+def publish_from_run(run_name: str, version: str, corpus: str,
+                     checkpoint: str = "ckpt_final.pt") -> dict:
+    """Copy a training run's checkpoint into the models volume as `version`,
+    with optimizer state stripped, plus the tokenizer from `corpus`.
+
+    Runs inside Modal, so the checkpoint never travels through a laptop. A
+    training checkpoint carries AdamW moments that serving never reads --
+    for the 113M that is 1365 MB of which 457 MB is weights -- and pulling
+    the full file over a home connection stalled at 1.3 GB for three hours.
+    The resumable copy stays on the runs volume; only the slim one is served.
+    """
+    import os
+    import shutil
+    import torch
+
+    src = os.path.join("/runs", run_name, checkpoint)
+    tok_src = os.path.join("/corpus", corpus, TOKENIZER_FILENAME)
+    for path in (src, tok_src):
+        if not os.path.exists(path):
+            raise FileNotFoundError(path)
+    dest = os.path.join(MODELS_ROOT, version)
+    os.makedirs(dest, exist_ok=True)
+
+    ckpt = torch.load(src, map_location="cpu", weights_only=False)
+    slim = {k: v for k, v in ckpt.items() if k != "optimizer"}
+    out = os.path.join(dest, CKPT_FILENAME)
+    torch.save(slim, out)
+    shutil.copyfile(tok_src, os.path.join(dest, TOKENIZER_FILENAME))
+    volume.commit()
+    return {
+        "version": version,
+        "full_mb": os.path.getsize(src) // 1_000_000,
+        "slim_mb": os.path.getsize(out) // 1_000_000,
+        "step": slim.get("step"),
+        "vocab": slim.get("model_config", {}).get("vocab_size"),
+    }
 
 @app.function(image=image, volumes={MODELS_ROOT: volume})
 def list_versions() -> dict:
@@ -216,6 +300,20 @@ class MidiGen:
                 logits, caches = model(next_ids, kv_caches=caches)
         return [list(gen.postprocess(prompt_ids, out)) for out in outs]
 
+    def _header_for_bytes(self, midi_bytes: bytes, tempo_bpm: float) -> list[int]:
+        """v4 attribute header for an upload: describes the prompt and
+        carries the tempo the answer will play at. [] on older checkpoints."""
+        if not self.gen.v4:
+            return []
+        from io import BytesIO
+
+        from symusic import Score
+
+        from midigenai.attributes import header_for_score
+        score = Score.from_midi(BytesIO(midi_bytes).read())
+        return self.gen.sp.header_ids_for(
+            self.gen.tokenizer, header_for_score(score, tempo=tempo_bpm))
+
     def _to_midi_bytes(self, full_ids: list[int], tempo_bpm: float) -> bytes:
         return self._score_to_bytes(self.gen.tokenizer.decode(full_ids), tempo_bpm)
 
@@ -247,6 +345,7 @@ class MidiGen:
         full_prompt = self.gen.encode_midi_bytes(midi_bytes)
         if tempo_bpm is None:
             tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+        full_prompt = [*self._header_for_bytes(midi_bytes, tempo_bpm), *full_prompt]
 
         # A prompt too long for the context window is cut at the end; the
         # continuation follows the cut, so the returned MIDI is the kept
@@ -283,6 +382,7 @@ class MidiGen:
         top_k: int = 50,
         n_samples: int = 1,
         tempo_bpm: float | None = None,
+        instrument: str | None = None,
     ) -> dict:
         """Write parts to go *with* the upload rather than after it.
 
@@ -291,12 +391,18 @@ class MidiGen:
         stacked. The upload is narrowed to its densest track, since the model
         is trained to answer a single part, and each returned MIDI is that
         condition overlaid with one generated answer.
+
+        `instrument` asks for a particular part -- "bass", "drums", "piano",
+        or any name attributes.resolve_family understands. It is written into
+        the attribute header, which names what the finished document holds,
+        so the request goes in as the condition's own family plus the one
+        asked for. Left unset, the header keeps the families the upload
+        already has and the model picks the part itself.
         """
         from io import BytesIO
 
         from symusic import Score
 
-        from midigenai.attributes import header_for_score
         from midigenai.data.v4_docs import _subscore, _window, bar_edges, trim_leading
         from midigenai.generate import densest_track, overlay
         from midigenai.tokenizer import normalize_drums
@@ -324,8 +430,15 @@ class MidiGen:
             raise ValueError("the chosen track has no notes in the first bars")
 
         cond_ids = self.gen.tokenizer(condition).ids
-        header = self.gen.sp.header_ids_for(
-            self.gen.tokenizer, header_for_score(window))
+
+        names, family = accompaniment_header(window, cond_index, instrument)
+        # Tempo_ rides along with the instrument-choice header: the clock the
+        # caller passes (or the file's own) becomes the family token, same as
+        # header_for_score(window, tempo=...) does for continuation.
+        from midigenai.attributes import tempo_tokens
+        if not any(n.startswith("Tempo_") for n in names):
+            names = [*names, *tempo_tokens(window, tempo=tempo_bpm)]
+        header = self.gen.sp.header_ids_for(self.gen.tokenizer, names)
 
         midis, note_counts = [], []
         for _ in range(n_samples):
@@ -348,6 +461,8 @@ class MidiGen:
             "track_names": [tr.name or "" for tr in window.tracks],
             "condition_notes": sum(len(tr.notes) for tr in condition.tracks),
             "generated_notes": note_counts,
+            "instrument": family,
+            "header": names,
             "tempo_bpm": tempo_bpm,
             "window_seconds": bars * beats_per_bar * 60.0 / tempo_bpm,
             "midi": midis[0],
@@ -367,6 +482,7 @@ class MidiGen:
         prompt = self.gen.encode_midi_bytes(midi_bytes)
         if tempo_bpm is None:
             tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+        prompt = [*self._header_for_bytes(midi_bytes, tempo_bpm), *prompt]
         for note in self.gen.stream_notes(
             prompt,
             chunk_tokens=chunk_tokens,
