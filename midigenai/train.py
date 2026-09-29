@@ -43,6 +43,11 @@ from midigenai.model import ModelConfig, MusicTransformer
 class TrainConfig:
     data_dir: Path
     out_dir: Path
+    # Which corpus this is, by name. data_dir is a mount path — on Modal it is
+    # always /tmp/corpus — so a finished checkpoint could not say what it was
+    # trained on. That cost a cross-session round trip to answer "does the
+    # 202M have accompaniment data", when the run should describe itself.
+    corpus_name: str = ""
     size: str = "pilot"            # "pilot" (25M) | "medium" (113M) | "large" (200M)
     batch_size: int = 16
     grad_accum: int = 4

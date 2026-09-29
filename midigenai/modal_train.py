@@ -11,7 +11,7 @@ Volumes:
     midigenai-runs    — checkpoints + train logs
 
 Upload corpus once (from wherever the shards live, e.g. Lambda):
-    modal volume put midigenai-corpus /home/ubuntu/data/v2_corpus_full /
+    modal volume put midigenai-corpus <local-corpus-dir> /
 
 Launch training:
     modal run midigenai/modal_train.py --size medium --max-steps 15000 --gpu H100
@@ -159,7 +159,7 @@ def train(
               f"({'inflated' if compressed else 'copied'}) in {_time.time()-t0:.0f}s")
         data_dir = staged
 
-    cfg = TrainConfig(
+    cfg = TrainConfig(corpus_name=corpus, 
         data_dir=data_dir,
         out_dir=out_dir,
         size=size,

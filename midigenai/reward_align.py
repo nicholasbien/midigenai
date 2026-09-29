@@ -134,6 +134,28 @@ def feature_vector(midi_path: Path) -> np.ndarray | None:
     return np.array([float(m[k]) for k in FEATURES])
 
 
+TOKENIZER: list = [None]        # set by main() from --tokenizer
+
+
+def _cont_ids(meta: dict, side: str, midi_path: Path, tokenizer) -> list[int] | None:
+    """The sampled token ids for one side, or the next best thing.
+
+    label_app and pairgen both record `cont_<side>_ids`. Pairs generated
+    before that was added have only the MIDI, so re-tokenise it: a decode /
+    encode round trip is not identical to what was sampled, but the drift
+    features only ask which half of the music is busier, and dropping those
+    pairs would cost more than the round trip does.
+    """
+    ids = meta.get(f"cont_{side}_ids")
+    if ids:
+        return list(ids)
+    try:
+        from symusic import Score
+        return tokenizer(Score(str(midi_path))).ids
+    except Exception:
+        return None
+
+
 def build_diffs(pairs) -> tuple[np.ndarray, list[str], list[str]]:
     """
     Rows of f(winner) - f(loser) + group ids. Drift features are appended only
@@ -143,8 +165,19 @@ def build_diffs(pairs) -> tuple[np.ndarray, list[str], list[str]]:
     use_drift = all(meta is not None for *_, meta, _win in pairs)
     tokenizer = None
     if use_drift:
-        from midigenai.tokenizer import build_tokenizer
-        tokenizer = build_tokenizer()
+        if TOKENIZER[0] is not None:
+            tokenizer = TOKENIZER[0]
+        else:
+            # NB: the default is MIDILike (what v3 used). A v4 pair's ids are
+            # REMI and decode to nonsense under it, so --tokenizer is required
+            # for v4 data and the drift features are dropped without it.
+            from midigenai.tokenizer import build_tokenizer, is_v4
+            tokenizer = build_tokenizer()
+            if any("v4" in str(json.loads(m.read_text()).get("model_a", ""))
+                   for *_, m, _w in pairs[:1] if m is not None):
+                print("[align] v4 pairs but no --tokenizer given: dropping drift "
+                      "features rather than decoding REMI ids as MIDILike")
+                use_drift = False
 
     cache: dict[Path, np.ndarray | None] = {}
 
@@ -162,8 +195,8 @@ def build_diffs(pairs) -> tuple[np.ndarray, list[str], list[str]]:
         if use_drift:
             meta = json.loads(meta_path.read_text())
             lose = "b" if win == "a" else "a"
-            dw = drift_vector(meta[f"cont_{win}_ids"], tokenizer)
-            dl = drift_vector(meta[f"cont_{lose}_ids"], tokenizer)
+            dw = drift_vector(_cont_ids(meta, win, w, tokenizer), tokenizer)
+            dl = drift_vector(_cont_ids(meta, lose, l, tokenizer), tokenizer)
             if dw is None or dl is None:
                 continue
             row = np.concatenate([row, dw - dl])
@@ -174,10 +207,17 @@ def build_diffs(pairs) -> tuple[np.ndarray, list[str], list[str]]:
 
 
 def fit_bt(diffs: np.ndarray, l2: float = 1.0, iters: int = 2000,
-           lr: float = 0.1) -> np.ndarray:
-    """Bradley–Terry MLE by gradient descent; every row is a win (y=1)."""
+           lr: float = 0.1, w0: np.ndarray | None = None) -> np.ndarray:
+    """Bradley–Terry MLE by gradient descent; every row is a win (y=1).
+
+    `w0` warm-starts the descent. The objective is convex, so this reaches
+    the same optimum — it just gets there sooner, which matters for
+    leave-one-group-out over a wide feature space: the probe's 769 features
+    across ~400 prompt groups is ~77x the work per iteration of the
+    10-feature metric fit.
+    """
     n, d = diffs.shape
-    w = np.zeros(d)
+    w = np.zeros(d) if w0 is None else np.array(w0, dtype=np.float64)
     for _ in range(iters):
         p = 1.0 / (1.0 + np.exp(-diffs @ w))
         grad = diffs.T @ (1.0 - p) / n - l2 * w / n
@@ -227,8 +267,14 @@ def main():
     p.add_argument("--historical", type=Path, default=None,
                    help="consolidated preferences.csv")
     p.add_argument("--l2", type=float, default=1.0)
+    p.add_argument("--tokenizer", type=Path, default=None,
+                   help="tokenizer the pairs were generated with; required for "
+                        "v4 data, whose REMI ids are nonsense under MIDILike")
     p.add_argument("--out", type=Path, default=Path("evals/reward_spec.json"))
     args = p.parse_args()
+    if args.tokenizer:
+        from midigenai.tokenizer import load_tokenizer
+        TOKENIZER[0] = load_tokenizer(args.tokenizer)
 
     pairs, all_votes = [], {}
     if args.labels and args.labels.exists():

@@ -90,7 +90,7 @@ unresolvable by anyone, and that caps every rater.
 | variable | result |
 |---|---|
 | rendering: `notes` vs `abc` | `notes` wins clearly (0.73 vs 0.60–0.67) — `midi2abc` renders machine polyphony as walls of tied chord brackets and turns drums into pitches |
-| rubric: base / fit_only / taste / strict | `strict` (0.737 dev) > taste (0.722) > base (0.692) > fit_only (0.667) |
+| rubric: base / fit_only / taste / strict | on the v3_same dev split with sol: `strict` 0.737 > taste 0.722 > base 0.692 > fit_only 0.667 — **superseded**, see "One rubric" below |
 | model | `gpt-5.6-sol` > `gpt-5.6-luna` > `gpt-4.1-mini` |
 | position bias | 0.433 first-pass pick rate — no meaningful side preference |
 
@@ -155,3 +155,30 @@ above ~0.85 is memorizing, not learning. And the judge is only validated on
 *this* distribution — pairs from v3/v4 checkpoints on held-out prompts. A
 policy pushed far from that by RL is outside the distribution the judge was
 checked on, which is what the KL leash in `grpo.py` is for.
+
+
+## One rubric for every prompt distribution (2026-09-16)
+
+The `strict` rubric validated above does not transfer to the user's own
+Ableton clips: 0.632 on a held-out test half, while sol and luna agree with
+each other 0.92 on the same pairs — a shared judge prior, not ambiguity.
+Five rubrics were run on three distributions (val = v3_same + v4_final,
+FMA transcriptions, Ableton) with dev/test halves by pair-id hash, picked
+on dev by best worst-case, reported on test:
+
+| rubric | val-test | FMA-test | Ableton-test |
+|---|---|---|---|
+| `strict` | 0.838 | 0.714 | 0.632 |
+| **`fit_only`** | **0.861** | **0.786** | **0.739** |
+| fit + defect veto | 0.851 | 0.714 | 0.652 |
+| fit, then musicality | 0.870 | 0.714 | 0.609 |
+| fit + abstain rule | 0.835 | 0.688 | 0.708 |
+
+Apples-to-apples on the full 275-pair val corpus with sol: `strict` 0.787
+on 235 decided (tie 0.145, swap-consistency 0.855); `fit_only` **0.752 on
+242** (tie 0.120, swap-consistency 0.880). The 3.5-point gap is inside the
+confidence intervals; the 10-point gain on Ableton is not. `fit_only` is
+the default. The judge is better when asked to have fewer opinions: on
+material unlike the authored-MIDI val sets, its judgements about
+musicality and defects cost agreement, and "does this belong to the same
+piece" is what it can reliably hear.

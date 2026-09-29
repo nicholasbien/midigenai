@@ -73,7 +73,27 @@
   .opt.playing { border-color: var(--playing); }
   .rows .opt { margin-bottom: 10px; }
   .legend { font-size: 11px; color: var(--faint); margin: 4px 0 8px; }
+  /* the pair's files: id, source prompt, and downloads under blind names */
+  .files { font-size: 11px; color: var(--faint); margin: 0 0 8px; word-break: break-all; }
+  .files a { color: var(--accent); text-decoration: none; margin-right: 8px; white-space: nowrap; }
+  .files a:hover { text-decoration: underline; }
+  .files code { font-size: 11px; color: var(--muted); }
+  /* every take names itself: short pair id, side, and a download arrow */
+  .hid { float: right; font-weight: 400; font-family: ui-monospace, Menlo, monospace; font-size: 11px; color: var(--faint); }
+  .hid a { color: var(--accent); text-decoration: none; font-size: 13px; margin-left: 4px; }
   .buttons { margin-top: 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+  /* votes, by how often they are pressed: the two answers on top and big,
+     then tie / both bad / skip, then transport, then the defect reports */
+  .votes { display: grid; gap: 8px; margin-top: 8px; }
+  .votes.primary { grid-template-columns: 1fr 1fr; margin-top: 12px; }
+  .votes.primary button { font-size: 18px; font-weight: 600; padding: 16px 12px; border-width: 2px; }
+  .votes.primary button:hover { border-color: var(--accent); }
+  .votes.secondary { grid-template-columns: 1fr 1fr 1fr; }
+  .votes.secondary button { font-size: 14px; padding: 11px 10px; }
+  .votes.transport { grid-template-columns: repeat(5, 1fr); }
+  .votes.transport button { font-size: 12px; padding: 8px 6px; color: var(--muted); }
+  .votes.reports { grid-template-columns: 1fr 1fr; margin-top: 12px; }
+  .votes.reports button { font-size: 12px; padding: 7px 8px; opacity: .8; }
   button { padding: 9px 14px; border: 1px solid var(--btn-br); background: var(--btn); color: var(--fg); border-radius: 6px; cursor: pointer; font-size: 13px; }
   button:hover { background: var(--btn-hover); }
   kbd { background: var(--kbd); border-radius: 3px; padding: 1px 5px; font-size: 11px; margin-left: 6px; }
@@ -89,7 +109,7 @@
     body { margin: 6px auto; padding: 0 8px; }
     /* both continuations have to fit one screen: drop the prose, the chrome,
        and the built-in transport (the roll already shows position) */
-    h1, .sub, .legend, .hint, .statusbar, .eid { display: none; }
+    h1, .sub, .legend, .hint, .eid { display: none; }
     midi-player { display: none; }
     .card { padding: 8px; }
     .opt { padding: 8px; margin-bottom: 6px; }
@@ -97,9 +117,13 @@
     .rowplay { margin-top: 6px; gap: 6px; }
     .chips { margin-top: 4px; }
     .chip { padding: 2px 8px; font-size: 11px; }
-    .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
     button { padding: 14px 10px; font-size: 15px; }
-    button.wide { grid-column: 1 / -1; }
+    .votes.primary button { font-size: 20px; padding: 20px 10px; }
+    .votes.secondary button { padding: 14px 8px; }
+    .votes.transport { grid-template-columns: repeat(3, 1fr); }
+    .votes.transport button { padding: 12px 4px; font-size: 13px; }
+    .votes.reports { grid-template-columns: 1fr; }
+    .votes.reports button { padding: 10px 8px; }
     kbd { display: none; }
   }
   .rowplay { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
@@ -110,27 +134,139 @@
     font-size: 17px; color: var(--fg); padding: 24px; }
   #tapstart b { display: block; font-size: 20px; margin-bottom: 8px; }
   @keyframes flash { 0% { background: var(--flash); } 100% { background: var(--card); } }
+  /* voice control: one pill in the status bar, plus what was last heard */
+  .voice { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+  #voicebtn { padding: 4px 9px; font-size: 12px; white-space: nowrap; }
+  #morebtn { display: none; }   /* phone only: opens the folded controls */
+  #voicebtn.on { border-color: var(--playing); color: var(--playing); }
+  #voicebtn.err { border-color: var(--warn-br); color: var(--warn); }
+  #heard { color: var(--faint); font-style: italic; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* the ask: shown once both takes have played and the page is waiting on you */
+  .ask { margin-top: 12px; padding: 10px 14px; border-radius: 6px; border: 1px dashed var(--btn-br);
+         font-size: 14px; color: var(--muted); text-align: center; }
+  .ask.now { border-color: var(--accent); color: var(--fg); border-style: solid; }
+  .ask b { color: var(--accent); }
+  .settings { display: flex; gap: 14px; align-items: center; font-size: 12px; color: var(--muted); flex-wrap: wrap; }
+  .settings input[type=number] { width: 52px; font-size: 12px; }
+  /* tap-to-listen: the phone fallback when the recognizer will not start on
+     its own (iOS wants a touch behind the first start) */
+  #listenbtn { display: none; margin-top: 8px; padding: 12px 18px; font-size: 16px; border-color: var(--playing); color: var(--playing); }
+  #listenbtn.show { display: inline-block; }
+  /* seed upload: a file picker in the status bar, or drop a .mid anywhere */
+  .seed { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+  /* source selector: this server's sets, then the other label servers on the machine */
+  #source { font-size: 12px; max-width: 360px; padding: 3px 6px; border: 1px solid var(--btn-br); border-radius: 5px; background: var(--btn); color: var(--fg); }
+  #srcmode { font-size: 11px; color: var(--accent); margin-left: 6px; }
+  @media (max-width: 760px) { #source { max-width: 60vw; } }
+  .seed input[type=file] { font-size: 12px; max-width: 200px; }
+  .seed input[type=number] { width: 44px; font-size: 12px; }
+  #seednote { color: var(--accent); }
+  body.dropping::after { content: "drop the .mid to seed the next pairs"; position: fixed; inset: 0;
+    display: flex; align-items: center; justify-content: center; font-size: 20px;
+    background: var(--scrim); color: var(--accent); border: 3px dashed var(--accent); z-index: 60; }
+  #volwrap { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+  /* phone rules last: same specificity as the base rules, so order decides */
+  @media (max-width: 760px) {
+    /* phone: the top row keeps source, mic and theme; volume, settings, seed
+       upload and counts sit behind the gear, stacked full-width when open */
+    .statusbar { margin: 4px 0; gap: 8px; flex-wrap: wrap; align-items: center; }
+    #volwrap, .settings, .seed, #count, #queue { display: none; }
+    body.more #volwrap, body.more .settings, body.more .seed { display: flex; width: 100%; }
+    body.more #count, body.more #queue { display: inline; font-size: 13px; }
+    #volwrap { font-size: 14px !important; } #volwrap input { flex: 1; }
+    .settings { flex-direction: column; align-items: stretch; gap: 10px; padding: 8px 0; border-top: 1px solid var(--card-br); }
+    .settings label, .seed label { font-size: 14px; display: flex; align-items: center; gap: 8px; }
+    .settings input[type=number], .settings select, .seed input[type=number] { font-size: 16px; padding: 4px; }
+    .settings input[type=checkbox] { width: 20px; height: 20px; }
+    .seed { flex-direction: column; align-items: stretch; gap: 8px; }
+    .seed input[type=file] { max-width: 100%; font-size: 14px; }
+    #heard { display: block; max-width: 100%; white-space: normal; font-size: 12px; }
+    #voicebtn, #morebtn, #theme { padding: 8px 12px; font-size: 14px; }
+    #morebtn { display: inline-block; }
+    /* a long set name must shrink the select, not widen the page */
+    #source { flex: 1; min-width: 0; width: 100%; font-size: 14px; padding: 8px 6px; }
+    .statusbar > label { min-width: 0; }
+    .voice { width: 100%; justify-content: flex-end; }
+    body { overflow-x: hidden; }
+  }
 </style>
 </head>
 <body>
   <h1>midigenai — preference labeling</h1>
-  <div class="sub">Listen to the prompt, then both continuations. Pick the better one.
-    <kbd>1</kbd> left &nbsp;<kbd>2</kbd> right &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip
-    &nbsp;·&nbsp; flags (before voting): <kbd>q</kbd>/<kbd>w</kbd> degrades &nbsp;<kbd>e</kbd>/<kbd>r</kbd> too long</div>
+  <div class="sub">Each pair plays itself: prompt + take 1, a short pause, prompt + take 2, then it waits for your call. Vote by key, click, or voice.
+    <kbd>1</kbd> take 1 &nbsp;<kbd>2</kbd> take 2 &nbsp;<kbd>t</kbd> tie &nbsp;<kbd>x</kbd> both bad &nbsp;<kbd>s</kbd> skip
+    &nbsp;·&nbsp; flags (before voting): <kbd>q</kbd>/<kbd>w</kbd> degrades &nbsp;<kbd>e</kbd>/<kbd>r</kbd> too long
+    &nbsp;·&nbsp; say “one”, “two”, “tie”, “both bad”, “skip”, “play again”, “play 1 again”, “next one”, “pause”, “resume”, “stop”, “start over”, “undo” (on a phone the mic opens after both takes have played)</div>
   <div class="statusbar" style="align-items:center">
-    <label style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted)">
-      volume <input id="vol" type="range" min="-20" max="24" step="1" value="10"
+    <label id="volwrap">
+      volume <input id="vol" type="range" min="-20" max="24" step="1" value="0"
         oninput="setVolume(this.value)" style="width:150px">
-      <span id="voldb">+10 dB</span>
+      <span id="voldb">0 dB</span>
     </label>
-    <button id="theme" onclick="toggleTheme()" title="light / dark (n)">🌙</button>
+    <div class="settings">
+      <label><input type="checkbox" id="replayprompt" onchange="saveSettings()"> prompt before take 2</label>
+      <label>pause <input type="number" id="pausems" min="0" max="5000" step="100" onchange="saveSettings()"> ms</label>
+      <label title="one gain per pair from its velocities and density; playback only"><input type="checkbox" id="normalize" onchange="saveSettings()"> even out loudness</label>
+      <label title="always: the mic stays open, also while the takes play. after playback: it opens once both takes have played (phones; keeps the mic away from the music)">voice
+        <select id="voicemode" onchange="Voice.setMode(this.value)"><option value="always">always on</option><option value="after">after playback</option></select></label>
+    </div>
+    <div class="voice">
+      <span id="heard"></span>
+      <button id="voicebtn" onclick="Voice.toggle()" title="voice votes (v)">🎤 voice off</button>
+      <button id="morebtn" onclick="document.body.classList.toggle('more')" title="volume, settings, seed upload">⚙</button>
+      <button id="theme" onclick="toggleTheme()" title="light / dark (n)">🌙</button>
+    </div>
   </div>
-  <div class="statusbar"><span id="count">0 labeled this session</span><span id="queue"></span></div>
+  <div class="statusbar" style="align-items:center">
+    <label style="display:flex;gap:6px;align-items:center;flex:1">source
+      <select id="source" onchange="switchSource(this)"><option>…</option></select><span id="srcmode"></span></label>
+  </div>
+  <div class="statusbar"><span id="count">0 labeled this session</span>
+    <span class="seed">
+      <span id="seednote"></span>
+      <label>seed with your MIDI <input type="file" id="seedfile" accept=".mid,.midi" onchange="uploadSeed(this.files)"></label>
+      <label>× <input type="number" id="seedn" min="1" max="20" value="3" title="pairs to make from it"> pairs</label>
+    </span>
+    <span id="queue"></span></div>
   <div id="tapstart"><div><b>Tap to start</b>Phone browsers block audio until you touch the page.</div></div>
   <div id="stage" class="card"><div class="waiting">warming up the model…</div></div>
 
 <script>
 const SESSION_ID = crypto.randomUUID();
+// which of this server's sets to serve; empty = the server's first (default)
+const SOURCE = new URLSearchParams(location.search).get('source') || '';
+// Server paths are resolved against the page's own URL, not the site root:
+// behind the hub the same page is served at /live/<port>/ and must talk to
+// /live/<port>/api/... — a leading slash would escape the prefix.
+const rel = (path) => new URL(String(path).replace(/^\//, ''), location.href).pathname;
+const withSource = (path) => rel(path) + (SOURCE ? `?source=${encodeURIComponent(SOURCE)}` : '');
+
+async function loadSources() {
+  const sel = document.getElementById('source');
+  try {
+    const d = await (await fetch(withSource('/api/sources'))).json();
+    sel.innerHTML = '';
+    let mode = '';
+    for (const s of d.sources) {
+      const o = document.createElement('option');
+      o.value = s.url;
+      o.textContent = (s.here ? '' : '↗ ') + s.label;
+      o.dataset.here = s.here ? '1' : '';
+      if (s.current) { o.selected = true; mode = s.mode || ''; }
+      sel.appendChild(o);
+    }
+    document.getElementById('srcmode').textContent = mode;
+  } catch (e) {
+    sel.innerHTML = '<option>(no source list)</option>';
+  }
+}
+
+function switchSource(sel) {
+  const o = sel.selectedOptions[0];
+  if (!o || !o.value) return;
+  stopPlayback();
+  location.href = o.value;
+}
 
 function applyTheme(t) {
   document.documentElement.setAttribute('data-theme', t);
@@ -144,25 +280,84 @@ function toggleTheme() {
   applyTheme(now === 'dark' ? 'light' : 'dark');
 }
 
+// ---- listening-level normalization: one gain per pair, from the velocities
+// and note density of everything in it, so successive pairs sit at a similar
+// loudness while the two takes keep their relative level. Playback only —
+// the files and the recorded votes are untouched. ----
+let pairGainDb = 0;
+const NORM_TARGET_VEL = 99;   // p80 velocity a pair is brought to (the median across the label sets)
+const NORM_TARGET_NPS = 9;    // notes per second treated as neutral (median; the sets span 2–34)
+function pairGain(p) {
+  const rolls = ['left_roll', 'right_roll', 'prompt_roll'].map(k => (p[k] && p[k].notes) || []).filter(r => r.length);
+  const notes = rolls.flat();
+  if (notes.length < 4) return 0;
+  const vs = notes.map(n => n.v).sort((a, b) => a - b);
+  const p80 = Math.max(1, vs[Math.min(vs.length - 1, Math.floor(vs.length * 0.8))]);
+  const nps = rolls.map(r => r.length / Math.max(1, Math.max(...r.map(n => n.e)) - Math.min(...r.map(n => n.s))));
+  const dens = Math.max(0.5, nps.reduce((a, b) => a + b, 0) / nps.length);
+  // velocity is roughly amplitude (20 log); density adds energy, counted at
+  // half weight since simultaneous notes are only part of the note rate
+  const db = 20 * Math.log10(NORM_TARGET_VEL / p80) - 5 * Math.log10(dens / NORM_TARGET_NPS);
+  return Math.round(Math.max(-10, Math.min(10, db)));
+}
+
 function setVolume(db) {
   db = Number(db);
-  localStorage.setItem('labelVolumeDb', String(db));
+  localStorage.setItem('labelVolumeDb0', String(db));
+  const auto = settings.normalize ? pairGainDb : 0;
   const el = document.getElementById('voldb');
-  if (el) el.textContent = (db >= 0 ? '+' : '') + db + ' dB';
+  if (el) el.textContent = (db >= 0 ? '+' : '') + db + ' dB' +
+    (settings.normalize ? ` (auto ${auto >= 0 ? '+' : ''}${auto})` : '');
   try {
     // html-midi-player renders through Tone's destination; a player's own
     // volume is per-element and resets with every new pair, so set the master
     const dest = window.Tone && (Tone.getDestination ? Tone.getDestination() : Tone.Destination);
-    if (dest && dest.volume) dest.volume.value = db;
+    if (dest && dest.volume) dest.volume.value = db + auto;
   } catch (e) {}
 }
 let current = null;
 let sessionCount = 0;
 let totalCount = 0;
+// pairs voted this session, newest last, exactly as they were shown — undo
+// pops one and puts it back on screen; `pending` holds the pair that was on
+// screen when undo was pressed, so it returns after the re-vote
+const history = [];
+const pending = [];
+
+// status line for anything that goes wrong on the page (playback, mic)
+function note(msg) {
+  const el = document.getElementById('loadnote');
+  if (el) el.textContent = msg || '';
+
+}
+
+// ---- settings: how a pair plays itself ----
+// replayPrompt: hear the prompt again before take 2 (both takes then start
+// from the same place in your ear); off plays take 2 from the handoff only.
+// pauseMs: silence between the two takes.
+const settings = { replayPrompt: true, pauseMs: 800, normalize: true };
+function loadSettings() {
+  try {
+    const s = JSON.parse(localStorage.getItem('labelPlaySettings') || '{}');
+    if (typeof s.replayPrompt === 'boolean') settings.replayPrompt = s.replayPrompt;
+    if (Number.isFinite(s.pauseMs)) settings.pauseMs = s.pauseMs;
+    if (typeof s.normalize === 'boolean') settings.normalize = s.normalize;
+  } catch (e) {}
+  document.getElementById('replayprompt').checked = settings.replayPrompt;
+  document.getElementById('pausems').value = settings.pauseMs;
+  document.getElementById('normalize').checked = settings.normalize;
+}
+function saveSettings() {
+  settings.replayPrompt = document.getElementById('replayprompt').checked;
+  settings.pauseMs = Math.max(0, Number(document.getElementById('pausems').value) || 0);
+  settings.normalize = document.getElementById('normalize').checked;
+  try { localStorage.setItem('labelPlaySettings', JSON.stringify(settings)); } catch (e) {}
+  setVolume(document.getElementById('vol').value);
+}
 
 async function fetchStats() {
   try {
-    const s = await (await fetch('/api/stats')).json();
+    const s = await (await fetch(withSource('/api/stats'))).json();
     totalCount = s.total_labels;
     updateCount();
   } catch (e) {}
@@ -175,18 +370,26 @@ function updateCount() {
 
 async function loadNext() {
   current = null;
+  setPhase('idle');
   const stage = document.getElementById('stage');
+  if (pending.length) { current = pending.pop(); render(); return; }
   stage.innerHTML = '<div class="waiting">generating next pair…</div>';
   while (true) {
     let res;
-    try { res = await fetch('/api/next'); }
+    try { res = await fetch(withSource('/api/next')); }
     catch (e) { await new Promise(r => setTimeout(r, 1500)); continue; }
     if (res.status === 202) continue;   // still generating; server long-polls
     const data = await res.json();
     if (data.status === 'ok') {
       current = data.pair;
+      for (const k of Object.keys(current)) if (k.endsWith('_url') && current[k]) current[k] = rel(current[k]);
       document.getElementById('queue').textContent = `${data.queued} queued`;
       render();
+      return;
+    }
+    if (data.status === 'done') {
+      stage.innerHTML = '<div class="waiting">every pair in this set has a vote — pick another source above</div>';
+      loadSources();
       return;
     }
   }
@@ -236,21 +439,46 @@ function setupRoll(side, roll, lo, hi) {
   const shade = document.getElementById('shade-' + side);
   const line = document.getElementById('cut-' + side);
   const label = document.getElementById('cutlabel-' + side);
+  if (!shade || !line || !label) return;   // the prompt row has no handoff
   shade.style.width = x + 'px';
   line.style.left = x + 'px';
   label.style.left = (x + 4) + 'px';
 }
 
-// auto-play: side 1 with the prompt tail for context, then side 2 from the
-// handoff only — the prompt is identical on both sides, so replaying it just
-// costs time. `withPrompt` forces the full row (used by the 'a'/'b' keys).
-function playSide(side, withPrompt) {
+// ---- playback phase: 'idle' (nothing to play) -> 'playing' (a sequence is
+// running) -> 'awaiting' (both takes heard; the page is waiting on you).
+// The ask banner and the voice pill both read from this. ----
+let phase = 'idle';
+function setPhase(p) {
+  phase = p;
+  const ask = document.getElementById('ask');
+  if (ask) {
+    ask.classList.toggle('now', p === 'awaiting');
+    ask.innerHTML = p === 'awaiting'
+      ? `Which was better? <b>1</b> or <b>2</b>${Voice.enabled ? ' — or say it, or “play again”' : ' — or “play again”'}`
+      : p === 'playing' ? 'playing… (you can vote any time; “pause”, “stop”, “next one”)'
+      : p === 'paused' ? 'paused — <b>space</b> or “resume”; “start over” plays both from the top' : '';
+  }
+  const pb = document.getElementById('pausebtn');
+  if (pb) pb.innerHTML = p === 'playing' ? '&#10074;&#10074; pause<kbd>space</kbd>' : '&#9654; resume<kbd>space</kbd>';
+  Voice.onPhase(p);
+  Voice.paint();
+}
+
+function stopAll() {
+  document.querySelectorAll('midi-player').forEach(pl => { try { pl.stop(); } catch (e) {} });
+  document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing'));
+}
+
+// `withPrompt` plays the row from its start (prompt tail + take); otherwise
+// from the handoff line only.
+function playSide(side, withPrompt, at = null) {
   const pl = document.getElementById('pl-' + side);
   if (!pl) return;
   markInteracted();
   document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing'));
   document.getElementById('opt-' + side).classList.add('playing');
-  const offset = withPrompt ? 0 : (current[side + '_roll'].prompt_end_s || 0);
+  const offset = at !== null ? at : withPrompt ? 0 : (current[side + '_roll'].prompt_end_s || 0);
   try {
     pl.currentTime = offset;
     const r = pl.start();
@@ -260,20 +488,291 @@ function playSide(side, withPrompt) {
   }
 }
 
-function playSequence(mode = 'both') {
-  const plan = mode === 'both' ? [['left', true], ['right', false]]
-             : mode === 'left' ? [['left', true]]
-             : [['right', false]];
-  const go = (i) => {
-    if (i >= plan.length) { document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing')); return; }
+// One sequence at a time: a replay started mid-sequence invalidates the old
+// one's chained 'stop' handlers, so two plans never interleave. `seq` is the
+// running plan and its step, which is what pause saves and resume restarts.
+let seqToken = 0;
+let seq = null;       // {plan, i}
+let paused = null;    // {plan, i, offset} while paused
+let lastSide = null;  // the take most recently started; "next one" is the other
+
+function runPlan(plan, i0 = 0, offset = null) {
+  const token = ++seqToken;
+  stopAll();
+  paused = null;
+  seq = { plan, i: i0 };
+  setPhase('playing');
+  const go = (i, at) => {
+    if (token !== seqToken) return;
+    if (i >= plan.length) {
+      document.querySelectorAll('.opt').forEach(o => o.classList.remove('playing'));
+      seq = null;
+      setPhase('awaiting');
+      return;
+    }
+    seq.i = i;
     const [side, withPrompt] = plan[i];
     const pl = document.getElementById('pl-' + side);
-    const onStop = () => { pl.removeEventListener('stop', onStop); setTimeout(() => go(i + 1), 200); };
+    if (!pl) return;
+    const onStop = () => {
+      pl.removeEventListener('stop', onStop);
+      if (token !== seqToken) return;
+      const gap = i + 1 < plan.length ? settings.pauseMs : 0;
+      setTimeout(() => go(i + 1, null), gap);
+    };
     pl.addEventListener('stop', onStop);
-    playSide(side, withPrompt);
+    lastSide = side;
+    if (at === null) playSide(side, withPrompt);
+    else playSide(side, withPrompt, at);
   };
-  document.querySelectorAll('midi-player').forEach(pl => { try { pl.stop(); } catch (e) {} });
-  go(0);
+  go(i0, offset);
+}
+
+function playSequence(mode = 'both') {
+  if (!current) return;
+  const plan = mode === 'both' ? [['left', true], ['right', settings.replayPrompt]]
+             : mode === 'left' ? [['left', true]]
+             : [['right', true]];
+  runPlan(plan);
+}
+
+// "start over": both takes from the top, the same as the first play
+function startOver() { playSequence('both'); }
+
+// "next one": whichever take is not the one playing (or last played)
+function playOther() {
+  playSequence(lastSide === 'left' ? 'right' : 'left');
+}
+
+function pausePlayback() {
+  if (phase !== 'playing' || !seq) return;
+  const [side] = seq.plan[seq.i];
+  const pl = document.getElementById('pl-' + side);
+  let offset = 0;
+  try { offset = pl.currentTime || 0; } catch (e) {}
+  paused = { plan: seq.plan, i: seq.i, offset };
+  seqToken++;           // the stop below must not advance the plan
+  stopAll();
+  seq = null;
+  setPhase('paused');
+}
+
+function resumePlayback() {
+  if (!paused) { if (phase !== 'playing') startOver(); return; }
+  const p = paused;
+  runPlan(p.plan, p.i, p.offset);
+}
+
+function togglePause() {
+  if (phase === 'playing') pausePlayback();
+  else resumePlayback();
+}
+
+function stopPlayback() {
+  seqToken++;
+  paused = null;
+  seq = null;
+  stopAll();
+  setPhase(current ? 'awaiting' : 'idle');
+}
+
+// ---- voice votes: the browser's speech recognizer (Chrome, Safari), kept
+// running across pairs. Only whole-word matches count, digits included
+// because "one" is usually transcribed as "1". A transcript naming both
+// takes without "first"/"second" is ambiguous and ignored. ----
+const Voice = {
+  rec: null, enabled: false, active: false, err: '', wantsTap: false, fails: 0,
+  supported: !!(window.SpeechRecognition || window.webkitSpeechRecognition) && window.isSecureContext,
+  // 'always': one continuous recognizer, restarted whenever it stops (desktop).
+  // 'after': a one-shot recognizer opened when both takes have played and the
+  // page is waiting, closed when playback starts. Phones default to this:
+  // iOS Safari does not really do continuous recognition, Android beeps on
+  // every restart, and an open mic makes iOS route the music to the earpiece.
+  mode: 'always',
+  isPhone: matchMedia('(hover: none)').matches,
+  init() {
+    if (!this.supported) { this.paint(); return; }
+    let on = false, mode = null;
+    try { on = localStorage.getItem('labelVoice') === 'on'; mode = localStorage.getItem('labelVoiceMode'); } catch (e) {}
+    this.mode = mode || (this.isPhone ? 'after' : 'always');
+    const sel = document.getElementById('voicemode');
+    if (sel) sel.value = this.mode;
+    // remembered on: the recognizer is created now and opened at the first
+    // touch (phones refuse a start with no gesture behind it)
+    if (on) { this.enabled = true; if (!this.isPhone && this.mode === 'always') this.open(); }
+    this.paint();
+  },
+  setMode(m) {
+    this.mode = m === 'after' ? 'after' : 'always';
+    try { localStorage.setItem('labelVoiceMode', this.mode); } catch (e) {}
+    this.close();
+    if (this.enabled) this.onPhase(phase);
+    this.paint();
+  },
+  toggle() {
+    if (!this.supported) {
+      note(window.isSecureContext ? 'this browser has no speech recognition (try Chrome or Safari)'
+                                  : 'voice needs https (the tunnel link) or localhost');
+      return;
+    }
+    if (this.enabled) { this.enabled = false; this.close(); }
+    else { this.enabled = true; this.err = ''; this.fails = 0; this.onPhase(phase); }
+    try { localStorage.setItem('labelVoice', this.enabled ? 'on' : 'off'); } catch (e) {}
+    setPhase(phase);
+  },
+  // called from the first touch on a phone: open from inside the gesture
+  onGesture() {
+    if (this.enabled && !this.active && (this.mode === 'always' || phase === 'awaiting')) this.open();
+  },
+  // "tap, then say 1 or 2": the user's touch is what iOS needs
+  listenNow() { this.wantsTap = false; this.fails = 0; this.open(); this.paint(); },
+  onPhase(p) {
+    if (!this.enabled || !this.supported) return;
+    if (this.mode === 'always') { if (!this.active) this.open(); return; }
+    if (p === 'awaiting') this.open();
+    else this.close();
+  },
+  shouldListen() {
+    return this.enabled && (this.mode === 'always' || phase === 'awaiting');
+  },
+  open() {
+    if (this.active || !this.supported) return;
+    const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const rec = new R();
+    rec.lang = 'en-US';
+    rec.continuous = this.mode === 'always';
+    rec.interimResults = false;
+    rec.maxAlternatives = 3;
+    let heardSomething = false;
+    rec.onstart = () => { this.active = true; this.err = ''; this.wantsTap = false; this.paint(); };
+    rec.onresult = (ev) => {
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const r = ev.results[i];
+        if (!r.isFinal) continue;
+        heardSomething = true;
+        // try every alternative until one parses: "won" vs "one" etc.
+        let handled = false;
+        for (let k = 0; k < r.length && !handled; k++) handled = this.hear(r[k].transcript);
+        if (!handled) this.show(r[0].transcript, '?');
+      }
+    };
+    rec.onerror = (ev) => {
+      // no-speech / aborted are routine; everything else sticks on the button
+      if (ev.error === 'no-speech' || ev.error === 'aborted') return;
+      this.err = ev.error;
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed') {
+        // iOS: a start with no touch behind it lands here — offer the tap
+        if (this.isPhone && !this.wantsTap && this.fails < 1) this.wantsTap = true;
+        else this.enabled = false;
+      }
+      this.paint();
+    };
+    rec.onend = () => {
+      this.active = false;
+      if (this.rec !== rec) return;                  // closed on purpose
+      this.rec = null;
+      if (!this.shouldListen()) { this.paint(); return; }
+      // the recognizer stops itself after silence or a timeout; reopen, but
+      // back off when it keeps ending with nothing (a phone with the mic
+      // blocked ends instantly and would otherwise loop)
+      this.fails = heardSomething ? 0 : this.fails + 1;
+      if (this.fails >= 6) { this.wantsTap = true; this.paint(); return; }
+      const delay = Math.min(2000, 250 * Math.pow(2, Math.max(0, this.fails - 1)));
+      setTimeout(() => { if (this.shouldListen() && !this.active) this.open(); }, delay);
+      this.paint();
+    };
+    this.rec = rec;
+    try { rec.start(); }
+    catch (e) {
+      // InvalidStateError when a previous one is still winding down; a
+      // security error on iOS without a gesture — the tap button covers both
+      this.rec = null;
+      this.wantsTap = true;
+    }
+    this.paint();
+  },
+  close() {
+    const rec = this.rec;
+    this.rec = null;
+    if (rec) { try { rec.abort(); } catch (e) { try { rec.stop(); } catch (e2) {} } }
+    this.active = false;
+    this.wantsTap = false;
+    this.paint();
+  },
+  paint() {
+    const b = document.getElementById('voicebtn');
+    if (b) {
+      b.classList.toggle('on', this.enabled && this.active && !this.err);
+      b.classList.toggle('err', !!this.err);
+      b.textContent = !this.supported ? '🎤 voice n/a'
+        : !this.enabled ? '🎤 voice off'
+        : this.err ? `🎤 ${this.err === 'not-allowed' ? 'mic blocked' : this.err}`
+        : this.active ? '🎤 listening'
+        : this.mode === 'after' ? '🎤 after playback' : '🎤 starting…';
+    }
+    const l = document.getElementById('listenbtn');
+    if (l) l.classList.toggle('show', this.enabled && !this.active && (this.wantsTap || (this.isPhone && phase === 'awaiting')));
+  },
+  show(text, action) {
+    const h = document.getElementById('heard');
+    if (h) h.textContent = `heard “${text.trim()}” → ${action}`;
+  },
+  // Returns true when the transcript mapped to something.
+  hear(text) {
+    const cmd = parseVoice(text);
+    if (!cmd) return false;
+    this.show(text, cmd.label);
+    cmd.run();
+    return true;
+  },
+};
+
+function parseVoice(text) {
+  const words = text.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+  if (!words.length) return null;
+  const has = (...ws) => ws.some(w => words.includes(w));
+  const one = has('one', '1', 'won', 'first', 'left', 'former');
+  // "too" is a homophone of two, except in "too long" where it is the flag
+  const two = has('two', '2', 'to', 'second', 'right', 'latter') || (has('too') && !has('long', 'short'));
+  const ordinal = has('first') ? 'left' : has('second') ? 'right' : null;
+  const side = ordinal || (one && !two ? 'left' : two && !one ? 'right' : null);
+  const v = (label, choice) => ({ label, run: () => vote(choice) });
+  // controls first: "play it again" must not read as a vote
+  if (has('undo', 'oops', 'mistake', 'back', 'redo') && !has('one', '1', 'two', '2')) return { label: 'undo last', run: undoLast };
+  if (has('stop', 'halt', 'quiet', 'silence', 'enough')) return { label: 'stop', run: stopPlayback };
+  if (has('pause', 'hold', 'wait')) return { label: 'pause', run: pausePlayback };
+  if (has('resume', 'continue', 'unpause') || (has('keep', 'go') && has('going', 'on'))) {
+    return { label: 'resume', run: resumePlayback };
+  }
+  if (has('restart', 'beginning', 'top') || (has('start') && has('over')) || (has('from') && has('start'))) {
+    return { label: 'start over', run: startOver };
+  }
+  // "next one" / "the other one" = the take that is not playing;
+  // "next" / "next pair" / "skip" = on to the next pair
+  if (has('other', 'switch') || (has('next') && has('one', '1', 'take', 'clip', 'sample'))) {
+    return { label: 'next one', run: playOther };
+  }
+  if (has('again', 'replay', 'repeat', 'play', 'hear')) {
+    if (side) return { label: `replay ${side === 'left' ? 1 : 2}`, run: () => playSequence(side) };
+    return { label: 'replay both', run: () => playSequence('both') };
+  }
+  // bare "start" / "go": pick up where we left off, or from the top
+  if (has('start', 'go')) return { label: paused ? 'resume' : 'start over', run: resumePlayback };
+  // flags: "one degrades", "two too long" — toggled, not voted
+  if (side && has('degrades', 'degrade', 'falls', 'collapses')) {
+    return { label: `flag ${side === 'left' ? 1 : 2}: degrades`, run: () => toggleFlag(side, 'degrades') };
+  }
+  if (side && has('long', 'overruns')) {
+    return { label: `flag ${side === 'left' ? 1 : 2}: too long`, run: () => toggleFlag(side, 'too_long') };
+  }
+  if (has('skip', 'next', 'pass')) return v('skip', 'skip');
+  if (has('prompt') && has('bad', 'broken', 'exclude')) return v('bad prompt', 'bad_prompt');
+  if (has('drums', 'drum')) return v('drums as piano', 'drums_as_piano');
+  if (has('tie', 'same', 'equal', 'even', 'draw', 'thai')) return v('tie', 'tie');
+  if (has('neither', 'terrible') || (has('both') && has('bad'))) return v('both bad', 'bad');
+  if (side === 'left') return v('1 is better', 'left');
+  if (side === 'right') return v('2 is better', 'right');
+  return null;
 }
 
 function render() {
@@ -283,51 +782,89 @@ function render() {
   flags = { left: new Set(), right: new Set() };
   stage.classList.add('flash');
   setTimeout(() => stage.classList.remove('flash'), 400);
-  const allP = ['left_roll', 'right_roll'].flatMap(k => (p[k].notes || []).map(n => n.p));
+  const ACC = p.mode === 'accompany';
+  const allP = ['left_roll', 'right_roll', 'prompt_roll']
+    .flatMap(k => ((p[k] && p[k].notes) || []).map(n => n.p));
   const lo = Math.max(0, Math.min(48, ...allP) - 2), hi = Math.min(127, Math.max(72, ...allP) + 2);
   p.left_roll.url = p.left_timeline_url; p.right_roll.url = p.right_timeline_url;
+  if (p.prompt_roll) p.prompt_roll.url = p.prompt_url;
+  pairGainDb = pairGain(p);
+  setVolume(document.getElementById('vol').value);
   stage.innerHTML = `
     <div class="legend">Prompt <span style="font-weight:400;color:var(--accent)">· ${p.prompt_source || ''}</span> <span style="color:var(--faint)">${p.prompt_name || ''}</span>
       <span id="loadnote" style="color:var(--warn)"></span>
-      &nbsp;·&nbsp; shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays 1 with the prompt, then 2 from the red line on; <kbd>space</kbd> replays both, <kbd>a</kbd> replays 1 with the prompt, <kbd>b</kbd> replays 2.</div>
+      &nbsp;·&nbsp; ${ACC ? 'each row is the SAME part you just heard, plus a different set of accompanying parts — judge how well they fit together, not what comes next. Both rows share one time and pitch scale' : 'shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays prompt + 1, pauses, then prompt + 2, and waits for you'}; <kbd>space</kbd> pauses/resumes, <kbd>enter</kbd> starts over, <kbd>esc</kbd> stops, <kbd>a</kbd> replays 1, <kbd>b</kbd> replays 2, <kbd>o</kbd> the other one${ACC ? ', <kbd>c</kbd> plays the original part alone' : ''}.</div>
+    <div class="files">${p.source ? `set <code>${p.source}</code>${p.idx !== undefined ? ` #${p.idx}` : ''} · ` : ''}pair <code>${p.pair_id}</code>${p.prompt_name ? ` · from <code>${p.prompt_name}</code>` : ''} · download:
+      <a href="#" onclick="return downloadAs('${p.prompt_url}', '${p.pair_id}_prompt.mid')">&#8681; prompt</a>
+      <a href="#" onclick="return downloadAs('${p.left_url}', '${p.pair_id}_take1.mid')">&#8681; ${ACC ? 'arrangement' : 'take'} 1</a>
+      <a href="#" onclick="return downloadAs('${p.right_url}', '${p.pair_id}_take2.mid')">&#8681; ${ACC ? 'arrangement' : 'take'} 2</a>
+      ${ACC ? '' : `<a href="#" onclick="return downloadAs('${p.left_timeline_url}', '${p.pair_id}_take1_with_prompt.mid')">&#8681; 1 with prompt tail</a>
+      <a href="#" onclick="return downloadAs('${p.right_timeline_url}', '${p.pair_id}_take2_with_prompt.mid')">&#8681; 2 with prompt tail</a>`}
+    </div>
+    ${ACC ? `<div class="opt" id="opt-prompt" style="margin-bottom:10px">
+        <h3>The part being accompanied &mdash; both arrangements add to this <span class="hid">${p.prompt_name || ''} <a href="#" onclick="return downloadAs('${p.prompt_url}', '${p.pair_id}_prompt.mid')">&#8681;</a></span></h3>
+        <div class="rollwrap"><div class="rollinner">
+          <midi-visualizer type="piano-roll" id="roll-prompt"></midi-visualizer>
+        </div></div>
+        <midi-player id="pl-prompt" src="${p.prompt_url}" sound-font visualizer="#roll-prompt"></midi-player>
+      </div>` : ''}
     <div class="rows">
       <div class="opt" id="opt-left">
-        <h3>Continuation 1</h3>
+        <h3>${ACC ? 'Arrangement 1' : 'Continuation 1'} <span class="hid">${short(p.pair_id)}·1 <a href="#" onclick="return downloadAs('${p.left_url}', '${p.pair_id}_take1.mid')" title="download take 1">&#8681;</a></span></h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-left"></midi-visualizer>
           <div class="shade" id="shade-left"></div><div class="cutline" id="cut-left"></div>
           <div class="cutlabel" id="cutlabel-left">model starts</div>
         </div></div>
         <midi-player id="pl-left" src="${p.left_timeline_url}" sound-font visualizer="#roll-left"></midi-player>
-        <div class="rowplay"><button type="button" onclick="playSide('left', true)">play 1 with prompt</button>
-          <button type="button" onclick="playSide('left', false)">from the red line</button></div>
+        <div class="rowplay"><button type="button" onclick="playSequence('left')">${ACC ? 'play 1' : 'play 1 with prompt'}</button>
+          ${ACC ? '' : `<button type="button" onclick="playSide('left', false)">from the red line</button>`}</div>
         <div class="chips" id="flags-left"></div>
       </div>
       <div class="opt" id="opt-right">
-        <h3>Continuation 2</h3>
+        <h3>${ACC ? 'Arrangement 2' : 'Continuation 2'} <span class="hid">${short(p.pair_id)}·2 <a href="#" onclick="return downloadAs('${p.right_url}', '${p.pair_id}_take2.mid')" title="download take 2">&#8681;</a></span></h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-right"></midi-visualizer>
           <div class="shade" id="shade-right"></div><div class="cutline" id="cut-right"></div>
           <div class="cutlabel" id="cutlabel-right">model starts</div>
         </div></div>
         <midi-player id="pl-right" src="${p.right_timeline_url}" sound-font visualizer="#roll-right"></midi-player>
-        <div class="rowplay"><button type="button" onclick="playSide('right', true)">play 2 with prompt</button>
-          <button type="button" onclick="playSide('right', false)">from the red line</button></div>
+        <div class="rowplay"><button type="button" onclick="playSequence('right')">${ACC ? 'play 2' : 'play 2 with prompt'}</button>
+          ${ACC ? '' : `<button type="button" onclick="playSide('right', false)">from the red line</button>`}</div>
         <div class="chips" id="flags-right"></div>
       </div>
     </div>
-    <div class="buttons">
+    <div class="ask" id="ask"></div>
+    <div style="text-align:center"><button type="button" id="listenbtn" onclick="Voice.listenNow()">🎤 tap, then say 1 or 2</button></div>
+    <div class="votes primary">
       <button onclick="vote('left')">1 is better<kbd>1</kbd></button>
       <button onclick="vote('right')">2 is better<kbd>2</kbd></button>
+    </div>
+    <div class="votes secondary">
       <button onclick="vote('tie')">Tie<kbd>t</kbd></button>
       <button onclick="vote('bad')">Both bad<kbd>x</kbd></button>
       <button onclick="vote('skip')">Skip<kbd>s</kbd></button>
-      <button class="wide" onclick="vote('drums_as_piano')" style="border-color:var(--warn-br);color:var(--warn)">Drums playing as piano<kbd>d</kbd></button>
-      <button class="wide" onclick="vote('bad_prompt')" style="border-color:var(--cut);color:var(--cut)">Bad prompt — exclude from data<kbd>p</kbd></button>
+    </div>
+    <div class="votes transport">
+      <button onclick="startOver()">&#8635; start over<kbd>enter</kbd></button>
+      <button id="pausebtn" onclick="togglePause()">&#10074;&#10074; pause<kbd>space</kbd></button>
+      <button onclick="stopPlayback()">&#9632; stop<kbd>esc</kbd></button>
+      <button onclick="playOther()">&#8646; next one<kbd>o</kbd></button>
+      <button onclick="undoLast()" title="take back the last vote of this session and vote on that pair again">&#8630; undo last<kbd>u</kbd></button>
+    </div>
+    <div class="votes reports">
+      <button onclick="vote('drums_as_piano')" style="border-color:var(--warn-br);color:var(--warn)">Drums playing as piano<kbd>d</kbd></button>
+      <button onclick="vote('bad_prompt')" style="border-color:var(--cut);color:var(--cut)">Bad prompt — exclude from data<kbd>p</kbd></button>
     </div>
     ${cross ? '<div class="sub" style="margin-top:8px">cross-model pair (models hidden until vote)</div>' : ''}
   `;
   renderFlags();
+  const sub = document.querySelector('.sub');
+  if (sub) sub.firstChild.textContent = ACC
+    ? 'Each pair plays itself: arrangement 1, a short pause, arrangement 2, then it waits for your call. Vote by key, click, or voice. '
+    : 'Each pair plays itself: prompt + take 1, a short pause, prompt + take 2, then it waits for your call. Vote by key, click, or voice. ';
+  setPhase('idle');
+  if (p.prompt_roll) setupRoll('prompt', p.prompt_roll, lo, hi);
   setupRoll('left', p.left_roll, lo, hi);
   setupRoll('right', p.right_roll, lo, hi);
   // players fire 'load' once the soundfont/sequence is ready; start the
@@ -337,15 +874,14 @@ function render() {
   // soundfont download (a new instrument the CDN hasn't cached) looked like a
   // hang; a timer starts anyway if the load event never arrives.
   let started = false;
-  const note = document.getElementById('loadnote');
   const begin = (why) => {
     if (started || !userHasInteracted) return;
     started = true;
-    if (note) note.textContent = '';
+    note('');
     playSequence('both');
   };
   const left = document.getElementById('pl-left');
-  if (note) note.textContent = 'loading sounds…';
+  note('loading sounds…');
   left.addEventListener('load', () => begin('load'));
   setTimeout(() => begin('timeout'), 4000);
 }
@@ -366,7 +902,8 @@ function markInteracted(e) {
   } catch (err) { note('audio: ' + err.message); }
   const o = document.getElementById('tapstart');
   if (o) o.style.display = 'none';
-  setVolume(localStorage.getItem('labelVolumeDb') || 10);
+  setVolume(localStorage.getItem('labelVolumeDb0') ?? 0);
+  Voice.onGesture();
   if (current) playSequence('both');
 }
 document.addEventListener('keydown', markInteracted, { once: true });
@@ -378,24 +915,31 @@ if (matchMedia('(hover: none)').matches) {
 }
 
 async function vote(choice) {
-  if (!current) return;
+  if (!current) { note('no pair on screen yet — that ' + choice + ' was not recorded'); return; }
   const p = current;
+  seqToken++;           // cancel a running sequence before the players go away
+  paused = null; seq = null; lastSide = null;
+  stopAll();
+  setPhase('idle');
   if (choice === 'left' || choice === 'right') {
     document.getElementById('opt-' + choice).classList.add('chosen');
   }
   const body = {
     session_id: SESSION_ID,
+    source: p.source || SOURCE || undefined,
     pair_id: p.pair_id,
+    idx: p.idx,          // distinguishes a blind repeat from its first showing
     choice,
     left_is: p.left_is, right_is: p.right_is,
     left_model: p.left_model, right_model: p.right_model,
     flags: { left: [...flags.left], right: [...flags.right] },
   };
   try {
-    await fetch('/api/vote', { method: 'POST',
+    await fetch(rel('/api/vote'), { method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body) });
     if (!['skip', 'bad_prompt', 'drums_as_piano'].includes(choice)) { sessionCount++; totalCount++; updateCount(); }
+    history.push({ pair: p, choice });
   } catch (e) {
     alert('failed to record vote: ' + e.message);
     return;
@@ -403,25 +947,119 @@ async function vote(choice) {
   loadNext();
 }
 
+// the tail of a pair id is enough to tell pairs apart on screen
+const short = (id) => String(id || '').split('_').pop().slice(-8);
+
+// Download through the page so the saved name says take 1 / take 2: the
+// server's own file names carry the a/b identity the blind hides.
+async function downloadAs(url, name) {
+  try {
+    const blob = await (await fetch(url)).blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { note('download failed: ' + e.message); }
+  return false;
+}
+
+// ---- undo: retract the last vote of this session and show that pair again
+async function undoLast() {
+  // nothing voted since the page loaded: take back the newest vote in this
+  // set instead (the one cast before a reload), and let the server re-serve it
+  const fromHistory = history.length ? history.pop() : null;
+  const pair = fromHistory ? fromHistory.pair : null;
+  seqToken++; stopAll();
+  let data;
+  try {
+    const res = await fetch(rel('/api/undo'), { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(pair
+        ? { session_id: SESSION_ID, source: pair.source || SOURCE || undefined, pair_id: pair.pair_id, idx: pair.idx }
+        : { source: SOURCE || undefined }) });
+    data = await res.json();
+    if (!res.ok) { note('undo failed: ' + (data.error || res.status)); if (fromHistory) history.push(fromHistory); return; }
+  } catch (e) { note('undo failed: ' + e.message); if (fromHistory) history.push(fromHistory); return; }
+  const choice = (fromHistory && fromHistory.choice) || (data.removed && data.removed.choice) || 'vote';
+  if (!['skip', 'bad_prompt', 'drums_as_piano'].includes(choice)) { sessionCount -= fromHistory ? 1 : 0; totalCount--; updateCount(); }
+  if (current) pending.push(current);
+  const again = pair || (data.pair ? Object.fromEntries(Object.entries(data.pair).map(([k, v]) => [k, k.endsWith('_url') && v ? rel(v) : v])) : null);
+  if (again) { current = again; render(); }
+  else loadNext();   // the hub put the pair back at the front of its queue
+  note(`your “${choice}” was removed — vote on that pair again (${history.length} more can be undone here)`);
+}
+
 document.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
+  if (e.key === 'u' || e.key === 'Backspace') { e.preventDefault(); undoLast(); return; }
   const map = { '1': 'left', '2': 'right', 't': 'tie', 'x': 'bad', 's': 'skip',
                 'p': 'bad_prompt', 'd': 'drums_as_piano' };
   if (map[e.key]) { e.preventDefault(); vote(map[e.key]); return; }
-  if (e.key === ' ') { e.preventDefault(); playSequence('both'); return; }
+  if (e.key === ' ') { e.preventDefault(); togglePause(); return; }
+  if (e.key === 'Enter') { e.preventDefault(); startOver(); return; }
+  if (e.key === 'Escape') { e.preventDefault(); stopPlayback(); return; }
+  if (e.key === 'o') { e.preventDefault(); playOther(); return; }
   if (e.key === 'a') { e.preventDefault(); playSequence('left'); return; }
   if (e.key === 'b') { e.preventDefault(); playSequence('right'); return; }
   if (e.key === 'n') { e.preventDefault(); toggleTheme(); return; }
+  if (e.key === 'v') { e.preventDefault(); Voice.toggle(); return; }
+  if (e.key === 'c') {          // the part being accompanied, on its own
+    const pp = document.getElementById('pl-prompt');
+    if (pp) {
+      e.preventDefault();
+      document.querySelectorAll('midi-player').forEach(pl => {
+        try { pl.stop(); } catch (err) {}
+      });
+      pp.start();
+    }
+    return;
+  }
   const flagMap = { q: ['left', 'degrades'], w: ['right', 'degrades'],
                     e: ['left', 'too_long'], r: ['right', 'too_long'] };
   if (flagMap[e.key]) { e.preventDefault(); toggleFlag(...flagMap[e.key]); }
 });
 
+// ---- seed upload: your own MIDI as the prompt for the next N pairs. The
+// server generates from it ahead of the queue, so it arrives after one
+// generation; vote or skip the pair on screen and it is next. ----
+async function uploadSeed(files) {
+  const f = files && files[0];
+  if (!f) return;
+  const n = Math.max(1, Math.min(20, Number(document.getElementById('seedn').value) || 3));
+  const sn = document.getElementById('seednote');
+  sn.textContent = `uploading ${f.name}…`;
+  const fd = new FormData();
+  fd.append('midi', f, f.name);
+  fd.append('n', String(n));
+  try {
+    const res = await fetch(rel('/api/upload'), { method: 'POST', body: fd });
+    const data = await res.json();
+    if (!res.ok) { sn.textContent = `upload failed: ${data.error || res.status}`; return; }
+    sn.textContent = `${f.name} → next ${data.n} pair${data.n > 1 ? 's' : ''} (vote or skip to get there)`;
+  } catch (e) {
+    sn.textContent = 'upload failed: ' + e.message;
+  }
+  document.getElementById('seedfile').value = '';
+}
+document.addEventListener('dragover', (e) => { e.preventDefault(); document.body.classList.add('dropping'); });
+document.addEventListener('dragleave', (e) => { if (!e.relatedTarget) document.body.classList.remove('dropping'); });
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  document.body.classList.remove('dropping');
+  const files = [...(e.dataTransfer.files || [])].filter(f => /\.midi?$/i.test(f.name));
+  if (files.length) uploadSeed(files);
+  else note('drop a .mid or .midi file');
+});
+
 applyTheme(document.documentElement.getAttribute('data-theme') || 'light');
-const savedVol = localStorage.getItem('labelVolumeDb') || 10;
+if (location.hash === '#more') document.body.classList.add('more');   // link straight to the folded controls
+loadSettings();
+Voice.init();
+const savedVol = localStorage.getItem('labelVolumeDb0') ?? 0;
 document.getElementById('vol').value = savedVol;
 setVolume(savedVol);
 fetchStats();
+loadSources();
 loadNext();
 </script>
 </body>
