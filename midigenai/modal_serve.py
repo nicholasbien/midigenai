@@ -314,13 +314,28 @@ class MidiGen:
         return self.gen.sp.header_ids_for(
             self.gen.tokenizer, header_for_score(score, tempo=tempo_bpm))
 
-    def _to_midi_bytes(self, full_ids: list[int], tempo_bpm: float) -> bytes:
+    def _to_midi_bytes(self, full_ids: list[int], tempo_bpm: float | None) -> bytes:
         return self._score_to_bytes(self.gen.tokenizer.decode(full_ids), tempo_bpm)
 
-    def _score_to_bytes(self, score, tempo_bpm: float) -> bytes:
-        if abs(tempo_bpm - 120.0) > 1e-6:
-            from symusic import Tempo
-            score.tempos = [Tempo(time=0, qpm=tempo_bpm)]
+    @staticmethod
+    def _source_tempo(midi_bytes: bytes, tempo_bpm: float | None) -> float | None:
+        """The tempo to stamp on the output: the caller's, else the upload's
+        own tempo event, else None (the upload had none)."""
+        if tempo_bpm is not None:
+            return tempo_bpm
+        from symusic import Score
+        tempos = Score.from_midi(midi_bytes).tempos
+        return float(tempos[0].qpm) if len(tempos) else None
+
+    def _score_to_bytes(self, score, tempo_bpm: float | None) -> bytes:
+        # Tempo in the output mirrors the input: if the upload (or caller)
+        # had a tempo, write exactly that; if it had none, write none, so the
+        # file plays at the MIDI default like the upload did. Never leave the
+        # decoder's own tempo in place -- on the serving image a 120 BPM
+        # prompt came back stamped 18.62 (6.4x slow, 0:20 -> 1:48), and an
+        # old "skip if 120" shortcut here let exactly that through.
+        from symusic import Tempo
+        score.tempos = [Tempo(time=0, qpm=tempo_bpm)] if tempo_bpm else []
         # Write to bytes via a tempfile (symusic Score.dump_midi needs a path)
         from tempfile import NamedTemporaryFile
         from pathlib import Path
@@ -343,8 +358,9 @@ class MidiGen:
         n_samples: int = 1,
     ) -> dict:
         full_prompt = self.gen.encode_midi_bytes(midi_bytes)
+        out_tempo = self._source_tempo(midi_bytes, tempo_bpm)   # stamped on the file, or None
         if tempo_bpm is None:
-            tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+            tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)  # 120 when absent: the MIDI default
         full_prompt = [*self._header_for_bytes(midi_bytes, tempo_bpm), *full_prompt]
 
         # A prompt too long for the context window is cut at the end; the
@@ -359,7 +375,7 @@ class MidiGen:
 
         sample_ids = self._batched_generate(
             prompt, n_samples, max_new_tokens, temperature, top_k)
-        midis = [self._to_midi_bytes(list(prompt) + ids, tempo_bpm)
+        midis = [self._to_midi_bytes(list(prompt) + ids, out_tempo)
                  for ids in sample_ids]
 
         return {
@@ -416,6 +432,7 @@ class MidiGen:
         # indices the site's picker shows (/api/tracks) are the ones used here.
         from midigenai.accompany_tracks import choose_track, prepare_window
         window, bars, available = prepare_window(midi_bytes, bars)
+        out_tempo = self._source_tempo(midi_bytes, tempo_bpm)
         if tempo_bpm is None:
             tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
 
@@ -442,7 +459,7 @@ class MidiGen:
                 temperature=temperature, top_k=top_k))
             answer = self.gen.tokenizer.decode(new_ids)
             note_counts.append(sum(len(tr.notes) for tr in answer.tracks))
-            midis.append(self._score_to_bytes(overlay(condition, answer), tempo_bpm))
+            midis.append(self._score_to_bytes(overlay(condition, answer), out_tempo))
 
         beats_per_bar = 4.0
         if window.time_signatures:
