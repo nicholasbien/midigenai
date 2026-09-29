@@ -158,6 +158,27 @@ Lakh validation picks). Sessions:
       control tokens, FIM-style accompaniment + span-infill documents, 4096
       length-extension tail. One pilot-ablated retrain after v3 (= medium_full_v1) ships.
 
+### 9. Next model: more than two tracks as an accompaniment condition
+
+- [ ] Sample accompaniment conditions wider than two tracks. `v4_docs.py` builds
+      them as `n_cond = 1 if len(live) == 2 or rng.random() < 0.7 else 2`, so the
+      model has never seen a three-track condition for this document type, and
+      "here is my whole arrangement, add a guitar" is the thing people reach for
+      first. Raised by the site: the track picker on /midi makes you choose one
+      track of an upload, and the obvious question from a drums + bass + piano
+      file was why not all of them.
+- [ ] Nothing in the format blocks it — `Generator.accompany` takes `cond_ids` as
+      an arbitrary segment and the header carries up to `MAX_INST_TOKENS` (6)
+      instruments — so this is a sampling change in the data builder, not a
+      tokenizer or model change.
+- [ ] Measure before widening the UI: score conditions of 1, 2, 3 and 4 tracks
+      with the pitch-class-overlap metric the v4 PR used (0.403 accompaniment vs
+      0.431 real parts, 0.184 chance) and find where, if anywhere, it falls off.
+      A cap that comes from a measurement beats one picked to look tidy.
+- [ ] Related, and free with the above: the *target* is already multi-track 40% of
+      the time (`single_target_frac = 0.6`), but serving only ever returns one
+      generated track, so "write the other parts" is trained and unreachable.
+
 ## Sequencing
 
 1 and 2 first (they change what the long run trains on), 5 in parallel (labels
