@@ -1,0 +1,5 @@
+{"ts": "2026-09-23T02:05:12.962735+00:00", "session_id": "be78ccf2-0f4b-44c2-8816-97b90a4c473e", "pair_id": "20260917224552_7182545c", "idx": 19, "choice": "skip", "left_is": "b", "right_is": "a", "preferred": "skip", "replay": true}
+{"ts": "2026-09-23T02:05:29.732756+00:00", "session_id": "be78ccf2-0f4b-44c2-8816-97b90a4c473e", "pair_id": "20260917224557_32d9dc52", "idx": 67, "choice": "tie", "left_is": "b", "right_is": "a", "preferred": "tie", "replay": true}
+{"ts": "2026-09-23T02:07:53.124598+00:00", "session_id": "be78ccf2-0f4b-44c2-8816-97b90a4c473e", "pair_id": "20260917224535_f5072d7d", "idx": 4, "choice": "right", "left_is": "a", "right_is": "b", "preferred": "b", "replay": true}
+{"ts": "2026-09-23T02:09:14.921252+00:00", "session_id": "be78ccf2-0f4b-44c2-8816-97b90a4c473e", "pair_id": "20260917224619_23455e03", "idx": 45, "choice": "skip", "left_is": "b", "right_is": "a", "preferred": "skip", "replay": true}
+{"ts": "2026-09-23T02:09:35.520802+00:00", "session_id": "be78ccf2-0f4b-44c2-8816-97b90a4c473e", "pair_id": "20260917224531_44918036", "idx": 86, "choice": "skip", "left_is": "b", "right_is": "a", "preferred": "skip", "replay": true}
