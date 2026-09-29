@@ -32,3 +32,25 @@ def test_explicit_track_is_used_and_bad_index_is_loud(tmp_path):
         choose_track(win, len(win.tracks))
     with pytest.raises(TrackChoiceError, match="out of range"):
         choose_track(win, -1)
+
+
+def test_track_spec_parses_lists_all_and_auto():
+    from midigenai.accompany_tracks import parse_track_spec
+    assert parse_track_spec(None) is None and parse_track_spec("auto") is None and parse_track_spec("") is None
+    assert parse_track_spec("2") == [2] and parse_track_spec(2) == [2]
+    assert parse_track_spec("0, 2") == [0, 2] and parse_track_spec([1, 0]) == [1, 0]
+    assert parse_track_spec("ALL") == "all"
+    with pytest.raises(TrackChoiceError):
+        parse_track_spec("bass")
+    with pytest.raises(TrackChoiceError):
+        parse_track_spec(",")
+
+
+def test_choose_tracks_validates_every_index(tmp_path):
+    from midigenai.accompany_tracks import choose_tracks, prepare_window
+    win, _, _ = prepare_window(_upload(tmp_path, [16, 32, 8]), 8)
+    assert choose_tracks(win, None) == [1]
+    assert choose_tracks(win, [2, 0, 2]) == [2, 0]
+    assert choose_tracks(win, "all") == [0, 1, 2]
+    with pytest.raises(TrackChoiceError, match="out of range"):
+        choose_tracks(win, [0, 9])

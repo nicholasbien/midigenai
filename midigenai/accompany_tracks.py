@@ -58,6 +58,52 @@ def choose_track(window, track: int | None) -> int:
     return track
 
 
+def parse_track_spec(raw) -> list[int] | str | None:
+    """`track=` value -> list of indices, "all", or None (not given / auto).
+
+    Accepts an int, a list of ints, or a string: "2", "0,2", "all", "auto".
+    Raises TrackChoiceError on anything else, naming the value."""
+    if raw is None:
+        return None
+    if isinstance(raw, int):
+        return [raw]
+    if isinstance(raw, (list, tuple)):
+        return [int(x) for x in raw]
+    s = str(raw).strip().lower()
+    if s in ("", "auto"):
+        return None
+    if s == "all":
+        return "all"
+    try:
+        out = [int(x) for x in s.split(",") if x.strip() != ""]
+    except ValueError:
+        raise TrackChoiceError(f"track must be an index, a comma list like 0,2, or 'all'; got {raw!r}")
+    if not out:
+        raise TrackChoiceError(f"track={raw!r} names no tracks")
+    return out
+
+
+def choose_tracks(window, spec) -> list[int]:
+    """Condition track indices for a parsed `track=` spec.
+
+    None -> [densest]; "all" -> every track with notes; a list -> exactly
+    those, each validated like choose_track, duplicates removed, order kept.
+    """
+    if spec is None:
+        return [densest(window)]
+    if spec == "all":
+        live = [i for i, t in enumerate(window.tracks) if len(t.notes)]
+        if not live:
+            raise TrackChoiceError("upload has no notes in the first bars")
+        return live
+    seen = []
+    for i in spec:
+        choose_track(window, i)
+        if i not in seen:
+            seen.append(i)
+    return seen
+
+
 def summarize(midi_bytes: bytes, bars: int = 8) -> dict:
     """What a track picker needs, with no generation."""
     window, bars, available = prepare_window(midi_bytes, bars)

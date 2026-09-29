@@ -68,7 +68,7 @@ def resolve_version(name: str | None) -> str:
     return SERVED_VERSIONS.get((name or "").strip(), SERVED_VERSIONS[DEFAULT_VERSION])
 
 
-def accompaniment_header(window, cond_index: int, instrument: str | None = None):
+def accompaniment_header(window, cond_index, instrument: str | None = None):
     """(header token names, family asked for) for an accompaniment document.
 
     The v4 header names what the finished document contains -- condition plus
@@ -91,9 +91,13 @@ def accompaniment_header(window, cond_index: int, instrument: str | None = None)
     family = resolve_family(instrument)
     if family is None:
         raise ValueError(f"unknown instrument {instrument!r}")
-    cond_track = window.tracks[cond_index]
-    return with_instruments(
-        names, [family_of(cond_track.program, cond_track.is_drum), family]), family
+    idxs = cond_index if isinstance(cond_index, (list, tuple)) else [cond_index]
+    cond_fams = []
+    for i in idxs:
+        f = family_of(window.tracks[i].program, window.tracks[i].is_drum)
+        if f not in cond_fams:
+            cond_fams.append(f)
+    return with_instruments(names, [*cond_fams, family]), family
 
 app = modal.App("midigenai-serve")
 
@@ -410,7 +414,7 @@ class MidiGen:
         n_samples: int = 1,
         tempo_bpm: float | None = None,
         instrument: str | None = None,
-        track: int | None = None,
+        track=None,
     ) -> dict:
         """Write parts to go *with* the upload rather than after it.
 
@@ -441,14 +445,18 @@ class MidiGen:
 
         # Window and condition-track choice come from accompany_tracks so the
         # indices the site's picker shows (/api/tracks) are the ones used here.
-        from midigenai.accompany_tracks import choose_track, prepare_window
+        from midigenai.accompany_tracks import choose_tracks, parse_track_spec, prepare_window
         window, bars, available = prepare_window(midi_bytes, bars)
         out_tempo = self._source_tempo(midi_bytes, tempo_bpm)
         if tempo_bpm is None:
             tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
 
-        cond_index = choose_track(window, track)
-        condition = _subscore(window, [cond_index])
+        # `track` may be one index, a list, "0,2" or "all": several tracks can
+        # be the condition at once. Training conditions are 1 track 70% of
+        # the time and 2 tracks 30%; more than 2 is outside what it saw.
+        cond_idx = choose_tracks(window, parse_track_spec(track))
+        cond_index = cond_idx[0] if len(cond_idx) == 1 else cond_idx
+        condition = _subscore(window, cond_idx)
         if not sum(len(tr.notes) for tr in condition.tracks):
             raise ValueError("the chosen track has no notes in the first bars")
 
@@ -479,8 +487,10 @@ class MidiGen:
         return {
             "bars": bars,
             "bars_available": available,
-            "condition_track": cond_index,
-            "condition_track_name": window.tracks[cond_index].name or "",
+            "condition_track": cond_idx[0],                        # first, for older clients
+            "condition_track_name": window.tracks[cond_idx[0]].name or "",
+            "condition_tracks": cond_idx,
+            "condition_track_names": [window.tracks[i].name or "" for i in cond_idx],
             "track_names": [tr.name or "" for tr in window.tracks],
             "condition_notes": sum(len(tr.notes) for tr in condition.tracks),
             "generated_notes": note_counts,
