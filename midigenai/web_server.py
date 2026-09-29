@@ -265,6 +265,28 @@ def upload_midi_ab():
     })
 
 
+@app.route("/api/tracks", methods=["POST"])
+def tracks():
+    """The upload's tracks as accompaniment would see them, with no generation.
+
+    For a track picker: names, note counts in the window, GM programs (-1 for
+    drums), the track used when none is chosen, and bar counts. Indices are the
+    ones `track=` on /api/accompany accepts. Pure CPU; no Modal call.
+    """
+    from midigenai.accompany_tracks import TrackChoiceError, summarize
+    bars = max(1, min(request.args.get("bars", default=8, type=int), 32))
+    upload = _read_upload()
+    if isinstance(upload, Response):
+        return upload
+    try:
+        return jsonify(summarize(upload[0], bars))
+    except TrackChoiceError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"could not read the upload as MIDI: {e}"}), 400
+
+
 @app.route("/api/accompany", methods=["POST"])
 def accompany():
     """Parts to play WITH the upload, not after it.
@@ -302,10 +324,27 @@ def accompany():
     midi_bytes, base = upload
     unique_str = _unique_string()
 
+    # track=<index> picks the condition track, indices as /api/tracks lists
+    # them. Validated here, on the same windowing code Modal runs, so a bad
+    # index is a 400 naming the valid range -- never a silent fallback to
+    # the densest track, which would accompany the wrong part under the
+    # user's choice.
+    track = None
+    raw_track = request.args.get("track") or request.form.get("track")
+    if raw_track not in (None, "", "auto"):
+        from midigenai.accompany_tracks import TrackChoiceError, choose_track, prepare_window
+        try:
+            track = int(raw_track)
+            window, _, _ = prepare_window(midi_bytes, bars)
+            choose_track(window, track)
+        except ValueError as e:     # TrackChoiceError is a ValueError; so is int("x")
+            msg = str(e) if isinstance(e, TrackChoiceError) else f"track must be an integer index; got {raw_track!r}"
+            return jsonify({"error": msg}), 400
+
     try:
         result = _generator(version).accompany_batch.remote(
             midi_bytes, bars=bars, temperature=temperature, top_k=top_k,
-            n_samples=2, instrument=instrument,
+            n_samples=2, instrument=instrument, track=track,
         )
     except Exception as e:
         traceback.print_exc()
