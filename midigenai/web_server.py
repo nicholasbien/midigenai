@@ -332,14 +332,14 @@ def accompany():
     track = None
     raw_track = request.args.get("track") or request.form.get("track")
     if raw_track not in (None, "", "auto"):
-        from midigenai.accompany_tracks import TrackChoiceError, choose_track, prepare_window
+        from midigenai.accompany_tracks import (TrackChoiceError, choose_tracks,
+                                                parse_track_spec, prepare_window)
         try:
-            track = int(raw_track)
+            spec = parse_track_spec(raw_track)
             window, _, _ = prepare_window(midi_bytes, bars)
-            choose_track(window, track)
-        except ValueError as e:     # TrackChoiceError is a ValueError; so is int("x")
-            msg = str(e) if isinstance(e, TrackChoiceError) else f"track must be an integer index; got {raw_track!r}"
-            return jsonify({"error": msg}), 400
+            track = choose_tracks(window, spec)       # validated list of indices
+        except TrackChoiceError as e:
+            return jsonify({"error": str(e)}), 400
 
     try:
         result = _generator(version).accompany_batch.remote(
@@ -369,6 +369,8 @@ def accompany():
         "windowSeconds": result["window_seconds"],
         "conditionTrack": result["condition_track"],
         "conditionTrackName": result["condition_track_name"],
+        "conditionTracks": result.get("condition_tracks", [result["condition_track"]]),
+        "conditionTrackNames": result.get("condition_track_names", [result["condition_track_name"]]),
         "trackNames": result["track_names"],
         "generatedNotes": result["generated_notes"],
         # The family actually asked of the model (null when it chose freely),
