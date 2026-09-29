@@ -121,6 +121,14 @@ def _read_upload():
 
 def _two_samples_response(midi_bytes: bytes, base: str, temperature: float,
                           top_k: int, max_new_tokens: int, version: str):
+    # track= picks what the model continues: the whole mix (default, or
+    # track=all) or one track on its own -- the two trained shapes.
+    from midigenai.accompany_tracks import TrackChoiceError, continuation_source
+    try:
+        midi_bytes, prompt_tracks, prompt_names = continuation_source(
+            midi_bytes, request.args.get("track") or request.form.get("track"))
+    except TrackChoiceError as e:
+        return jsonify({"error": str(e)}), 400
     unique_str = _unique_string()
     result = _generate_n(midi_bytes, temperature, top_k, max_new_tokens,
                          n_samples=2, version=version)
@@ -131,6 +139,8 @@ def _two_samples_response(midi_bytes: bytes, base: str, temperature: float,
     return jsonify({
         "message": "MIDI file generated successfully",
         "model": version,
+        "promptTracks": prompt_tracks,         # what the model was actually given
+        "promptTrackNames": prompt_names,
         "midiUrl1": url_for("serve_user_midi",
                             filename=os.path.basename(out_paths[0]), _external=True),
         "midiUrl2": url_for("serve_user_midi",
