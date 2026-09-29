@@ -383,6 +383,7 @@ class MidiGen:
         n_samples: int = 1,
         tempo_bpm: float | None = None,
         instrument: str | None = None,
+        track: int | None = None,
     ) -> dict:
         """Write parts to go *with* the upload rather than after it.
 
@@ -411,20 +412,14 @@ class MidiGen:
             raise ValueError(
                 f"accompaniment needs a v4 checkpoint; {self.version!r} is not one")
 
-        score = Score.from_midi(BytesIO(midi_bytes).read())
-        normalize_drums(score, "upload.mid")
-        score = trim_leading(score)
+        # Window and condition-track choice come from accompany_tracks so the
+        # indices the site's picker shows (/api/tracks) are the ones used here.
+        from midigenai.accompany_tracks import choose_track, prepare_window
+        window, bars, available = prepare_window(midi_bytes, bars)
         if tempo_bpm is None:
             tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
 
-        edges = bar_edges(score)
-        available = max(0, len(edges) - 1)
-        if available < 1:
-            raise ValueError("upload has no complete bar to accompany")
-        bars = max(1, min(bars, available))
-        window = _window(score, edges[0], edges[bars])
-
-        cond_index = densest_track(window)
+        cond_index = choose_track(window, track)
         condition = _subscore(window, [cond_index])
         if not sum(len(tr.notes) for tr in condition.tracks):
             raise ValueError("the chosen track has no notes in the first bars")
