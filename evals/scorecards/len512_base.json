@@ -1,5 +1,5 @@
 {
-  "checkpoint": "/Users/nicholasbien/.cache/huggingface/hub/models--nicholasbien--midigenai/snapshots/26ea417cd7e95bdff60cddbfcd8f9b0974f36d2d/v4/ckpt_final.pt",
+  "checkpoint": "~/.cache/huggingface/hub/models--nicholasbien--midigenai/snapshots/26ea417cd7e95bdff60cddbfcd8f9b0974f36d2d/v4/ckpt_final.pt",
   "n_generations": 60,
   "params": {
     "prompt_tokens": 256,

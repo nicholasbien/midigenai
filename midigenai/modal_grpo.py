@@ -175,7 +175,7 @@ def main(
     run_name: str = "grpo_v4_001",
     version: str = "v4",
     reward: str = "reward_v4_autolabel.json",
-    prompts: str = "/Users/nicholasbien/midigenai-v4/evals/prompts_heldout",
+    prompts: str = "~/midigenai-v4/evals/prompts_heldout",
     accompany_prompts: str = "",            # directory of multi-track seeds; empty = continuation only
     accompany_frac: float = 0.5,
     reward_accompany: str = "",
@@ -192,7 +192,7 @@ def main(
     import tarfile
     from pathlib import Path
 
-    src = Path(prompts)
+    src = Path(prompts).expanduser()
     files = sorted(src.glob("*.mid"))
     if not files:
         raise SystemExit(f"no .mid files in {src}")
@@ -210,7 +210,7 @@ def main(
 
     acc_blob = None
     if accompany_prompts:
-        afiles = sorted(Path(accompany_prompts).glob("*.mid"))
+        afiles = sorted(Path(accompany_prompts).expanduser().glob("*.mid"))
         if not afiles:
             raise SystemExit(f"no .mid files in {accompany_prompts}")
         abuf = io.BytesIO()
