@@ -255,6 +255,7 @@ class MidiGen:
         max_new_tokens: int,
         temperature: float,
         top_k: int,
+        min_new_tokens: int = 0,
     ) -> list[list[int]]:
         """Decode n_samples continuations in one batch on the GPU — a second
         sample rides along nearly free vs. two sequential generations.
@@ -262,8 +263,12 @@ class MidiGen:
         Sampling is hand-rolled here (Generator.generate_ids decodes one
         sequence at a time), so the v4 handling it would have applied is
         applied explicitly: `default_ban_ids` masks SEP / MASK / BOS out of
-        the logits, and `postprocess` trims the leading empty bars that
-        would otherwise reach the player as silence."""
+        the logits, `postprocess` trims the leading empty bars that would
+        otherwise reach the player as silence, and `min_new_tokens` holds
+        every stop token back for the first N steps. Without that last one a
+        prompt whose voices all stop together (an excerpt cut on a bar line)
+        reads as a finished piece: P(EOS) as the first token is 0.5-0.93 on
+        such prompts, and the site got back its own prompt, unchanged."""
         import torch
         gen = self.gen
         # Long uploads: cut the prompt so prompt + continuation fits the
@@ -278,10 +283,13 @@ class MidiGen:
         done = [False] * n_samples
         with torch.no_grad():
             logits, caches = model(ids)
-            for _ in range(max_new_tokens):
+            stop_list = sorted(gen.stop_ids)
+            for step in range(max_new_tokens):
                 logits = logits[:, -1, :].float() / max(temperature, 1e-6)
                 if ban_ids:
                     logits[:, ban_ids] = -float("inf")
+                if step < min_new_tokens and stop_list:
+                    logits[:, stop_list] = -float("inf")
                 if top_k is not None and top_k < logits.size(-1):
                     v, _ = torch.topk(logits, top_k)
                     logits[logits < v[:, [-1]]] = -float("inf")
@@ -373,8 +381,11 @@ class MidiGen:
         tpq = max(prompt_score.ticks_per_quarter, 1)
         prompt_end_seconds = prompt_score.end() / tpq * 60.0 / tempo_bpm
 
+        # Floor on how much the model must write before it may stop: a quarter
+        # of the budget, capped at 128 tokens (~2 bars of a busy part).
         sample_ids = self._batched_generate(
-            prompt, n_samples, max_new_tokens, temperature, top_k)
+            prompt, n_samples, max_new_tokens, temperature, top_k,
+            min_new_tokens=min(128, max_new_tokens // 4))
         midis = [self._to_midi_bytes(list(prompt) + ids, out_tempo)
                  for ids in sample_ids]
 
