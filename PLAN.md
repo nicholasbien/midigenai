@@ -196,12 +196,21 @@ The model has been trained on it since v4, but only lightly, and until
       (`midigenai/infill_span.py`). Limited to the trained shape: 1-4 bars, at
       least one kept bar each side, 16-bar context. Returns the whole upload with
       the span replaced.
-- [ ] Measure infill on v5-rl before widening anything: held-out 16-bar
-      windows, span cut out, score the fill against the real bars and against
-      the suffix (does it lead into what follows?). Add an infill scorecard to
-      `eval_checkpoint`.
-- [ ] Labeling and judge: an infill mode in `pairgen` / the label app, and a
-      `judge_infill.txt` rubric (fit with BOTH sides, not just the prefix).
+- [x] Decoding: `Generator.infill` keeps leading rests, sizes its token budget
+      from the context's density, and bans EOS/BOS until the gap is full.
+      Without the last, v5-rl stopped early on 34% of held-out gaps.
+- [x] Pairs, judge rubric, hub mode, report: `pairgen --mode infill
+      [--vs-original]`, `prompts/judge_infill.txt`, infill view in the
+      labeling hub, `python -m midigenai.infill_eval`. Sets
+      `labeling_infill_v5rl_vs_orig` (v5-rl vs the real bars, 96 pairs) and
+      `labeling_infill_v5rl_ab` (on-policy) from the 48 held-out site presets.
+      Label-free on the vs-original set: 0% empty, 1% short, density vs kept
+      bars 1.03 (original 0.92), pitch-class fit 0.875 (original 0.830), 3%
+      identical to the original.
+- [ ] Label: the labeler's votes on both sets. The vs-original win rate is the
+      headline; the ab votes validate the judge.
+- [ ] Validate `judge_infill` against those votes, then judge the rest.
+- [ ] Add an infill scorecard to `eval_checkpoint`.
 - [ ] RL: infill as a third GRPO task next to continuation and accompaniment,
       with its own probe.
 - [ ] Next corpus build (v5.x or v6): more infill documents, and the shapes
