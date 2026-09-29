@@ -54,3 +54,20 @@ def test_choose_tracks_validates_every_index(tmp_path):
     assert choose_tracks(win, "all") == [0, 1, 2]
     with pytest.raises(TrackChoiceError, match="out of range"):
         choose_tracks(win, [0, 9])
+
+
+def test_continuation_source_whole_mix_or_one_track(tmp_path):
+    from symusic import Score
+    from midigenai.accompany_tracks import continuation_source
+    data = _upload(tmp_path, [16, 32, 8])
+    b, tr, names = continuation_source(data, None)
+    assert b == data and tr == [0, 1, 2]
+    b, tr, names = continuation_source(data, "all")
+    assert b == data and tr == [0, 1, 2]
+    b, tr, names = continuation_source(data, "2")
+    s = Score.from_midi(b)
+    assert tr == [2] and len(s.tracks) == 1 and len(s.tracks[0].notes) == 8
+    with pytest.raises(TrackChoiceError, match="not a trained"):
+        continuation_source(data, "0,2")
+    with pytest.raises(TrackChoiceError, match="out of range"):
+        continuation_source(data, "7")

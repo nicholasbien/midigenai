@@ -104,10 +104,55 @@ def choose_tracks(window, spec) -> list[int]:
     return seen
 
 
+def continuation_source(midi_bytes: bytes, raw) -> tuple[bytes, list[int], list[str]]:
+    """(bytes to continue, prompt track indices, their names) for `track=`.
+
+    Continuation was trained on two shapes: the whole mix, and a single track
+    on its own (v4_docs' solo views). So omitted / "auto" / "all" -> the file
+    unchanged, one index -> that track alone with the file's tempo and meter.
+    A subset of several tracks was never a continuation document, so it is a
+    400 rather than something quietly attempted. Indices are file track
+    positions, the same ones /api/tracks lists.
+    """
+    score = Score.from_midi(BytesIO(midi_bytes).read())
+    n = len(score.tracks)
+    live = [i for i, t in enumerate(score.tracks) if len(t.notes)]
+    spec = parse_track_spec(raw)
+    if spec is None or spec == "all" or (isinstance(spec, list) and sorted(set(spec)) == live):
+        return midi_bytes, live, [score.tracks[i].name or "" for i in live]
+    if len(set(spec)) > 1:
+        raise TrackChoiceError(
+            "continuation takes the whole mix (omit track, or track=all) or one track; "
+            f"a subset like {raw!r} was not a trained continuation shape")
+    i = spec[0]
+    if not 0 <= i < n:
+        raise TrackChoiceError(f"track={i} is out of range; this upload has tracks 0-{n - 1}")
+    if not len(score.tracks[i].notes):
+        raise TrackChoiceError(f"track {i} has no notes; tracks with notes: {live}")
+    solo = Score(score.ticks_per_quarter)
+    for ts in score.time_signatures: solo.time_signatures.append(ts)
+    for te in score.tempos: solo.tempos.append(te)
+    for ks in score.key_signatures: solo.key_signatures.append(ks)
+    solo.tracks.append(score.tracks[i])
+    import tempfile, os
+    fd, path = tempfile.mkstemp(suffix=".mid"); os.close(fd)
+    try:
+        solo.dump_midi(path)
+        with open(path, "rb") as f:
+            return f.read(), [i], [score.tracks[i].name or ""]
+    finally:
+        os.unlink(path)
+
+
 def summarize(midi_bytes: bytes, bars: int = 8) -> dict:
-    """What a track picker needs, with no generation."""
+    """What a track picker needs, with no generation.
+
+    trackNoteCounts are inside the accompaniment window (`bars`);
+    fileNoteCounts are over the whole file, which is what continuation uses."""
     window, bars, available = prepare_window(midi_bytes, bars)
+    whole = Score.from_midi(BytesIO(midi_bytes).read())
     return {
+        "fileNoteCounts": [len(t.notes) for t in whole.tracks],
         "trackNames": [t.name or "" for t in window.tracks],
         "trackNoteCounts": [len(t.notes) for t in window.tracks],
         "trackPrograms": [(-1 if t.is_drum else t.program) for t in window.tracks],
