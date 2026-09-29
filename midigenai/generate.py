@@ -550,12 +550,17 @@ class Generator:
                header: list[int] = (), **gen_kwargs) -> Iterator[int]:
         """Write the `bars` bars that belong between `prefix_ids` and
         `suffix_ids` (each a bar-aligned segment). Yields a self-contained
-        segment starting at bar 0 of the gap."""
+        segment starting at bar 0 of the gap.
+
+        Leading empty bars are kept (`trim_leading_bars=False`): the gap is
+        pinned between prefix and suffix, so a rest at its start is part of
+        the answer, and trimming it would slide every note early."""
         self._require_v4("infill")
         from .sequence_format import infill_prompt
         prompt = infill_prompt(self.sp, list(header), list(prefix_ids), list(suffix_ids))
         gen_kwargs.setdefault("max_new_tokens", 64 * bars + 64)
         gen_kwargs.setdefault("ban_ids", [self.sp.sep, self.sp.mask])
+        gen_kwargs.setdefault("trim_leading_bars", False)
         yield from self.generate_ids(prompt, stop_after_bars=bars, **gen_kwargs)
 
     def split_bars(self, ids: list[int], at_bar: int, n_bars: int) -> tuple[list[int], list[int]]:

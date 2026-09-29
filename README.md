@@ -38,6 +38,21 @@ new_part = list(gen.accompany(cond, bars=8, header=header))
 
 Over HTTP: `/api/accompany?instrument=bass` (or `auto`).
 
+### Infill
+
+Rewrites some bars and keeps the rest: the model sees the bars before and after
+the gap and fills it.
+
+```python
+ids = gen.tokenizer(score).ids
+prefix, suffix = gen.split_bars(ids, at_bar=2, n_bars=2)   # redo bars 3-4
+middle = list(gen.infill(prefix, suffix, bars=2))
+```
+
+Over HTTP: `/api/infill?start=2&bars=2` returns the whole file with bars 3-4
+replaced. Spans of 1-4 bars with at least one kept bar on each side, the shape
+the model was trained on.
+
 ## Checkpoints
 
 | Version | Params | Notes |

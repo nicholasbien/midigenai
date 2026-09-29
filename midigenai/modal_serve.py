@@ -3,6 +3,8 @@ Modal serving for midigenai (successor to openmusenet2/v2/modal_generate_v2.py).
 
 Deploys as app `midigenai-serve`, class `MidiGen`:
 - generate_batch(): one-shot, returns full prompt+continuation MIDI bytes
+- accompany_batch(): parts to play with the upload
+- infill_batch():  regenerate a span of bars inside the upload
 - stream_notes():   yields JSON-line note dicts as the model emits events
 
 Checkpoints live in the `midigenai-models` Modal Volume, one subfolder per
@@ -61,6 +63,9 @@ SERVED_VERSIONS = {
 # Kept next to the allowlist so the server and the site's mode lock can't
 # drift apart; the health endpoint publishes it.
 ACCOMPANIMENT_VERSIONS = ("v5-rl", "v5", "v4", "v4-large")
+# Span infill is the other v4 document type (Task_infill + MASK + SEP), so the
+# same checkpoints answer /api/infill.
+INFILL_VERSIONS = ACCOMPANIMENT_VERSIONS
 
 
 def resolve_version(name: str | None) -> str:
@@ -500,6 +505,47 @@ class MidiGen:
             "window_seconds": bars * beats_per_bar * 60.0 / tempo_bpm,
             "midi": midis[0],
             "midis": midis,
+        }
+
+    @modal.method()
+    def infill_batch(
+        self,
+        midi_bytes: bytes,
+        start: int,
+        bars: int = 2,
+        temperature: float = 1.0,
+        top_k: int = 50,
+        n_samples: int = 1,
+        tempo_bpm: float | None = None,
+    ) -> dict:
+        """Regenerate bars [start, start+bars) of the upload and keep the rest.
+
+        The model sees up to 16 bars around the span (the bars before it and
+        the bars after it) and writes the missing bars; each returned MIDI is
+        the whole upload with that span replaced. See infill_span.py for the
+        span limits (the shape v4/v5 were trained on) and the splice."""
+        from midigenai import infill_span
+
+        if not self.gen.v4:
+            raise ValueError(f"infill needs a v4 checkpoint; {self.version!r} is not one")
+        out_tempo = self._source_tempo(midi_bytes, tempo_bpm)
+        if tempo_bpm is None:
+            tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+        p, scores, counts = infill_span.run(
+            self.gen, midi_bytes, start, bars, n_samples=n_samples,
+            tempo_bpm=tempo_bpm, temperature=temperature, top_k=top_k)
+        tpq = max(p.score.ticks_per_quarter, 1)
+        s, e = p.span_ticks
+        return {
+            "start": p.start,
+            "bars": p.bars,
+            "bars_available": len(p.edges) - 1,
+            "context": [p.ctx_start, p.ctx_end],
+            "span_seconds": [s / tpq * 60.0 / tempo_bpm, e / tpq * 60.0 / tempo_bpm],
+            "generated_notes": counts,
+            "tempo_bpm": tempo_bpm,
+            "midi": self._score_to_bytes(scores[0], out_tempo),
+            "midis": [self._score_to_bytes(sc, out_tempo) for sc in scores],
         }
 
     @modal.method(is_generator=True)

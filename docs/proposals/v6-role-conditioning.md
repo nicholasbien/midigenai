@@ -72,6 +72,30 @@ justified; if not, it probably won't either.
   transcription time would recover it; note-based re-estimation was only
   37-52% right and was not applied.
 
+- **More infill, and the shapes it never saw.** Infill is served now
+  (`/api/infill`, PLAN.md workstream 10) and is the everyday edit: keep the
+  bars you like, redo the rest. The builder default is one infill window per
+  file (~9% of the corpus, `--infill-windows 1`) and only one shape. Changes, most useful
+  first:
+  - `--infill-windows` 2-3, taking the share toward the ~17% it was before it
+    was cut for having no users.
+  - **Open-ended spans:** an empty prefix ("keep bars 3-8, write a new
+    opening"). Today the builder always keeps >=1 bar each side
+    (`v4_docs.py`, span infill windows) and the API refuses span start 0. The
+    empty-suffix case is continuation and needs nothing.
+  - **Longer spans** (up to 8 of 16 bars; now max 4) so "redo the second half"
+    works.
+  - **Per-track infill:** redo one part inside the span and keep the others
+    (a melody over kept drums and bass). That is infill and accompaniment in
+    one document: prefix + suffix of every track, plus the span's other
+    tracks as condition. Needs a document layout, and a Role_/Inst_ for the
+    target as in §1.
+  - **Loop wraparound:** for a loop, the bars after the span lead back into
+    bar 1. A doc whose suffix is the window's opening bars teaches it, and
+    the API could then offer a `loop=1` flag that builds the suffix that way.
+  None of these needs new tokens except the per-track layout, so the first
+  four can also ride a v5.x data rebuild.
+
 ## 3. Not vocab changes, can happen any time
 
 - Ableton held-out split by project (done for v5; keep it).
