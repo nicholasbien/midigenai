@@ -30,8 +30,11 @@ from flask_cors import CORS
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
+from midigenai.attributes import is_auto_instrument, resolve_family
 # The version allowlist lives with the Modal app so the two can't drift.
-from midigenai.modal_serve import SERVED_VERSIONS, resolve_version
+from midigenai.modal_serve import (
+    ACCOMPANIMENT_VERSIONS, SERVED_VERSIONS, resolve_version,
+)
 
 env = os.environ.get("ENV", "dev")
 
@@ -144,6 +147,22 @@ def _gen_params():
     )
 
 
+def _instrument():
+    """The requested accompaniment family, None for "let the model choose",
+    or a 400 Response when the name isn't one we know."""
+    asked = (request.args.get("instrument")
+             or request.form.get("instrument") or "").strip()
+    if is_auto_instrument(asked):
+        return None
+    if resolve_family(asked) is None:
+        # A Response, not a (body, status) tuple: the caller tells an error
+        # from a valid answer with isinstance, and a tuple would slip past it.
+        bad = jsonify({"error": f"unknown instrument {asked!r}"})
+        bad.status_code = 400
+        return bad
+    return asked
+
+
 def _model_version() -> str:
     """The checkpoint the request asked for.
 
@@ -161,6 +180,7 @@ def health():
         "service": "midigenai api",
         "models": sorted(SERVED_VERSIONS),
         "default_model": resolve_version(None),
+        "accompaniment_models": sorted(ACCOMPANIMENT_VERSIONS),
     })
 
 
@@ -245,6 +265,28 @@ def upload_midi_ab():
     })
 
 
+@app.route("/api/tracks", methods=["POST"])
+def tracks():
+    """The upload's tracks as accompaniment would see them, with no generation.
+
+    For a track picker: names, note counts in the window, GM programs (-1 for
+    drums), the track used when none is chosen, and bar counts. Indices are the
+    ones `track=` on /api/accompany accepts. Pure CPU; no Modal call.
+    """
+    from midigenai.accompany_tracks import TrackChoiceError, summarize
+    bars = max(1, min(request.args.get("bars", default=8, type=int), 32))
+    upload = _read_upload()
+    if isinstance(upload, Response):
+        return upload
+    try:
+        return jsonify(summarize(upload[0], bars))
+    except TrackChoiceError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"could not read the upload as MIDI: {e}"}), 400
+
+
 @app.route("/api/accompany", methods=["POST"])
 def accompany():
     """Parts to play WITH the upload, not after it.
@@ -254,22 +296,55 @@ def accompany():
     each returned file is the upload's chosen track with one generated
     answer stacked on it, so it plays as a duet rather than a handoff.
 
-    v4 only: earlier checkpoints have no accompaniment document type.
+    v4 line only (ACCOMPANIMENT_VERSIONS): earlier checkpoints have no
+    accompaniment document type.
+
+    `instrument=bass|drums|piano|...` asks for a particular part; omitted (or
+    "auto") leaves the choice to the model. Rejected here rather than in
+    Modal so a typo comes back as a 400 naming the value, not a 500 raised
+    after a container has spun up.
     """
     temperature, top_k, _ = _gen_params()
     version = _model_version()
+    if version not in ACCOMPANIMENT_VERSIONS:
+        # Name the value the caller sent, not the folder it resolved to:
+        # "got v2" is followable, "got v2-100m" reads like a typo.
+        asked = (request.args.get("model") or request.form.get("model") or "").strip()
+        return jsonify({"error": f"accompaniment needs one of "
+                                 f"{', '.join(ACCOMPANIMENT_VERSIONS)}; "
+                                 f"got {asked or version}"}), 400
     bars = request.args.get("bars", default=8, type=int)
     bars = max(1, min(bars, 32))
+    instrument = _instrument()
+    if isinstance(instrument, Response):
+        return instrument
     upload = _read_upload()
     if isinstance(upload, Response):
         return upload
     midi_bytes, base = upload
     unique_str = _unique_string()
 
+    # track=<index> picks the condition track, indices as /api/tracks lists
+    # them. Validated here, on the same windowing code Modal runs, so a bad
+    # index is a 400 naming the valid range -- never a silent fallback to
+    # the densest track, which would accompany the wrong part under the
+    # user's choice.
+    track = None
+    raw_track = request.args.get("track") or request.form.get("track")
+    if raw_track not in (None, "", "auto"):
+        from midigenai.accompany_tracks import TrackChoiceError, choose_track, prepare_window
+        try:
+            track = int(raw_track)
+            window, _, _ = prepare_window(midi_bytes, bars)
+            choose_track(window, track)
+        except ValueError as e:     # TrackChoiceError is a ValueError; so is int("x")
+            msg = str(e) if isinstance(e, TrackChoiceError) else f"track must be an integer index; got {raw_track!r}"
+            return jsonify({"error": msg}), 400
+
     try:
         result = _generator(version).accompany_batch.remote(
             midi_bytes, bars=bars, temperature=temperature, top_k=top_k,
-            n_samples=2,
+            n_samples=2, instrument=instrument, track=track,
         )
     except Exception as e:
         traceback.print_exc()
@@ -296,6 +371,9 @@ def accompany():
         "conditionTrackName": result["condition_track_name"],
         "trackNames": result["track_names"],
         "generatedNotes": result["generated_notes"],
+        # The family actually asked of the model (null when it chose freely),
+        # so the page can say which part it requested.
+        "instrument": result.get("instrument"),
     })
 
 

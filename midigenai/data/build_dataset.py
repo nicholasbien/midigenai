@@ -377,6 +377,12 @@ if __name__ == "__main__":
                         help="output directory for shards + tokenizer")
     parser.add_argument("--shard-tokens", type=int, default=SHARD_TOKENS)
     parser.add_argument("--val-fraction", type=float, default=VAL_FRACTION)
+    parser.add_argument("--allow-ableton", action="store_true",
+                        help="the user's Ableton projects are held out of training (decided 2026-09-16); "
+                             "a manifest that reaches into raw/ableton/ is refused unless this is passed")
+    parser.add_argument("--exclude-ids", type=Path, default=None,
+                        help="file of ids (basename without .mid), one per line, that must NOT be "
+                             "in this build; the build refuses to start if any are in the manifest")
     parser.add_argument("--limit", type=int, default=None,
                         help="optional cap on number of files (for pilot runs)")
     parser.add_argument("--workers", type=int, default=None,
@@ -420,6 +426,33 @@ if __name__ == "__main__":
                         help="v4: quality_predictor score JSONL (path, q_bucket): adds "
                              "Quality_ header tokens and splits train shards per bucket")
     args = parser.parse_args()
+    if not args.allow_ableton:
+        # Ableton is an eval/labelling seed set, never training data. Omitting
+        # it from a build script is easy to undo by accident; refusing here is
+        # not. Path-based, so it catches the ableton manifest by any name.
+        import json as _json, re as _re
+        # raw/ableton, raw/ableton3, ... -- any ableton export directory. The
+        # first version of this check matched "/raw/ableton/" exactly and let
+        # the real manifest (raw/ableton3/) straight through.
+        _abl = _re.compile(r"/raw/ableton[^/]*/")
+        n_abl = sum(bool(_abl.search(_json.loads(l).get("path", "")))
+                    for l in args.manifest.read_text().splitlines() if l.strip())
+        if n_abl:
+            raise SystemExit(f"[build] REFUSING: {n_abl} Ableton files in {args.manifest}; Ableton is "
+                             f"held out of training. Pass --allow-ableton only if that decision changed.")
+    if args.exclude_ids:
+        # A held-out split is only real if the build enforces it. Added the
+        # day an empty id list let 183 of 200 held-out transcriptions into the
+        # training manifest -- silently, because nothing checked.
+        import json as _json
+        held = {l.strip() for l in args.exclude_ids.read_text().splitlines() if l.strip() and not l.startswith("#")}
+        in_manifest = {Path(_json.loads(l)["path"]).stem
+                       for l in args.manifest.read_text().splitlines() if l.strip()}
+        leak = held & in_manifest
+        if leak:
+            raise SystemExit(f"[build] REFUSING: {len(leak)} of {len(held)} held-out ids are in "
+                             f"{args.manifest} (e.g. {sorted(leak)[:5]}). Fix the split first.")
+        print(f"[build] held-out guard: {len(held)} ids checked, none in the manifest")
     v4_opts = dict(accomp_windows=args.accomp_windows, infill_windows=args.infill_windows,
                    window_bars=args.window_bars, context_bars=args.context_bars,
                    max_span_bars=args.max_span_bars, segment_eos=args.segment_eos,

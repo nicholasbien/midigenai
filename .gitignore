@@ -79,3 +79,4 @@ evals/reward/judge_*.json
 evals/reward/rubric_battery/
 evals/reward/autolabel_*_labels*.jsonl
 evals/reward/*_partial.jsonl
+evals/prompts_fma/

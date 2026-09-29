@@ -1,6 +1,7 @@
 """v4 tokenizer + document formats: Bar/Position REMI scheme, attribute
 header, accompaniment / span-infill documents, header re-injection and
 dropout in the training stream, REMI-aware pitch-shift augmentation."""
+import random
 import tempfile
 from pathlib import Path
 
@@ -8,7 +9,9 @@ import numpy as np
 import pytest
 from symusic import Note, Score, TimeSignature, Track
 
-from midigenai.attributes import header_for_score, is_header_token
+from midigenai.attributes import (
+    dominant_tempo, header_for_score, is_header_token, tempo_tokens,
+)
 from midigenai.data.augment import TokenAugmenter
 from midigenai.data.v4_docs import SKIP_TIMESIG, DocBuilder
 from midigenai.sequence_format import (
@@ -74,6 +77,37 @@ def test_header_tokens_are_ignored_on_decode(tok, sp):
     def notes(sc):
         return sorted((n.time, n.pitch, n.duration) for t in sc.tracks for n in t.notes)
     assert notes(tok.decode(with_header)) == notes(tok.decode(ids))
+
+
+def test_tempo_header_family(tok, sp):
+    from symusic import Tempo
+    inv = {v: k for k, v in tok.vocab.items()}
+    song = _song(4)                                    # no tempo event
+    assert dominant_tempo(song) is None
+    assert tempo_tokens(song) == []
+    assert not any(n.startswith("Tempo_") for n in header_for_score(song))
+
+    song.tempos.append(Tempo(0, 128))
+    assert tempo_tokens(song) == ["Tempo_3"]           # 110 <= 128 < 130
+    assert "Tempo_3" in header_for_score(song, source="lakh")
+    # a placeholder source gets no Tempo token, an explicit clock always does
+    assert not any(n.startswith("Tempo_") for n in header_for_score(song, source="maestro"))
+    assert "Tempo_6" in header_for_score(song, source="maestro", tempo=180)
+    assert tempo_tokens(None, tempo=60) == ["Tempo_0"]
+    assert tempo_tokens(None) == []
+
+    # the tempo covering the most ticks wins, not the first event
+    song.tempos.clear()
+    song.tempos.extend([Tempo(0, 120), Tempo(480, 172), Tempo(4 * 1920 - 240, 80)])
+    assert dominant_tempo(song) == pytest.approx(172.0, abs=0.01)
+    assert tempo_tokens(song) == ["Tempo_5"]
+
+    # Tempo_ is its own dropout family and sorts where the builder puts it
+    header = sp.header_ids_for(tok, ["Inst_Piano", "Range_1", "Tempo_3", "Source_lakh"])
+    assert sp.header_family[header[2]] == "Tempo_"
+    rng = random.Random(0)
+    assert drop_header_families(sp, header, rng, 0.0, 0.0) == header
+    assert [inv[t] for t in header] == ["Inst_Piano", "Range_1", "Tempo_3", "Source_lakh"]
 
 
 def test_docbuilder_shapes(tok, sp):
@@ -441,3 +475,30 @@ def test_transcript_filter_keeps_loops_and_cuts_stuck_notes():
     out, verdict = clean_score(build(breaks))
     assert out is not None and verdict.startswith("trimmed")
     assert sum(len(t.notes) for t in out.tracks) < 200
+
+
+def test_fma_is_a_source_and_keeps_its_tempo():
+    """Transcriptions get a Source_ token, and their detected tempo is real
+    (not a placeholder like aria/maestro), so the Tempo_ family is kept."""
+    from midigenai.attributes import SOURCES, TEMPO_PLACEHOLDER_SOURCES, source_from_path
+    assert "fma" in SOURCES
+    assert "fma" not in TEMPO_PLACEHOLDER_SOURCES
+    assert source_from_path("/x/midigenai_data/raw/fma/012345.mid") == "fma"
+    assert source_from_path("/x/midigenai_data/raw/fma_small_train/012345.mid") is None
+
+
+def test_fma_placeholder_tempo_gets_no_tempo_token():
+    """MuScriptor writes exactly 120.0 when beat tracking fails (54.5% of
+    fma_small). A wrong Tempo_ token is worse than none, so fma at exactly
+    120.0 is treated as a placeholder; a real detection keeps its token, and
+    an authored source at 120 is still tagged."""
+    from symusic import Note, Score, Tempo, Track
+    from midigenai.attributes import header_for_score
+    def sc(bpm):
+        s = Score(480); s.tempos.append(Tempo(0, bpm)); tr = Track(program=0)
+        for i in range(16): tr.notes.append(Note(i * 480, 240, 60 + i % 5, 80))
+        s.tracks.append(tr); return s
+    tempo = lambda names: [n for n in names if n.startswith("Tempo_")]
+    assert tempo(header_for_score(sc(120.0), source="fma")) == []
+    assert tempo(header_for_score(sc(97.3), source="fma")) == ["Tempo_2"]
+    assert tempo(header_for_score(sc(120.0), source="lakh")) == ["Tempo_3"]

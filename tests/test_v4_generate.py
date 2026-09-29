@@ -52,6 +52,19 @@ def test_make_header(gen):
     assert "Inst_Drums" in names and "Inst_Piano" not in names and any(n.startswith("Density_") for n in names)
 
 
+def test_make_header_tempo(gen):
+    inv = {v: k for k, v in gen.tokenizer.vocab.items()}
+    h = gen.make_header(instruments=["Drums"], tempo=174)
+    assert [inv[t] for t in h] == ["Inst_Drums", "Tempo_5"]
+    assert not any(inv[t].startswith("Tempo_") for t in gen.make_header(instruments=["Drums"]))
+    with tempfile.NamedTemporaryFile(suffix=".mid", delete=False) as f:
+        _phrase().dump_midi(f.name)                # symusic writes no tempo event
+        no_clock = [inv[t] for t in gen.make_header(f.name)]
+        clock = [inv[t] for t in gen.make_header(f.name, tempo=92)]
+    assert not any(n.startswith("Tempo_") for n in no_clock)
+    assert "Tempo_2" in clock and clock.index("Tempo_2") > clock.index("Range_0")
+
+
 def test_pad_to_bars_and_bar_line(gen):
     ids = gen.tokenizer(_phrase(2, extra_beats=1)).ids     # 2 bars + 1 beat
     assert gen.count_bars(ids) == 3

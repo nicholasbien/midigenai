@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import math
 from pathlib import Path
 
 WINDOW_SECONDS = 5.0
@@ -35,6 +36,26 @@ def _windows(score, secs: float = WINDOW_SECONDS):
     return per
 
 
+# Two presets. "strict" is the original: a 5 s window is degenerate if one
+# pitch takes >60% of notes, or >45% with a near-constant onset spacing, or
+# the window uses <=2 pitches. "loose" is for transcribed audio, where a
+# kick+hat pattern or a held drone is legitimately two pitches on a grid --
+# the user's read on the transcriptions was "sometimes they degenerate in a
+# cool way", so the loose preset only flags the truly collapsed windows and
+# trims rather than drops.
+PRESETS = {
+    "strict": dict(top=0.60, top_rep=0.45, same=0.90, min_pitches=3, min_keep_windows=3,
+                   noise_density=40.0, noise_entropy=3.2),
+    "loose":  dict(top=0.75, top_rep=0.60, same=0.95, min_pitches=2, min_keep_windows=2,
+                   noise_density=40.0, noise_entropy=3.2),
+}
+_P = dict(PRESETS["strict"])
+
+
+def set_preset(name: str) -> None:
+    _P.update(PRESETS[name])
+
+
 def window_is_degenerate(notes) -> bool:
     """One pitch dominating, or one onset spacing repeated with a tiny alphabet."""
     if len(notes) < 8:
@@ -44,11 +65,43 @@ def window_is_degenerate(notes) -> bool:
     onsets = sorted({t for t, _ in notes})
     gaps = collections.Counter(onsets[i + 1] - onsets[i] for i in range(len(onsets) - 1))
     same = max(gaps.values()) / sum(gaps.values()) if gaps else 1.0
-    return top > 0.6 or (top > 0.45 and same > 0.9) or len(set(pitches)) <= 2
+    # Noise gate. A source that is basically noise (heard on an FMA
+    # "Experimental" clip sitting at -3 dB the whole way) transcribes to a
+    # wall of notes with a tiny pitch alphabet: 45-75 notes/s at 2.3-3.0 bits
+    # of pitch entropy, against ~20-36 notes/s at 3.6-4.2 bits for real music.
+    # Neither the repetition rule nor the pitch-share rule sees it.
+    density = len(notes) / WINDOW_SECONDS
+    ent = -sum((c / len(pitches)) * math.log2(c / len(pitches))
+               for c in collections.Counter(pitches).values())
+    if density > _P["noise_density"] and ent < _P["noise_entropy"]:
+        return True
+    return (top > _P["top"] or (top > _P["top_rep"] and same > _P["same"])
+            or len(set(pitches)) < _P["min_pitches"])
 
 
-def clean_score(score):
+def cut_tail(score, max_seconds: float):
+    """Drop everything from `max_seconds` on. MuScriptor decodes in 5 s
+    chunks carrying state forward, and on 30 s FMA clips the last 5-10 s
+    audibly drift into inaccurate loops (137418, 054625, 144939) while the
+    source audio stays flat -- so this is decoder drift, not a fade-out, and
+    a fixed cut is the robust fix. Transcription itself is left at 30 s."""
+    tpq = max(score.ticks_per_quarter, 1)
+    bpm = score.tempos[0].qpm if len(score.tempos) else 120.0
+    cut_tick = int(max_seconds * bpm / 60 * tpq)
+    out = score.copy()
+    for track in out.tracks:
+        kept = [n for n in track.notes if n.start < cut_tick]
+        for n in kept:                      # a note that starts before the cut
+            if n.end > cut_tick:            # must not sound past it either
+                n.duration = cut_tick - n.start
+        track.notes = kept
+    return out
+
+
+def clean_score(score, max_seconds: float | None = None):
     """(score, verdict): 'clean', 'trimmed at N s', or None to drop."""
+    if max_seconds:
+        score = cut_tail(score, max_seconds)
     per = _windows(score)
     if not per:
         return None, "empty"
@@ -57,7 +110,7 @@ def clean_score(score):
     if not any(flags):
         return score, "clean"
     first = flags.index(True)
-    if first < MIN_KEEP_WINDOWS:
+    if first < _P["min_keep_windows"]:
         return None, "degenerate"
     cut_s = first * WINDOW_SECONDS
     tpq = max(score.ticks_per_quarter, 1)
@@ -75,7 +128,11 @@ def main() -> None:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--in", dest="src", type=Path, required=True)
     p.add_argument("--out", dest="dst", type=Path, required=True)
+    p.add_argument("--preset", choices=sorted(PRESETS), default="strict")
+    p.add_argument("--max-seconds", type=float, default=None,
+                   help="drop notes from this time on before filtering (20 for 30 s FMA clips)")
     args = p.parse_args()
+    set_preset(args.preset)
     args.dst.mkdir(parents=True, exist_ok=True)
     counts = collections.Counter()
     for f in sorted(args.src.rglob("*.mid")):
@@ -84,7 +141,7 @@ def main() -> None:
         except Exception:
             counts["unreadable"] += 1
             continue
-        out, verdict = clean_score(sc)
+        out, verdict = clean_score(sc, args.max_seconds)
         counts[verdict.split(" at ")[0]] += 1
         if out is not None and sum(len(t.notes) for t in out.tracks) >= 32:
             out.dump_midi(args.dst / f.name)

@@ -51,10 +51,18 @@ class Specials:
         )
 
     def header_ids_for(self, tok, names: list[str]) -> list[int]:
+        """Ids for header names. A whole family this tokenizer predates
+        (Tempo_ against a 590-token v4 checkpoint) is skipped, so older
+        checkpoints keep working under the newer header builder; a name the
+        tokenizer *should* know is still an error."""
+        known = set(self.header_family.values())
         out = []
         for n in names:
             tid = special_id(tok, n)
             if tid is None:
+                fam = next((p for p in HEADER_PREFIXES if n.startswith(p)), None)
+                if fam is not None and fam not in known:
+                    continue
                 raise KeyError(f"not a header token: {n}")
             out.append(tid)
         return out
