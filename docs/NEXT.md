@@ -22,6 +22,7 @@ order to do things in.
   transcriptions of Free Music Archive clips (8 genres the MIDI corpus lacks).
   It is the one corpus change that shows up in the base model (repetition on
   genre prompts −0.07, t −3.1), and the author wants more of it.
+- **Serving, site and API state:** [docs/v5.md §4](v5.md#4-serving-and-site).
 - **Model size did not matter.** 202M vs 113M was near-even blind. The model is
   data-limited: spend on data, not parameters.
 
