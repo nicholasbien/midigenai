@@ -33,10 +33,12 @@ order to do things in.
 about $0.39 per hour of audio, writing to the `midigenai-transcribed` volume.
 v5 used `fma_small` (8,000 × 30 s clips).
 
-- **Scale the source.** `fma_large` (106,574 full-length tracks, 161 genres)
-  is the obvious next step. Full tracks, not 30 s clips: segment into ~20 s
-  windows with a fresh decoder state per window (the transcriber drifts on
-  long passes and after ~20 s; v5 cut clips at 20 s for that reason).
+- **Scale the source.** `fma_large` is 106,574 thirty-second clips across
+  161 genres (13x `fma_small`); `fma_full` is the same tracks untrimmed.
+  `fma_large` needs no new code. Full tracks would need a change to
+  `transcribe_modal.py`: segment into ~20 s windows with a fresh decoder
+  state per window (the transcriber drifts on long passes; v5 cut clips at
+  20 s for that reason).
 - **Filter exactly as v5 did:** `transcript_filter --preset loose
   --max-seconds 20` (tail cut + noise gate). Keep the held-out split:
   carve held-out ids BEFORE building, add them to
@@ -77,8 +79,9 @@ end: ~3 h pairs, ~1 h judge, ~2 h probe fits, 4–8 h GRPO, then listening.
 
 - **Refit both reward probes.** A probe is specific to its checkpoint: re-cache,
   re-sweep the layer (the best layer moved from block 1 on v4 to block 4 on
-  v5), confirm with cold leave-one-prompt-out. Gates: continuation ≥ 0.77,
-  accompaniment ≥ 0.72.
+  v5), confirm with cold leave-one-prompt-out. v5 reached 0.771–0.775
+  (continuation) and 0.782 (accompaniment) held-out; do not launch GRPO on a
+  continuation probe below 0.75.
 - **The accompaniment probe must be refit regardless.** v5-rl's was fitted
   before #57, with ~4–5% of sequences truncated at the wrong offset
   (details in [v5.md](v5.md)).
