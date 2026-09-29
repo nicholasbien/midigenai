@@ -107,39 +107,45 @@ def choose_tracks(window, spec) -> list[int]:
 def continuation_source(midi_bytes: bytes, raw) -> tuple[bytes, list[int], list[str]]:
     """(bytes to continue, prompt track indices, their names) for `track=`.
 
-    Continuation was trained on two shapes: the whole mix, and a single track
-    on its own (v4_docs' solo views). So omitted / "auto" / "all" -> the file
-    unchanged, one index -> that track alone with the file's tempo and meter.
-    A subset of several tracks was never a continuation document, so it is a
-    400 rather than something quietly attempted. Indices are file track
-    positions, the same ones /api/tracks lists.
+    Omitted / "auto" / "all" -> the file unchanged. One index or a list
+    ("0,2") -> just those tracks, with the file's tempo, meter and key.
+    Indices are file track positions, the same ones /api/tracks lists.
+
+    Subsets were not a trained continuation shape (training had the full mix
+    and single-track solo views), so they were refused until measured.
+    Measured on v5-rl, 24 held-out windows with 4+ tracks, 2 samples each,
+    prompt = the k densest tracks: prompt coherence 0.895 / 0.893 / 0.884 /
+    0.834 for k = 1, 2, 3, all; scale consistency within noise of the full
+    mix; 100% of continuation notes stayed on the given instruments at every
+    k, none empty. So any subset is allowed.
     """
     score = Score.from_midi(BytesIO(midi_bytes).read())
     n = len(score.tracks)
     live = [i for i, t in enumerate(score.tracks) if len(t.notes)]
     spec = parse_track_spec(raw)
-    if spec is None or spec == "all" or (isinstance(spec, list) and sorted(set(spec)) == live):
+    if spec is None or spec == "all":
         return midi_bytes, live, [score.tracks[i].name or "" for i in live]
-    if len(set(spec)) > 1:
-        raise TrackChoiceError(
-            "continuation takes the whole mix (omit track, or track=all) or one track; "
-            f"a subset like {raw!r} was not a trained continuation shape")
-    i = spec[0]
-    if not 0 <= i < n:
-        raise TrackChoiceError(f"track={i} is out of range; this upload has tracks 0-{n - 1}")
-    if not len(score.tracks[i].notes):
-        raise TrackChoiceError(f"track {i} has no notes; tracks with notes: {live}")
-    solo = Score(score.ticks_per_quarter)
-    for ts in score.time_signatures: solo.time_signatures.append(ts)
-    for te in score.tempos: solo.tempos.append(te)
-    for ks in score.key_signatures: solo.key_signatures.append(ks)
-    solo.tracks.append(score.tracks[i])
+    chosen = []
+    for i in spec:
+        if not 0 <= i < n:
+            raise TrackChoiceError(f"track={i} is out of range; this upload has tracks 0-{n - 1}")
+        if not len(score.tracks[i].notes):
+            raise TrackChoiceError(f"track {i} has no notes; tracks with notes: {live}")
+        if i not in chosen:
+            chosen.append(i)
+    if sorted(chosen) == live:
+        return midi_bytes, live, [score.tracks[i].name or "" for i in live]
+    sub = Score(score.ticks_per_quarter)
+    for ts in score.time_signatures: sub.time_signatures.append(ts)
+    for te in score.tempos: sub.tempos.append(te)
+    for ks in score.key_signatures: sub.key_signatures.append(ks)
+    for i in chosen: sub.tracks.append(score.tracks[i])
     import tempfile, os
     fd, path = tempfile.mkstemp(suffix=".mid"); os.close(fd)
     try:
-        solo.dump_midi(path)
+        sub.dump_midi(path)
         with open(path, "rb") as f:
-            return f.read(), [i], [score.tracks[i].name or ""]
+            return f.read(), chosen, [score.tracks[i].name or "" for i in chosen]
     finally:
         os.unlink(path)
 
