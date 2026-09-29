@@ -51,8 +51,15 @@ from pathlib import Path
 #                       +10 points on Ableton. Picked by best worst-case across
 #                       distributions on dev halves, reported on test halves;
 #                       see evals/reward/rubric_battery/.
+#   judge_infill.txt    infill pairs: does the fill join the bars before AND
+#                       after the gap. Picked automatically for a pair whose
+#                       meta says mode=infill unless --prompt names a rubric.
+#                       Unvalidated until the labeler's infill votes exist.
 PROMPT_DIR = Path(__file__).parent / "prompts"
 DEFAULT_PROMPT = "fit_only"
+# rubric per pair mode when --prompt is not given; everything else uses
+# DEFAULT_PROMPT (accompaniment pairs included, as before)
+MODE_PROMPTS = {"infill": "infill"}
 # luna, not sol: on the same 470 on-policy pairs a reward fitted to either
 # judge's labels reached 0.700, luna agrees with sol 0.82-0.95 pair-for-pair,
 # and it costs about 17x less per call ($0.20/$1.20 vs $4/$20 per 1M tokens),
@@ -77,7 +84,9 @@ GM_DRUMS = {35: "Kick", 36: "Kick", 37: "Rim", 38: "Snare", 39: "Clap", 40: "Sna
             51: "Ride", 53: "Bell", 55: "Splash", 57: "Crash", 59: "Ride"}
 
 
-def to_notes(midi_path: Path, max_bars: int = 12, tracks: slice | None = None) -> str | None:
+def to_notes(midi_path: Path, max_bars: int = 12, tracks: slice | None = None,
+             bar_range: tuple[int, int] | None = None,
+             blank_bars: tuple[int, int] | None = None) -> str | None:
     """Bar-by-bar note list: unambiguous where our ABC is not.
 
     midi2abc renders machine-generated polyphony as walls of tied chord
@@ -85,6 +94,10 @@ def to_notes(midi_path: Path, max_bars: int = 12, tracks: slice | None = None) -
     that made ABC familiar to language models, and it silently turns a drum
     channel into pitches. This spells out beat position, pitch name and
     duration, and names the drum voices.
+
+    `bar_range` keeps only bars [lo, hi) (0-based), numbered as in the whole
+    file; `blank_bars` prints bars [lo, hi) as "(missing)" so a gap reads as
+    a gap rather than as bars that simply were not listed.
     """
     from symusic import Score
     try:
@@ -107,6 +120,8 @@ def to_notes(midi_path: Path, max_bars: int = 12, tracks: slice | None = None) -
             bar = int(beat // beats_per_bar)
             if bar >= max_bars:
                 continue
+            if bar_range and not bar_range[0] <= bar < bar_range[1]:
+                continue
             pos = round(beat - bar * beats_per_bar, 2)
             if track.is_drum:
                 label = GM_DRUMS.get(int(n.pitch), f"Perc{int(n.pitch)}")
@@ -115,11 +130,17 @@ def to_notes(midi_path: Path, max_bars: int = 12, tracks: slice | None = None) -
                 name = f"{PITCH_NAMES[int(n.pitch) % 12]}{int(n.pitch) // 12 - 1}"
                 bars.setdefault(bar, []).append(
                     f"{pos:g}:{name}:{round(n.duration / tpq, 2):g}")
+    if blank_bars:
+        for bar in range(*blank_bars):
+            bars[bar] = ["(missing)"]
     if not bars:
         return None
     lines = [f"tempo {bpm:.0f} bpm, meter {num}/{den}, "
              f"format beat:pitch:duration_in_beats (drums are named voices)"]
     for bar in sorted(bars):
+        if bars[bar] == ["(missing)"]:
+            lines.append(f"bar {bar + 1}: (missing)")
+            continue
         notes = sorted(bars[bar], key=lambda x: float(x.split(":")[0]))
         lines.append(f"bar {bar + 1}: " + "  ".join(notes))
     return "\n".join(lines)
@@ -144,6 +165,14 @@ def to_abc(midi_path: Path) -> str | None:
 
 
 def build_prompt(prompt_abc: str, a_abc: str, b_abc: str, mode: str = "continue") -> str:
+    if mode == "infill":
+        # The context is shown once with the gap marked; each fill is only
+        # its own bars, on the same bar numbers, so the judge compares the
+        # fills rather than re-reading the kept bars twice.
+        return (f"CONTEXT (identical for both; the (missing) bars are the gap):\n{prompt_abc}\n\n"
+                f"FILL 1 — the missing bars (same bar numbers):\n{a_abc}\n\n"
+                f"FILL 2 — the missing bars (same bar numbers):\n{b_abc}\n\n"
+                "With which fill does the passage sound like one piece? JSON only.")
     if mode == "accompany":
         # The judge is shown the part and, separately, ONLY the parts each
         # candidate added, on the same bar numbering. Before this it was
@@ -177,15 +206,50 @@ def pair_mode(pairs_dir: Path, pid: str) -> tuple[str, int]:
     return mode, n_cond
 
 
+def _gap(pairs_dir: Path, pid: str) -> tuple[int, int] | None:
+    mp = pairs_dir / f"{pid}.json"
+    if not mp.exists():
+        return None
+    g = json.loads(mp.read_text()).get("gap_bars")
+    return (int(g[0]), int(g[1])) if g else None
+
+
+def render_context(pairs_dir: Path, pid: str, fmt: str) -> str | None:
+    """The prompt as the judge sees it; for infill, the kept bars with the
+    gap printed as (missing)."""
+    path = pairs_dir / f"{pid}_prompt.mid"
+    mode, _ = pair_mode(pairs_dir, pid)
+    gap = _gap(pairs_dir, pid) if mode == "infill" else None
+    if gap and fmt == "notes":
+        return to_notes(path, max_bars=32, blank_bars=gap)
+    return render(path, fmt)
+
+
 def render_side(pairs_dir: Path, pid: str, side: str, fmt: str) -> str | None:
     """A candidate as the judge should see it: the whole file for a
     continuation; only the added tracks for an accompaniment (pairgen writes
-    the mix with the condition tracks first, then the generated ones)."""
+    the mix with the condition tracks first, then the generated ones); only
+    the gap's bars for an infill (an empty fill is shown as silence, since
+    it is a real answer to judge, not a render failure)."""
     mode, n_cond = pair_mode(pairs_dir, pid)
     path = pairs_dir / f"{pid}_{side}.mid"
+    if mode == "infill" and fmt == "notes":
+        gap = _gap(pairs_dir, pid)
+        if gap:
+            return (to_notes(path, max_bars=32, bar_range=gap)
+                    or f"bars {gap[0] + 1}-{gap[1]}: (silence: no notes)")
     if mode == "accompany" and fmt == "notes" and n_cond:
         return to_notes(path, tracks=slice(n_cond, None))
     return render(path, fmt)
+
+
+def rubric_name(mode: str) -> str:
+    return MODE_PROMPTS.get(mode, DEFAULT_PROMPT)
+
+
+def rubric_for(mode: str) -> str:
+    """The system prompt for a pair of this mode when none was chosen."""
+    return PROMPTS[rubric_name(mode)]
 
 
 def ask(client, model: str, user: str, temperature: float = 0.0,
@@ -258,10 +322,10 @@ def validate(args) -> None:
         raise SystemExit("set OPENAI_API_KEY")
     client = OpenAI()
     system = (Path(args.system_file).read_text() if args.system_file
-              else PROMPTS[args.prompt])
+              else PROMPTS[args.prompt] if args.prompt else None)
     cases = load_cases(args.labels, args.limit, args.seed, split=args.split)
     print(f"[judge] {len(cases)} human-voted pairs, model={args.model}, "
-          f"format={args.format}, prompt={args.system_file or args.prompt}, "
+          f"format={args.format}, prompt={args.system_file or args.prompt or 'per-mode'}, "
           f"split={args.split}")
 
     rng = random.Random(args.seed)
@@ -270,7 +334,7 @@ def validate(args) -> None:
         pid, _win, p, w, l = case
         pairs_dir = p.parent
         mode, _ = pair_mode(pairs_dir, pid)
-        pa = render(p, args.format)
+        pa = render_context(pairs_dir, pid, args.format)
         aw = render_side(pairs_dir, pid, w.name[len(pid) + 1:-4], args.format)
         al = render_side(pairs_dir, pid, l.name[len(pid) + 1:-4], args.format)
         if not (pa and aw and al):
@@ -280,7 +344,8 @@ def validate(args) -> None:
         winner_first = rng.random() < 0.5
         first, second = (aw, al) if winner_first else (al, aw)
         try:
-            res = judge_pair(client, args.model, pa, first, second, system=system, mode=mode)
+            res = judge_pair(client, args.model, pa, first, second,
+                             system=system or rubric_for(mode), mode=mode)
         except Exception as e:
             return {"pair_id": pid, "error": f"{type(e).__name__}: {e}"[:120]}
         human_side = "1" if winner_first else "2"
@@ -302,7 +367,7 @@ def validate(args) -> None:
     firsts = sum(r["first_pass"] == "1" for r in ok)
     out = {
         "model": args.model, "format": args.format,
-        "prompt": args.system_file or args.prompt, "split": args.split,
+        "prompt": str(args.system_file or args.prompt or "per-mode"), "split": args.split,
         "n": len(ok), "n_decided": len(decided),
         "agreement_with_human": agree / len(decided) if decided else None,
         "swap_consistency": swap_ok / len(ok),
@@ -343,7 +408,7 @@ def label(args) -> None:
         raise SystemExit("set OPENAI_API_KEY")
     client = OpenAI()
     system = (Path(args.system_file).read_text() if args.system_file
-              else PROMPTS[args.prompt])
+              else PROMPTS[args.prompt] if args.prompt else None)
 
     pairs_dir = Path(args.pairs)
     out_path = Path(args.out)
@@ -361,14 +426,14 @@ def label(args) -> None:
     if args.limit:
         todo = todo[:args.limit]
     print(f"[label] {len(todo)} pairs to judge ({len(done)} already done), "
-          f"model={args.model}, prompt={args.system_file or args.prompt}")
+          f"model={args.model}, prompt={args.system_file or args.prompt or 'per-mode'}")
 
     lock = __import__("threading").Lock()
     counts = {"a": 0, "b": 0, "tie": 0, "error": 0}
 
     def one(pid: str):
         mode, _ = pair_mode(pairs_dir, pid)
-        pa = render(pairs_dir / f"{pid}_prompt.mid", args.format)
+        pa = render_context(pairs_dir, pid, args.format)
         ra = render_side(pairs_dir, pid, "a", args.format)
         rb = render_side(pairs_dir, pid, "b", args.format)
         if not (pa and ra and rb):
@@ -382,7 +447,8 @@ def label(args) -> None:
         a_first = int(hashlib.sha1(f"{args.seed}:{pid}".encode()).hexdigest(), 16) & 1 == 0
         first, second = (ra, rb) if a_first else (rb, ra)
         try:
-            res = judge_pair(client, args.model, pa, first, second, system=system, mode=mode)
+            res = judge_pair(client, args.model, pa, first, second,
+                             system=system or rubric_for(mode), mode=mode)
         except Exception as e:
             return {"pair_id": pid, "error": f"{type(e).__name__}: {e}"[:120]}
         if res["verdict"] == "tie":
@@ -398,7 +464,8 @@ def label(args) -> None:
                   else "left" if preferred == "a" else "right")
         return {"ts": utcnow(), "pair_id": pid, "preferred": preferred,
                 "choice": choice, "left_is": "a", "right_is": "b",
-                "judge_model": args.model, "judge_prompt": args.system_file or args.prompt,
+                "judge_model": args.model,
+                "judge_prompt": str(args.system_file or args.prompt or rubric_name(mode)),
                 "swap_consistent": res["consistent"], "a_shown_first": a_first,
                 "reason": res["reason"]}
 
@@ -438,9 +505,10 @@ def main() -> None:
     v = sub.add_parser("validate")
     v.add_argument("--labels", type=Path, required=True)
     v.add_argument("--model", default=DEFAULT_MODEL)
-    v.add_argument("--prompt", choices=sorted(PROMPTS), default=DEFAULT_PROMPT,
-                   help=f"which judging rubric to use (default: {DEFAULT_PROMPT}, "
-                        "the one the agreement figures describe)")
+    v.add_argument("--prompt", choices=sorted(PROMPTS), default=None,
+                   help=f"which judging rubric to use (default: per pair mode -- "
+                        f"{MODE_PROMPTS} -- else {DEFAULT_PROMPT}, the one the "
+                        "agreement figures describe)")
     v.add_argument("--system-file", type=Path, default=None,
                    help="read the rubric from a file instead")
     v.add_argument("--split", choices=["all", "dev", "test"], default="all",
@@ -457,7 +525,8 @@ def main() -> None:
                     help="directory of <id>_prompt.mid / _a.mid / _b.mid")
     lb.add_argument("--out", type=Path, required=True)
     lb.add_argument("--model", default=DEFAULT_MODEL)
-    lb.add_argument("--prompt", choices=sorted(PROMPTS), default=DEFAULT_PROMPT)
+    lb.add_argument("--prompt", choices=sorted(PROMPTS), default=None,
+                    help=f"rubric; default per pair mode ({MODE_PROMPTS}), else {DEFAULT_PROMPT}")
     lb.add_argument("--system-file", type=Path, default=None)
     lb.add_argument("--format", choices=["abc", "notes"], default="notes")
     lb.add_argument("--limit", type=int, default=0)

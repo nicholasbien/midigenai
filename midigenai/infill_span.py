@@ -58,6 +58,10 @@ class InfillPlan:
     def suffix(self) -> Score:
         return _window(self.score, self.edges[self.start + self.bars], self.edges[self.ctx_end])
 
+    def middle(self) -> Score:
+        """The bars being replaced, as they are in the upload (re-based)."""
+        return _window(self.score, *self.span_ticks)
+
     @property
     def prefix_bars(self) -> int:
         return self.start - self.ctx_start
@@ -86,6 +90,11 @@ def plan(midi_bytes: bytes, start: int, bars: int) -> InfillPlan:
     what the user sees."""
     score = Score.from_midi(BytesIO(midi_bytes).read())
     normalize_drums(score, "upload.mid")
+    return plan_score(score, start, bars)
+
+
+def plan_score(score: Score, start: int, bars: int) -> InfillPlan:
+    """`plan` on a parsed score (drums already normalized by the caller)."""
     if not sum(len(t.notes) for t in score.tracks):
         raise InfillError("upload has no notes")
     edges = bar_edges(score)

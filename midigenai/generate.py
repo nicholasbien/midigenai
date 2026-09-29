@@ -554,12 +554,26 @@ class Generator:
 
         Leading empty bars are kept (`trim_leading_bars=False`): the gap is
         pinned between prefix and suffix, so a rest at its start is part of
-        the answer, and trimming it would slide every note early."""
+        the answer, and trimming it would slide every note early.
+
+        The token budget follows the density of the bars around the gap
+        (twice their tokens per bar, floor 64 per bar): a flat 64 per bar cut
+        dense fills off part-way -- a 3-bar trance gap whose real bars take
+        501 tokens came back at the 256 cap, one bar short.
+
+        EOS and BOS are banned: the answer is exactly `bars` bars and ends
+        on the Bar token that would open the next one (`stop_after_bars`).
+        Nothing in the prompt says how long the gap is, and left free v5-rl
+        stopped early on 35% of fills (a 4-bar gap answered with 1-2 bars,
+        the rest silent) on held-out presets."""
         self._require_v4("infill")
         from .sequence_format import infill_prompt
         prompt = infill_prompt(self.sp, list(header), list(prefix_ids), list(suffix_ids))
-        gen_kwargs.setdefault("max_new_tokens", 64 * bars + 64)
-        gen_kwargs.setdefault("ban_ids", [self.sp.sep, self.sp.mask])
+        ctx_bars = self.count_bars(prefix_ids) + self.count_bars(suffix_ids)
+        per_bar = (len(prefix_ids) + len(suffix_ids)) / max(1, ctx_bars)
+        gen_kwargs.setdefault("max_new_tokens", int(max(64, 2 * per_bar) * bars) + 64)
+        gen_kwargs.setdefault("ban_ids", sorted(
+            t for t in (self.sp.sep, self.sp.mask, self.bos_id, self.eos_id) if t is not None))
         gen_kwargs.setdefault("trim_leading_bars", False)
         yield from self.generate_ids(prompt, stop_after_bars=bars, **gen_kwargs)
 
