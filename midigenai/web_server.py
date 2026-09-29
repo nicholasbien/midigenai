@@ -80,6 +80,7 @@ def _generate_n(midi_bytes: bytes, temperature: float, top_k: int,
     result = _generator(version).generate_batch.remote(
         midi_bytes, max_new_tokens=max_new_tokens,
         temperature=temperature, top_k=top_k, n_samples=n_samples,
+        client="web",
     )
     return result
 
@@ -354,7 +355,7 @@ def accompany():
     try:
         result = _generator(version).accompany_batch.remote(
             midi_bytes, bars=bars, temperature=temperature, top_k=top_k,
-            n_samples=2, instrument=instrument, track=track,
+            n_samples=2, instrument=instrument, track=track, client="web",
         )
     except Exception as e:
         traceback.print_exc()
