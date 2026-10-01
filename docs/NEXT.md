@@ -66,6 +66,12 @@ Two choices, in this order:
   This is the fastest path to "new improved model" and tests the data bet
   directly. Always launch training with `--resume`: a preempted run once
   restarted from step 0.
+- **Either way, train more infill.** Keep-some-bars-redo-the-rest is now
+  served (`/api/infill`) and is an everyday edit for the author, but the
+  builder default is one infill window per file (~9%; check `build_v5.sh`
+  for what v5 actually passed) and only interior spans. See
+  PLAN.md workstream 10 and the v6 proposal §2 for the data changes; the
+  data-only ones need no vocabulary change and can go into v5.x.
 - **v6: vocabulary changes.**
   [proposals/v6-role-conditioning.md](proposals/v6-role-conditioning.md)
   queues Role_ tokens for the accompaniment target, fragment EOS,

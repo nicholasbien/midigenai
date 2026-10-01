@@ -34,6 +34,8 @@ evals/prompts_heldout/
 evals/prompts_val/
 evals/progress_v4/
 evals/labeling*/pairs/
+# hub manifests point at local pair dirs; they travel with the pairs, not in git
+evals/labeling*/manifest.jsonl
 evals/**/*.log
 evals/*.log
 evals/**/*.mp3

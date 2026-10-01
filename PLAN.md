@@ -1,8 +1,13 @@
 # v2 model improvement plan
 
-Working plan for getting from `v2-100m` (current live checkpoint) to a meaningfully
-better model at the same size, then scaling up. This doc lives in an open PR and is
-updated as work lands. Last updated: 2026-08-30.
+> **Status (2026-09-29):** historical. This plan took the project from `v2-100m`
+> through v4 to v5; the live model is now `v5-rl` on the v5 corpus
+> (`corpus_v5`, see [docs/v5.md](docs/v5.md)). What to do next is in
+> [docs/NEXT.md](docs/NEXT.md). Workstreams below that are still open (9, 10)
+> carry forward to the next corpus build.
+
+Working plan for getting from `v2-100m` (then the live checkpoint) to a meaningfully
+better model at the same size, then scaling up. Last updated: 2026-08-30.
 
 ## Where we are
 
@@ -153,10 +158,11 @@ Lakh validation picks). Sessions:
 
 ### 8. v4: structure, control, infilling, longer context
 
-- [ ] See [docs/proposals/v4-structure-and-control.md](docs/proposals/v4-structure-and-control.md)
+- [x] See [docs/proposals/v4-structure-and-control.md](docs/proposals/v4-structure-and-control.md)
       (supersedes `bar-aware-tokenizer.md`): REMI Bar/Position tokens, attribute
       control tokens, FIM-style accompaniment + span-infill documents, 4096
-      length-extension tail. One pilot-ablated retrain after v3 (= medium_full_v1) ships.
+      length-extension tail. Shipped as v4; the same document format carried
+      into the v5 corpus, which is the one in use now.
 
 ### 9. Next model: more than two tracks as an accompaniment condition
 
@@ -178,6 +184,38 @@ Lakh validation picks). Sessions:
 - [ ] Related, and free with the above: the *target* is already multi-track 40% of
       the time (`single_target_frac = 0.6`), but serving only ever returns one
       generated track, so "write the other parts" is trained and unreachable.
+
+### 10. Infill as a first-class task
+
+Regenerating a span while keeping the bars around it ("I like bars 1-2 and 5-8,
+redo 3-4") is the edit people reach for once they have a loop they half like.
+The model has been trained on it since v4, but only lightly, and until
+`/api/infill` nothing outside `Generator.infill` used it.
+
+- [x] Serving: `MidiGen.infill_batch` + `POST /api/infill?start=&bars=`
+      (`midigenai/infill_span.py`). Limited to the trained shape: 1-4 bars, at
+      least one kept bar each side, 16-bar context. Returns the whole upload with
+      the span replaced.
+- [x] Decoding: `Generator.infill` keeps leading rests, sizes its token budget
+      from the context's density, and bans EOS/BOS until the gap is full.
+      Without the last, v5-rl stopped early on 34% of held-out gaps.
+- [x] Pairs, judge rubric, hub mode, report: `pairgen --mode infill
+      [--vs-original]`, `prompts/judge_infill.txt`, infill view in the
+      labeling hub, `python -m midigenai.infill_eval`. Sets
+      `labeling_infill_v5rl_vs_orig` (v5-rl vs the real bars, 96 pairs) and
+      `labeling_infill_v5rl_ab` (on-policy) from the 48 held-out site presets.
+      Label-free on the vs-original set: 0% empty, 1% short, density vs kept
+      bars 1.03 (original 0.92), pitch-class fit 0.875 (original 0.830), 3%
+      identical to the original.
+- [ ] Label: the labeler's votes on both sets. The vs-original win rate is the
+      headline; the ab votes validate the judge.
+- [ ] Validate `judge_infill` against those votes, then judge the rest.
+- [ ] Add an infill scorecard to `eval_checkpoint`.
+- [ ] RL: infill as a third GRPO task next to continuation and accompaniment,
+      with its own probe.
+- [ ] Next corpus build (v5.x or v6): more infill documents, and the shapes
+      training never had. See
+      [proposals/v6-role-conditioning.md](docs/proposals/v6-role-conditioning.md) §2.
 
 ## Sequencing
 

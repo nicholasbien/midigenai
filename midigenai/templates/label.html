@@ -440,6 +440,13 @@ function setupRoll(side, roll, lo, hi) {
   const line = document.getElementById('cut-' + side);
   const label = document.getElementById('cutlabel-' + side);
   if (!shade || !line || !label) return;   // the prompt row has no handoff
+  if (roll.gap_s) {                         // infill: shade the gap, not a prompt
+    const [g0, g1] = roll.gap_s.map(s => s * PX_PER_SEC);
+    shade.style.left = g0 + 'px'; shade.style.width = (g1 - g0) + 'px';
+    line.style.left = g0 + 'px'; label.style.left = (g0 + 4) + 'px';
+    label.textContent = 'model fills from here';
+    return;
+  }
   shade.style.width = x + 'px';
   line.style.left = x + 'px';
   label.style.left = (x + 4) + 'px';
@@ -782,7 +789,8 @@ function render() {
   flags = { left: new Set(), right: new Set() };
   stage.classList.add('flash');
   setTimeout(() => stage.classList.remove('flash'), 400);
-  const ACC = p.mode === 'accompany';
+  const INF = p.mode === 'infill';
+  const ACC = p.mode === 'accompany' || INF;   // both play whole from the top
   const allP = ['left_roll', 'right_roll', 'prompt_roll']
     .flatMap(k => ((p[k] && p[k].notes) || []).map(n => n.p));
   const lo = Math.max(0, Math.min(48, ...allP) - 2), hi = Math.min(127, Math.max(72, ...allP) + 2);
@@ -793,7 +801,7 @@ function render() {
   stage.innerHTML = `
     <div class="legend">Prompt <span style="font-weight:400;color:var(--accent)">· ${p.prompt_source || ''}</span> <span style="color:var(--faint)">${p.prompt_name || ''}</span>
       <span id="loadnote" style="color:var(--warn)"></span>
-      &nbsp;·&nbsp; ${ACC ? 'each row is the SAME part you just heard, plus a different set of accompanying parts — judge how well they fit together, not what comes next. Both rows share one time and pitch scale' : 'shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays prompt + 1, pauses, then prompt + 2, and waits for you'}; <kbd>space</kbd> pauses/resumes, <kbd>enter</kbd> starts over, <kbd>esc</kbd> stops, <kbd>a</kbd> replays 1, <kbd>b</kbd> replays 2, <kbd>o</kbd> the other one${ACC ? ', <kbd>c</kbd> plays the original part alone' : ''}.</div>
+      &nbsp;·&nbsp; ${INF ? 'each row is the SAME kept bars with a different fill in the shaded gap — judge which makes the whole passage sound like one piece, joining what comes before AND after. Both rows share one time and pitch scale' : ACC ? 'each row is the SAME part you just heard, plus a different set of accompanying parts — judge how well they fit together, not what comes next. Both rows share one time and pitch scale' : 'shaded = last bars of the prompt, red line = where the model takes over; notes light up as they sound. Both rows share one time and pitch scale. Plays prompt + 1, pauses, then prompt + 2, and waits for you'}; <kbd>space</kbd> pauses/resumes, <kbd>enter</kbd> starts over, <kbd>esc</kbd> stops, <kbd>a</kbd> replays 1, <kbd>b</kbd> replays 2, <kbd>o</kbd> the other one${INF ? ', <kbd>c</kbd> plays the kept bars with the gap silent' : ACC ? ', <kbd>c</kbd> plays the original part alone' : ''}.</div>
     <div class="files">${p.source ? `set <code>${p.source}</code>${p.idx !== undefined ? ` #${p.idx}` : ''} · ` : ''}pair <code>${p.pair_id}</code>${p.prompt_name ? ` · from <code>${p.prompt_name}</code>` : ''} · download:
       <a href="#" onclick="return downloadAs('${p.prompt_url}', '${p.pair_id}_prompt.mid')">&#8681; prompt</a>
       <a href="#" onclick="return downloadAs('${p.left_url}', '${p.pair_id}_take1.mid')">&#8681; ${ACC ? 'arrangement' : 'take'} 1</a>
@@ -802,7 +810,7 @@ function render() {
       <a href="#" onclick="return downloadAs('${p.right_timeline_url}', '${p.pair_id}_take2_with_prompt.mid')">&#8681; 2 with prompt tail</a>`}
     </div>
     ${ACC ? `<div class="opt" id="opt-prompt" style="margin-bottom:10px">
-        <h3>The part being accompanied &mdash; both arrangements add to this <span class="hid">${p.prompt_name || ''} <a href="#" onclick="return downloadAs('${p.prompt_url}', '${p.pair_id}_prompt.mid')">&#8681;</a></span></h3>
+        <h3>${INF ? 'The kept bars &mdash; the gap is silent here; both takes fill it' : 'The part being accompanied &mdash; both arrangements add to this'} <span class="hid">${p.prompt_name || ''} <a href="#" onclick="return downloadAs('${p.prompt_url}', '${p.pair_id}_prompt.mid')">&#8681;</a></span></h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-prompt"></midi-visualizer>
         </div></div>
@@ -810,7 +818,7 @@ function render() {
       </div>` : ''}
     <div class="rows">
       <div class="opt" id="opt-left">
-        <h3>${ACC ? 'Arrangement 1' : 'Continuation 1'} <span class="hid">${short(p.pair_id)}·1 <a href="#" onclick="return downloadAs('${p.left_url}', '${p.pair_id}_take1.mid')" title="download take 1">&#8681;</a></span></h3>
+        <h3>${INF ? 'Fill 1' : ACC ? 'Arrangement 1' : 'Continuation 1'} <span class="hid">${short(p.pair_id)}·1 <a href="#" onclick="return downloadAs('${p.left_url}', '${p.pair_id}_take1.mid')" title="download take 1">&#8681;</a></span></h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-left"></midi-visualizer>
           <div class="shade" id="shade-left"></div><div class="cutline" id="cut-left"></div>
@@ -822,7 +830,7 @@ function render() {
         <div class="chips" id="flags-left"></div>
       </div>
       <div class="opt" id="opt-right">
-        <h3>${ACC ? 'Arrangement 2' : 'Continuation 2'} <span class="hid">${short(p.pair_id)}·2 <a href="#" onclick="return downloadAs('${p.right_url}', '${p.pair_id}_take2.mid')" title="download take 2">&#8681;</a></span></h3>
+        <h3>${INF ? 'Fill 2' : ACC ? 'Arrangement 2' : 'Continuation 2'} <span class="hid">${short(p.pair_id)}·2 <a href="#" onclick="return downloadAs('${p.right_url}', '${p.pair_id}_take2.mid')" title="download take 2">&#8681;</a></span></h3>
         <div class="rollwrap"><div class="rollinner">
           <midi-visualizer type="piano-roll" id="roll-right"></midi-visualizer>
           <div class="shade" id="shade-right"></div><div class="cutline" id="cut-right"></div>
@@ -860,7 +868,9 @@ function render() {
   `;
   renderFlags();
   const sub = document.querySelector('.sub');
-  if (sub) sub.firstChild.textContent = ACC
+  if (sub) sub.firstChild.textContent = INF
+    ? 'Each pair plays itself: fill 1 in place, a short pause, fill 2 in place, then it waits for your call. Vote by key, click, or voice. '
+    : ACC
     ? 'Each pair plays itself: arrangement 1, a short pause, arrangement 2, then it waits for your call. Vote by key, click, or voice. '
     : 'Each pair plays itself: prompt + take 1, a short pause, prompt + take 2, then it waits for your call. Vote by key, click, or voice. ';
   setPhase('idle');

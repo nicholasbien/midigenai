@@ -24,7 +24,7 @@ from pathlib import Path
 
 @dataclass
 class PairConfig:
-    mode: str = "continue"         # "continue" | "accompany"
+    mode: str = "continue"         # "continue" | "accompany" | "infill"
     bars: int = 16                 # accompany: window length (training default)
     single_target_frac: float = 0.6   # v4_docs.DocBuilder default
     prompt_tokens: int = 256
@@ -38,6 +38,11 @@ class PairConfig:
     model_label: str = "v4"
     extra: dict = field(default_factory=dict)
     model_label_b: str = ""        # side b's model when a second generator is given
+    # infill: side b is the source's own bars instead of a second sample
+    # ("how close to the real thing are we"), and how many kept bars either
+    # side of the gap go into the files a listener hears
+    vs_original: bool = False
+    listen_bars: int = 4
 
 
 def _accomp_prompt(gen, header, cond_ids, bars) -> list[int]:
@@ -408,6 +413,146 @@ def make_accompany_pair(gen, prompt_file: Path, cfg: PairConfig,
             "a": sides["a"]["bytes"], "b": sides["b"]["bytes"]}
 
 
+def sample_infill_span(score, rng: random.Random, max_span_bars: int = 4,
+                       tries: int = 12):
+    """A gap the way TRAINING cuts them (v4_docs span infill windows): 1 to
+    `max_span_bars` bars, at least one bar kept each side, the gap itself
+    and its surroundings not empty. Returns an InfillPlan or None."""
+    from midigenai.data.v4_docs import MIN_SEGMENT_NOTES, _n_notes, bar_edges
+    from midigenai.infill_span import InfillError, plan_score
+    n_bars = len(bar_edges(score)) - 1
+    for _ in range(tries):
+        bars = rng.randint(1, max(1, min(max_span_bars, n_bars - 2)))
+        if n_bars - bars - 1 < 1:
+            return None
+        start = rng.randint(1, n_bars - bars - 1)
+        try:
+            p = plan_score(score, start, bars)
+        except InfillError:
+            continue
+        if _n_notes(p.middle()) < MIN_SEGMENT_NOTES:
+            continue
+        if _n_notes(p.prefix()) + _n_notes(p.suffix()) < MIN_SEGMENT_NOTES:
+            continue
+        return p
+    return None
+
+
+def make_infill_pair(gen, prompt_file: Path, cfg: PairConfig,
+                     rng: random.Random, gen_b=None) -> dict | None:
+    """One infill pair: a gap cut from the source, filled twice.
+
+    The model is prompted exactly as /api/infill prompts it (infill_span: a
+    context window of up to 16 bars around the gap, header over the whole
+    window). Side a is a model fill; side b is a second model fill, or with
+    `cfg.vs_original` the source's own bars sent through the same tokenizer
+    round trip and splice, so the only difference a listener can hear is
+    the notes, not quantization.
+
+    What a listener (and the judge) gets is shorter than what the model saw:
+    `cfg.listen_bars` kept bars either side of the gap, so a pair plays in
+    ~20 s rather than 16 bars twice. `<id>_prompt.mid` is that window with
+    the gap silent; `<id>_a.mid` / `<id>_b.mid` the same window filled.
+
+    Unlike continuation, an empty fill is not skipped in vs-original mode:
+    it is the model failing the task, and dropping it would flatter the
+    model. Model-vs-model pairs with an empty side are skipped (no
+    preference to learn).
+    """
+    from symusic import Score, Tempo
+    from midigenai.attributes import header_for_score
+    from midigenai.data.v4_docs import _window, trim_leading
+    from midigenai.infill_span import prompt_segments, splice
+    from midigenai.sequence_format import infill_prompt
+    from midigenai.tokenizer import normalize_drums
+
+    if not getattr(gen, "v4", False):
+        return None
+    try:
+        score = Score(str(prompt_file))
+    except Exception:
+        return None
+    normalize_drums(score, prompt_file.name)
+    score = trim_leading(score)
+    p = sample_infill_span(score, rng)
+    if p is None:
+        return None
+    tempo = gen.detect_tempo(prompt_file)
+    prefix, suffix = prompt_segments(gen, p)
+    header = gen.sp.header_ids_for(gen.tokenizer, header_for_score(p.window(), tempo=tempo))
+    prompt_ids = infill_prompt(gen.sp, list(header), prefix, suffix)
+
+    l0 = max(p.ctx_start, p.start - cfg.listen_bars)
+    l1 = min(p.ctx_end, p.start + p.bars + cfg.listen_bars)
+
+    def listen(sc) -> bytes:
+        w = _window(sc, p.edges[l0], p.edges[l1])
+        w.tempos = [Tempo(time=0, qpm=tempo)]
+        return _dumps_midi(w)
+
+    empty = Score(p.score.ticks_per_quarter)
+    sides = {}
+    gens = {"a": gen, "b": gen_b or gen}
+    for name in ("a", "b"):
+        seed = rng.randrange(1 << 30)
+        if name == "b" and cfg.vs_original:
+            try:
+                ids = gen.pad_to_bars(gen.tokenizer(p.middle()).ids, p.bars)
+            except ValueError:        # tokenizer barred it differently: drop, as training does
+                return None
+            seed = None
+        else:
+            ids = list(gens[name].infill(prefix, suffix, p.bars, header=header,
+                                         temperature=cfg.temperature, top_k=cfg.top_k,
+                                         seed=seed))
+        try:
+            answer = gen.tokenizer.decode(ids) if ids else empty
+        except Exception:
+            return None
+        n_notes = sum(len(t.notes) for t in answer.tracks)
+        if not n_notes and not cfg.vs_original:
+            return None
+        sides[name] = {"bytes": listen(splice(p, answer)), "seed": seed, "ids": ids,
+                       "n_notes": n_notes, "bars_ok": gen.count_bars(ids) == p.bars}
+
+    pair_id = f"{datetime.datetime.now():%Y%m%d%H%M%S}_{uuid.uuid4().hex[:8]}"
+    tpq = max(p.score.ticks_per_quarter, 1)
+    beats = lambda b: (p.edges[b] - p.edges[l0]) / tpq
+    meta = {
+        "pair_id": pair_id,
+        "created": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "prompt_file": prompt_file.name,
+        "mode": "infill",
+        # the gap inside the listening files (0-based bars, [start, end)),
+        # and in beats for the labeling page's shading
+        "gap_bars": [p.start - l0, p.start - l0 + p.bars],
+        "gap_beats": [beats(p.start), beats(p.start + p.bars)],
+        "listen_bars": l1 - l0,
+        # where it came from, in the source's own (leading-silence-trimmed) bars
+        "source_start": p.start, "source_bars": p.bars,
+        "context": [p.ctx_start, p.ctx_end],
+        "vs_original": cfg.vs_original,
+        "reference_side": "b" if cfg.vs_original else None,
+        "model_a": cfg.model_label,
+        "model_b": ("original" if cfg.vs_original
+                    else cfg.model_label_b if gen_b is not None else cfg.model_label),
+        "cross_model": bool(cfg.vs_original or gen_b is not None),
+        "on_policy": not cfg.vs_original and gen_b is None,
+        "tempo_bpm": tempo,
+        "temperature": cfg.temperature, "top_k": cfg.top_k,
+        # BOS Task_infill header prefix MASK suffix SEP, as the model saw it
+        "prompt_ids": list(prompt_ids),
+        "cont_a_ids": sides["a"]["ids"], "cont_b_ids": sides["b"]["ids"],
+        "seed_a": sides["a"]["seed"], "seed_b": sides["b"]["seed"],
+        "n_notes_a": sides["a"]["n_notes"], "n_notes_b": sides["b"]["n_notes"],
+        "bars_ok_a": sides["a"]["bars_ok"], "bars_ok_b": sides["b"]["bars_ok"],
+        **cfg.extra,
+    }
+    return {"pair_id": pair_id, "meta": meta,
+            "prompt": listen(splice(p, empty)),
+            "a": sides["a"]["bytes"], "b": sides["b"]["bytes"]}
+
+
 def write_pair(pair: dict, pairs_dir: Path) -> None:
     pairs_dir.mkdir(parents=True, exist_ok=True)
     pid = pair["pair_id"]
@@ -429,8 +574,9 @@ def generate_pairs(gen, prompt_files: list[Path], n: int, cfg: PairConfig,
         attempts += 1
         pf = order[i % len(order)]
         i += 1
-        pair = (make_accompany_pair(gen, pf, cfg, rng, gen_b=gen_b) if cfg.mode == "accompany"
-                else make_pair(gen, pf, cfg, rng, gen_b=gen_b))
+        make = {"accompany": make_accompany_pair,
+                "infill": make_infill_pair}.get(cfg.mode, make_pair)
+        pair = make(gen, pf, cfg, rng, gen_b=gen_b)
         if pair is None:
             continue
         out.append(pair)
@@ -495,7 +641,12 @@ def main() -> None:
     p.add_argument("--checkpoint-b", type=Path, default=None,
                    help="second model for side b: a blind A/B of two checkpoints on the same prompts")
     p.add_argument("--label-b", default=None)
-    p.add_argument("--mode", choices=("continue", "accompany"), default="continue")
+    p.add_argument("--mode", choices=("continue", "accompany", "infill"), default="continue")
+    p.add_argument("--vs-original", action="store_true",
+                   help="infill: side b is the source's own bars, not a second sample")
+    p.add_argument("--listen-bars", type=int, default=4,
+                   help="infill: kept bars either side of the gap in the files a "
+                        "listener hears (the model always sees up to 16 bars)")
     p.add_argument("--bars", type=int, default=16,
                    help="accompany: window length (training uses 16)")
     p.add_argument("--repair-cond-tracks", action="store_true",
@@ -548,6 +699,7 @@ def main() -> None:
                      min_prompt_bars=a.min_prompt_bars,
                      max_new_tokens=a.max_new_tokens, temperature=a.temperature,
                      top_k=a.top_k, model_label=a.label or label_name,
+                     vs_original=a.vs_original, listen_bars=a.listen_bars,
                      model_label_b=a.label_b or (a.checkpoint_b.stem if a.checkpoint_b else ""))
     t0 = time.time()
 
