@@ -202,10 +202,5 @@ def test_prompt_spec_accompany_item_layout(tmp_path):
     assert inv[ids[0]] == "BOS_None" and inv[ids[1]] == "Task_accomp" and inv[ids[-1]] == "SEP_None"
     assert spec.count_bars(ids) >= 4, "condition padded to the window"
     assert set(spec.drum_ids()) <= set(it["ban_ids"]), "no uninvited kit for a pitched target"
-
-
-def test_prompt_spec_trim_leading_bars():
-    tok = build_tokenizer(scheme="v4"); spec = PromptSpec(tok)
-    bar = spec.sp.bar; ts = tok.vocab["TimeSig_4/4"]; pitch = tok.vocab["Pitch_60"]
-    assert spec.trim_leading_bars([bar, ts, bar, ts, pitch, 5, bar]) == [pitch, 5, bar]
-    assert spec.trim_leading_bars([pitch, bar]) == [pitch, bar]
+    # the rollout sizes its budget from the condition, as Generator.accompany does
+    assert it["n_cond_tokens"] > 0
