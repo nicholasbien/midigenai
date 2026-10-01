@@ -115,6 +115,22 @@ def overlay(condition, generated, tpq: int = OVERLAY_TPQ):
     return out
 
 
+# Floor on an accompaniment's token budget per bar. The target's density is
+# not the condition's: on held-out presets a 106-token condition had a real
+# 2,707-token target, and the old flat 64/bar cap cut 6 of 78 v5-rl 8-bar
+# answers short. 160/bar covers the real targets of all but one of those 78.
+ACCOMP_TOKENS_PER_BAR = 160
+
+
+def accompaniment_budget(cond_tokens: int, bars: int) -> int:
+    """max_new_tokens for an accompaniment of `bars` bars over a condition of
+    `cond_tokens` tokens: twice the condition's tokens per bar, floor
+    ACCOMP_TOKENS_PER_BAR, plus slack. Shared by Generator.accompany and the
+    GRPO rollout so RL samples are cut where served ones are."""
+    per_bar = max(ACCOMP_TOKENS_PER_BAR, 2 * cond_tokens / max(1, bars))
+    return int(per_bar * bars) + 64
+
+
 def densest_track(score) -> int:
     """Index of the track carrying the most notes.
 
@@ -537,11 +553,19 @@ class Generator:
         """Write the other parts for `cond_ids` over exactly `bars` bars.
         Yields a self-contained token segment (decode it on its own; it
         starts at bar 0 of the window). Put the instruments you want added
-        in `header` (see make_header)."""
+        in `header` (see make_header).
+
+        Leading empty bars are kept (`trim_leading_bars=False`): the answer
+        is pinned to the condition's bars, so a part that enters in bar 3
+        must stay in bar 3. Trimming moved it to bar 1 (6% of v5-rl answers
+        on held-out presets open with 1-7 empty bars). The token budget is
+        `accompaniment_budget`: the old flat 64/bar cut 10% of 8-bar answers
+        off at the cap."""
         self._require_v4("accompany")
         from .sequence_format import accompaniment_prompt
         prompt = accompaniment_prompt(self.sp, list(header), self.pad_to_bars(cond_ids, bars))
-        gen_kwargs.setdefault("max_new_tokens", 64 * bars + 64)
+        gen_kwargs.setdefault("max_new_tokens", accompaniment_budget(len(cond_ids), bars))
+        gen_kwargs.setdefault("trim_leading_bars", False)
         # a target may end with EOS or the next document's BOS; SEP/MASK never
         gen_kwargs.setdefault("ban_ids", [self.sp.sep, self.sp.mask])
         yield from self.generate_ids(prompt, stop_after_bars=bars, **gen_kwargs)

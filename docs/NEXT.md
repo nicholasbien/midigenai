@@ -92,6 +92,10 @@ end: ~3 h pairs, ~1 h judge, ~2 h probe fits, 4–8 h GRPO, then listening.
 - **The accompaniment probe must be refit regardless.** v5-rl's was fitted
   before #57, with ~4–5% of sequences truncated at the wrong offset
   (details in [v5.md](v5.md)).
+  Accompaniment decoding has also changed since: answers keep their leading
+  empty bars and get a bigger token budget (`accompaniment_budget`), so ~6%
+  of samples now enter later and ~10% run longer than the pairs that probe
+  was fitted on.
 - **Judge:** `gpt-5.6-luna`, rubric `fit_only` for continuation and `accompany`
   for accompaniment (chosen automatically from each pair). Luna is ~17×
   cheaper than sol and fits the same reward. Top up the OpenAI project that

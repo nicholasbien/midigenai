@@ -178,3 +178,23 @@ def test_trim_leading_bars_keeps_the_prompts_bar_line(gen, monkeypatch):
     tpq = max(score.ticks_per_quarter, 1)
     beats = sorted(n.time / tpq for tr in score.tracks for n in tr.notes)
     assert beats == [0.0, 2.0, 4.0]
+
+
+def test_accompany_keeps_a_leading_rest_and_sizes_its_budget(gen, monkeypatch):
+    """A part that enters in bar 2 stays in bar 2 (no leading-bar trim), and
+    the budget has the per-bar floor, not the old flat 64/bar."""
+    from midigenai.generate import ACCOMP_TOKENS_PER_BAR, accompaniment_budget
+    bar, ts = gen.bar_id, gen.tokenizer.vocab["TimeSig_4/4"]
+    pos = next(v for k, v in gen.tokenizer.vocab.items() if k.startswith("Position_"))
+    def fake(prompt_ids, max_new_tokens, temperature, top_k, min_new_tokens, seed, ban_ids=None):
+        return iter([bar, ts, bar, ts, pos, pos, bar])
+    monkeypatch.setattr(gen, "_generate_raw", fake)
+    out = list(gen.accompany([bar, ts] * 4, 4))
+    assert out[:4] == [bar, ts, bar, ts]
+    asked = {}
+    monkeypatch.setattr(gen, "generate_ids", lambda prompt, **kw: asked.update(kw) or iter([]))
+    list(gen.accompany([bar, ts] * 4, 4))
+    assert asked["max_new_tokens"] == accompaniment_budget(8, 4) >= ACCOMP_TOKENS_PER_BAR * 4
+    assert asked["trim_leading_bars"] is False
+    # a dense condition raises it above the floor
+    assert accompaniment_budget(4000, 4) == 2 * 1000 * 4 + 64

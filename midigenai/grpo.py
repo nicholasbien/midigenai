@@ -173,20 +173,8 @@ class PromptSpec:
             ban += self.drum_ids()             # no uninvited kit, as in pairgen and /api/accompany
         return {"task": "accompany", "prompt_ids": accompaniment_prompt(
                     self.sp, list(header), self.pad_to_bars(list(cond_ids), n_bars)),
-                "ban_ids": ban, "bars": n_bars, "kind": kind}
-
-    def trim_leading_bars(self, ids: list[int]) -> list[int]:
-        """Drop empty Bar/TimeSig tokens before the first note, as
-        Generator.generate_ids does, so RL samples match what pairgen wrote
-        and the probe was fitted on."""
-        if not self.v4:
-            return list(ids)
-        vocab = self.tokenizer.vocab
-        ts_ids = {v for k, v in vocab.items() if k.startswith("TimeSig_")}
-        i = 0
-        while i < len(ids) and (ids[i] == self.sp.bar or ids[i] in ts_ids):
-            i += 1
-        return list(ids[i:])
+                "ban_ids": ban, "bars": n_bars, "kind": kind,
+                "n_cond_tokens": len(cond_ids)}
 
     def prompt_ids(self, path: Path, max_tokens: int) -> list[int] | None:
         """Header + a prompt slice. The header is never truncated away: it is
@@ -240,8 +228,9 @@ def sample_group(model, prompt_ids, cfg: GRPOConfig, device,
     if item and item.get("task") == "accompany":
         # accompaniment: its own ban list (drum tokens when no kit was asked
         # for), the token budget accompany() uses, and stop at the window
+        from midigenai.generate import accompaniment_budget
         ban_ids = item["ban_ids"] or None
-        max_new = 64 * item["bars"] + 64
+        max_new = accompaniment_budget(item.get("n_cond_tokens", 0), item["bars"])
         bar_kw = dict(stop_after_bars=item["bars"], bar_id=spec.sp.bar)
     x = torch.tensor([prompt_ids], dtype=torch.long, device=device)
     kw = dict(max_new_tokens=max_new, temperature=cfg.temperature,
@@ -250,10 +239,9 @@ def sample_group(model, prompt_ids, cfg: GRPOConfig, device,
         if hasattr(model, "generate_batch"):
             # the whole group decodes in one pass; generate_batch already
             # drops the EOS it stopped on
-            outs = model.generate_batch(x, cfg.group_size, **kw, **bar_kw)
-            if bar_kw and spec is not None:
-                outs = [spec.trim_leading_bars(o) for o in outs]
-            return outs
+            # accompaniment answers keep their leading empty bars, as
+            # Generator.accompany now does: the part is pinned to the window
+            return model.generate_batch(x, cfg.group_size, **kw, **bar_kw)
         out = []
         for _ in range(cfg.group_size):
             new = list(model.generate(x, **kw))
