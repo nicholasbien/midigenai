@@ -183,6 +183,33 @@ def log_generation(root: str, method: str, version: str, params: dict,
         return None
 
 
+def accompaniment_ban_ids(tokenizer, sp, family: str | None, cond_has_drums: bool) -> list[int]:
+    """Token ids an accompaniment answer may not use, given the family asked
+    for (None = auto) and whether the condition already has drums.
+
+    Measured on v5-rl through this route (48 held-out presets, 2 takes each),
+    the header alone does not hold the answer to the request:
+      * instrument=drums over a condition with no drums produced drums in
+        only 25 of 54 takes -- the rest were pitched parts. Asking for drums
+        now bans every pitched note (Pitch_*, every Program_ but -1).
+      * instrument=auto added a kit nobody asked for in 18 of 54 takes.
+        Uninvited drums are banned unless the condition has drums or drums
+        were asked for -- what pairgen and the accompaniment probe were built
+        on (pairgen.make_accompany_pair), and what the docs said this route
+        already did. A pitched request (bass, piano, ...) added a kit in only
+        1 of 54, so the ban changes little there.
+    """
+    from midigenai.attributes import DRUMS
+    vocab = tokenizer.vocab
+    ban = [t for t in (sp.sep, sp.mask) if t is not None]
+    if family == DRUMS:
+        ban += [i for k, i in vocab.items()
+                if k.startswith("Pitch_") or (k.startswith("Program_") and k != "Program_-1")]
+    elif not cond_has_drums:
+        ban += [i for k, i in vocab.items() if k.startswith("PitchDrum_") or k == "Program_-1"]
+    return sorted(ban)
+
+
 app = modal.App("midigenai-serve")
 
 volume = Volume.from_name(VOLUME_NAME, create_if_missing=True)
@@ -593,10 +620,13 @@ class MidiGen:
         if not any(n.startswith("Tempo_") for n in names):
             names = [*names, *tempo_tokens(window, tempo=tempo_bpm)]
         header = self.gen.sp.header_ids_for(self.gen.tokenizer, names)
+        ban_ids = accompaniment_ban_ids(
+            self.gen.tokenizer, self.gen.sp, family,
+            cond_has_drums=any(tr.is_drum and len(tr.notes) for tr in condition.tracks))
 
         def draw():
             new_ids = list(self.gen.accompany(
-                cond_ids, bars, header=header,
+                cond_ids, bars, header=header, ban_ids=ban_ids,
                 temperature=temperature, top_k=top_k))
             answer = self.gen.tokenizer.decode(new_ids)
             return answer, sum(len(tr.notes) for tr in answer.tracks)
