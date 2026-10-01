@@ -12,7 +12,7 @@ from midigenai.attributes import (
     header_for_score, is_auto_instrument, resolve_family, sort_header,
     with_instruments,
 )
-from midigenai.modal_serve import accompaniment_header
+from midigenai.modal_serve import accompaniment_allows_drums, accompaniment_header
 
 
 @pytest.mark.parametrize("name,family", [
@@ -134,3 +134,31 @@ def test_asking_for_the_conditions_own_family_is_a_single_token():
     names, family = accompaniment_header(score, cond_index=0, instrument="piano")
     assert family == "Piano"
     assert [n for n in names if n.startswith("Inst_")] == ["Inst_Piano"]
+
+
+def _with_drums(score):
+    symusic = pytest.importorskip("symusic")
+    kit = symusic.Track(program=0, is_drum=True)
+    kit.notes.append(symusic.Note(0, 240, 36, 100))
+    score.tracks.append(kit)
+    return score
+
+
+def test_drums_are_banned_when_a_pitched_part_is_asked_for():
+    score = _three_part_score()
+    assert not accompaniment_allows_drums(score, 0, "Bass")
+    assert not accompaniment_allows_drums(score, [0, 1], "Bass")
+    # a kit elsewhere in the upload is not an invitation when bass was asked for
+    assert not accompaniment_allows_drums(_with_drums(_three_part_score()), 0, "Bass")
+
+
+def test_drums_are_banned_on_auto_when_the_upload_has_none():
+    assert not accompaniment_allows_drums(_three_part_score(), 0, None)
+
+
+def test_drums_are_allowed_when_asked_for_or_already_there():
+    score = _with_drums(_three_part_score())
+    assert accompaniment_allows_drums(_three_part_score(), 0, "Drums")
+    assert accompaniment_allows_drums(score, 3, "Bass")          # kit is the condition
+    assert accompaniment_allows_drums(score, [0, 3], "Bass")
+    assert accompaniment_allows_drums(score, 0, None)            # auto keeps Inst_Drums

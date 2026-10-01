@@ -137,6 +137,27 @@ def accompaniment_header(window, cond_index, instrument: str | None = None):
     return with_instruments(names, [*cond_fams, family]), family
 
 
+def accompaniment_allows_drums(window, cond_index, family: str | None) -> bool:
+    """Whether an accompaniment answer may contain drums.
+
+    Asked for a pitched part, the model adds an uninvited kit (v4: 30-45% of
+    the target's notes), so drum tokens are banned unless a kit was asked
+    for or is already there: the request is drums, the condition has a drum
+    track, or no part was named and the upload carries drums (its header
+    then lists Inst_Drums). Pair generation and RL apply the same rule
+    (pairgen.make_accompany_pair, grpo.accompany_item), so v5-rl is served
+    the way it was trained.
+    """
+    from midigenai.attributes import DRUMS
+
+    if family == DRUMS:
+        return True
+    idxs = cond_index if isinstance(cond_index, (list, tuple)) else [cond_index]
+    if any(window.tracks[i].is_drum for i in idxs):
+        return True
+    return family is None and any(t.is_drum for t in window.tracks)
+
+
 def log_generation(root: str, method: str, version: str, params: dict,
                    prompt_midi: bytes, midis: list[bytes] = (),
                    result: dict | None = None, notes: list[dict] | None = None,
@@ -593,11 +614,15 @@ class MidiGen:
         if not any(n.startswith("Tempo_") for n in names):
             names = [*names, *tempo_tokens(window, tempo=tempo_bpm)]
         header = self.gen.sp.header_ids_for(self.gen.tokenizer, names)
+        ban = [i for i in (self.gen.sp.sep, self.gen.sp.mask) if i is not None]
+        if not accompaniment_allows_drums(window, cond_index, family):
+            from midigenai.pairgen import _drum_token_ids
+            ban += _drum_token_ids(self.gen.tokenizer)
 
         def draw():
             new_ids = list(self.gen.accompany(
                 cond_ids, bars, header=header,
-                temperature=temperature, top_k=top_k))
+                temperature=temperature, top_k=top_k, ban_ids=ban))
             answer = self.gen.tokenizer.decode(new_ids)
             return answer, sum(len(tr.notes) for tr in answer.tracks)
 
