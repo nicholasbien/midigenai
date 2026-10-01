@@ -486,7 +486,7 @@ def infill():
     try:
         result = _generator(version).infill_batch.remote(
             midi_bytes, start=start, bars=bars, temperature=temperature,
-            top_k=top_k, n_samples=2,
+            top_k=top_k, n_samples=2, client="web",
         )
     except Exception as e:
         traceback.print_exc()

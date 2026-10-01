@@ -190,6 +190,7 @@ def test_route_happy_path(client):
     assert r.status_code == 200, r.json
     assert r.json["start"] == 3 and r.json["bars"] == 2 and r.json["midiUrl2"]
     assert calls[0]["start"] == 3 and calls[0]["n_samples"] == 2
+    assert calls[0]["client"] == "web"      # tagged in the generations log
 
 
 @pytest.mark.parametrize("query,needle", [

@@ -616,7 +616,23 @@ class MidiGen:
         top_k: int = 50,
         n_samples: int = 1,
         tempo_bpm: float | None = None,
+        client: str | None = None,
     ) -> dict:
+        params = {"start": start, "bars": bars, "temperature": temperature,
+                  "top_k": top_k, "n_samples": n_samples, "tempo_bpm": tempo_bpm}
+        try:
+            result = self._infill_batch(midi_bytes, start, bars, temperature,
+                                        top_k, n_samples, tempo_bpm)
+        except Exception as e:
+            self._log("infill", params, midi_bytes, client=client,
+                      error=f"{type(e).__name__}: {e}")
+            raise
+        self._log("infill", params, midi_bytes, midis=result["midis"],
+                  result=result, client=client)
+        return result
+
+    def _infill_batch(self, midi_bytes, start, bars, temperature, top_k,
+                      n_samples, tempo_bpm) -> dict:
         """Regenerate bars [start, start+bars) of the upload and keep the rest.
 
         The model sees up to 16 bars around the span (the bars before it and
