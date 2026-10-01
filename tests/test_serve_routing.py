@@ -49,3 +49,14 @@ def test_accompaniment_versions_are_v4_folders():
     assert resolve_version(None) in ACCOMPANIMENT_VERSIONS
     for older in ("v2", "v3"):
         assert resolve_version(older) not in ACCOMPANIMENT_VERSIONS
+
+
+def test_empty_accompaniment_takes_are_resampled():
+    from midigenai.modal_serve import first_nonempty
+    takes = iter([("silent", 0), ("bass", 12), ("never", 9)])
+    assert first_nonempty(lambda: next(takes)) == ("bass", 12, 2)
+    # gives up after 1 + retries draws and returns the last (empty) one
+    empties = iter([("a", 0), ("b", 0), ("c", 0), ("d", 5)])
+    assert first_nonempty(lambda: next(empties), retries=2) == ("c", 0, 3)
+    first = iter([("ok", 3)])
+    assert first_nonempty(lambda: next(first)) == ("ok", 3, 1)
