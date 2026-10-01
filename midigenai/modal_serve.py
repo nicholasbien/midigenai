@@ -22,6 +22,12 @@ Populate the volume straight from Hugging Face (server-side, no local
 upload) after publishing a new version:
     modal run midigenai/modal_serve.py::sync_from_hub --version v4
 
+Every call is also logged to the `midigenai-generations` Volume (see
+log_generation): one folder per request under a UTC date, holding the prompt
+MIDI, each returned MIDI and a request.json with the parameters and result
+metadata. Pull a day down with
+    modal volume get midigenai-generations 2026-09-29 ./generations
+
 Deploy:
     modal deploy midigenai/modal_serve.py
 """
@@ -32,6 +38,9 @@ Deploy:
 # which both the image and every supported local interpreter satisfy.
 
 import json
+import os
+import uuid
+from datetime import datetime, timezone
 
 import modal
 from modal import Image, Volume
@@ -42,6 +51,10 @@ CKPT_FILENAME = "ckpt_final.pt"
 TOKENIZER_FILENAME = "tokenizer.json"
 
 DEFAULT_VERSION = "v5-rl"
+
+# Every request and what it returned, one folder per call (log_generation).
+GENERATIONS_VOLUME_NAME = "midigenai-generations"
+GENERATIONS_ROOT = "/generations"
 
 # Versions this deployment will serve, keyed by the name the site sends as
 # `model=`. The value is the subfolder in both the Hub repo and the volume.
@@ -104,9 +117,59 @@ def accompaniment_header(window, cond_index, instrument: str | None = None):
             cond_fams.append(f)
     return with_instruments(names, [*cond_fams, family]), family
 
+
+def log_generation(root: str, method: str, version: str, params: dict,
+                   prompt_midi: bytes, midis: list[bytes] = (),
+                   result: dict | None = None, notes: list[dict] | None = None,
+                   client: str | None = None, error: str | None = None,
+                   now: datetime | None = None) -> str | None:
+    """Write one request to `root`/YYYY-MM-DD/<HHMMSS>_<id>_<method>/.
+
+    The folder holds prompt.mid, out_<i>.mid per returned sample (or
+    notes.json for stream_notes) and request.json: method, version, client,
+    params, the result's metadata (everything but the MIDI bytes) and the
+    error if the call failed. One folder per call rather than a shared JSONL
+    because containers write the Volume concurrently and a Volume keeps the
+    last writer of a file, not both.
+
+    Best effort: logging must never fail or slow the request it records, so
+    any error here is printed and swallowed. Returns the folder, or None.
+    Module level, taking the root, so it can be checked without Modal.
+    """
+    try:
+        now = now or datetime.now(timezone.utc)
+        rid = uuid.uuid4().hex[:12]
+        folder = os.path.join(root, f"{now:%Y-%m-%d}", f"{now:%H%M%S}_{rid}_{method}")
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "prompt.mid"), "wb") as f:
+            f.write(prompt_midi)
+        for i, m in enumerate(midis):
+            with open(os.path.join(folder, f"out_{i}.mid"), "wb") as f:
+                f.write(m)
+        if notes is not None:
+            with open(os.path.join(folder, "notes.json"), "w") as f:
+                json.dump(notes, f)
+        meta = {k: v for k, v in (result or {}).items() if k not in ("midi", "midis")}
+        record = {
+            "id": rid, "time": now.isoformat(), "method": method,
+            "version": version, "client": client, "params": params,
+            "result": meta, "outputs": len(midis) if notes is None else len(notes),
+            "error": error,
+        }
+        with open(os.path.join(folder, "request.json"), "w") as f:
+            json.dump(record, f, indent=1, default=str)
+        return folder
+    except Exception as e:  # noqa: BLE001
+        print(f"generation log failed: {type(e).__name__}: {e}")
+        return None
+
+
 app = modal.App("midigenai-serve")
 
 volume = Volume.from_name(VOLUME_NAME, create_if_missing=True)
+# Changes reach the Volume by Modal's background commit (every few seconds
+# and at container shutdown), so a request never waits on a commit.
+generations_volume = Volume.from_name(GENERATIONS_VOLUME_NAME, create_if_missing=True)
 
 _base = Image.debian_slim(python_version="3.11").pip_install(
     "torch",
@@ -222,7 +285,7 @@ def list_versions() -> dict:
     memory=32_768,
     cpu=4,
     timeout=180,
-    volumes={"/models": volume},
+    volumes={"/models": volume, GENERATIONS_ROOT: generations_volume},
     enable_memory_snapshot=True,
 )
 class MidiGen:
@@ -317,6 +380,9 @@ class MidiGen:
                 logits, caches = model(next_ids, kv_caches=caches)
         return [list(gen.postprocess(prompt_ids, out)) for out in outs]
 
+    def _log(self, method: str, params: dict, midi_bytes: bytes, **kw) -> None:
+        log_generation(GENERATIONS_ROOT, method, self.version, params, midi_bytes, **kw)
+
     def _header_for_bytes(self, midi_bytes: bytes, tempo_bpm: float) -> list[int]:
         """v4 attribute header for an upload: describes the prompt and
         carries the tempo the answer will play at. [] on older checkpoints."""
@@ -373,7 +439,23 @@ class MidiGen:
         top_k: int = 50,
         tempo_bpm: float | None = None,
         n_samples: int = 1,
+        client: str | None = None,
     ) -> dict:
+        params = {"max_new_tokens": max_new_tokens, "temperature": temperature,
+                  "top_k": top_k, "tempo_bpm": tempo_bpm, "n_samples": n_samples}
+        try:
+            result = self._generate_batch(midi_bytes, max_new_tokens, temperature,
+                                          top_k, tempo_bpm, n_samples)
+        except Exception as e:
+            self._log("generate", params, midi_bytes, client=client,
+                      error=f"{type(e).__name__}: {e}")
+            raise
+        self._log("generate", params, midi_bytes, midis=result["midis"],
+                  result=result, client=client)
+        return result
+
+    def _generate_batch(self, midi_bytes, max_new_tokens, temperature, top_k,
+                        tempo_bpm, n_samples) -> dict:
         full_prompt = self.gen.encode_midi_bytes(midi_bytes)
         out_tempo = self._source_tempo(midi_bytes, tempo_bpm)   # stamped on the file, or None
         if tempo_bpm is None:
@@ -420,7 +502,24 @@ class MidiGen:
         tempo_bpm: float | None = None,
         instrument: str | None = None,
         track=None,
+        client: str | None = None,
     ) -> dict:
+        params = {"bars": bars, "temperature": temperature, "top_k": top_k,
+                  "n_samples": n_samples, "tempo_bpm": tempo_bpm,
+                  "instrument": instrument, "track": track}
+        try:
+            result = self._accompany_batch(midi_bytes, bars, temperature, top_k,
+                                           n_samples, tempo_bpm, instrument, track)
+        except Exception as e:
+            self._log("accompany", params, midi_bytes, client=client,
+                      error=f"{type(e).__name__}: {e}")
+            raise
+        self._log("accompany", params, midi_bytes, midis=result["midis"],
+                  result=result, client=client)
+        return result
+
+    def _accompany_batch(self, midi_bytes, bars, temperature, top_k, n_samples,
+                         tempo_bpm, instrument, track) -> dict:
         """Write parts to go *with* the upload rather than after it.
 
         Continuation extends the prompt in time; accompaniment fills the same
@@ -557,23 +656,40 @@ class MidiGen:
         top_k: int = 50,
         chunk_tokens: int = 16,
         tempo_bpm: float | None = None,
+        client: str | None = None,
     ):
-        prompt = self.gen.encode_midi_bytes(midi_bytes)
-        if tempo_bpm is None:
-            tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
-        prompt = [*self._header_for_bytes(midi_bytes, tempo_bpm), *prompt]
-        for note in self.gen.stream_notes(
-            prompt,
-            chunk_tokens=chunk_tokens,
-            tempo_bpm=tempo_bpm,
-            max_new_tokens=max_new_tokens,
-            temperature=temperature,
-            top_k=top_k,
-        ):
-            yield json.dumps({
-                "pitch": note.pitch,
-                "start": note.start,
-                "end": note.end,
-                "velocity": note.velocity,
-                "program": note.program,
-            }) + "\n"
+        params = {"max_new_tokens": max_new_tokens, "temperature": temperature,
+                  "top_k": top_k, "chunk_tokens": chunk_tokens, "tempo_bpm": tempo_bpm}
+        notes, error = [], None
+        # finally: the log is written even when the caller stops reading early
+        try:
+            prompt = self.gen.encode_midi_bytes(midi_bytes)
+            if tempo_bpm is None:
+                tempo_bpm = self.gen.detect_tempo_bytes(midi_bytes)
+            prompt = [*self._header_for_bytes(midi_bytes, tempo_bpm), *prompt]
+            for note in self.gen.stream_notes(
+                prompt,
+                chunk_tokens=chunk_tokens,
+                tempo_bpm=tempo_bpm,
+                max_new_tokens=max_new_tokens,
+                temperature=temperature,
+                top_k=top_k,
+            ):
+                d = {
+                    "pitch": note.pitch,
+                    "start": note.start,
+                    "end": note.end,
+                    "velocity": note.velocity,
+                    "program": note.program,
+                }
+                notes.append(d)
+                yield json.dumps(d) + "\n"
+        except GeneratorExit:
+            error = "client stopped reading"
+            raise
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+            raise
+        finally:
+            self._log("stream", params, midi_bytes, notes=notes,
+                      result={"tempo_bpm": tempo_bpm}, client=client, error=error)
