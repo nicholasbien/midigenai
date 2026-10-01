@@ -33,7 +33,7 @@ from werkzeug.utils import secure_filename
 from midigenai.attributes import is_auto_instrument, resolve_family
 # The version allowlist lives with the Modal app so the two can't drift.
 from midigenai.modal_serve import (
-    ACCOMPANIMENT_VERSIONS, SERVED_VERSIONS, resolve_version,
+    ACCOMPANIMENT_VERSIONS, INFILL_VERSIONS, SERVED_VERSIONS, resolve_version,
 )
 
 env = os.environ.get("ENV", "dev")
@@ -191,6 +191,7 @@ def health():
         "models": sorted(SERVED_VERSIONS),
         "default_model": resolve_version(None),
         "accompaniment_models": sorted(ACCOMPANIMENT_VERSIONS),
+        "infill_models": sorted(INFILL_VERSIONS),
     })
 
 
@@ -388,6 +389,76 @@ def accompany():
         "instrument": result.get("instrument"),
     })
 
+
+
+@app.route("/api/infill", methods=["POST"])
+def infill():
+    """Regenerate some bars of the upload and keep the rest.
+
+    `start` is the first bar to redo, 0-based in the file's own bar numbers
+    (bar 1 in a DAW is start=0); `bars` is how many (1-4). The span needs at
+    least one kept bar on each side: that is the shape the model was trained
+    on (see infill_span.py). Each returned file is the whole upload with the
+    span replaced; `spanSeconds` says where, for highlighting.
+
+    Validated here on the same planning code Modal runs, so a span the model
+    cannot take is a 400 naming the valid range before a GPU spins up.
+    """
+    from midigenai.infill_span import InfillError, plan
+    temperature, top_k, _ = _gen_params()
+    version = _model_version()
+    if version not in INFILL_VERSIONS:
+        asked = (request.args.get("model") or request.form.get("model") or "").strip()
+        return jsonify({"error": f"infill needs one of {', '.join(INFILL_VERSIONS)}; "
+                                 f"got {asked or version}"}), 400
+    def _int(name):
+        v = request.args.get(name, type=int)
+        return request.form.get(name, type=int) if v is None else v
+    start, bars = _int("start"), _int("bars")
+    bars = 2 if bars is None else bars
+    if start is None:
+        return jsonify({"error": "start=<bar index> is required (0-based)"}), 400
+    upload = _read_upload()
+    if isinstance(upload, Response):
+        return upload
+    midi_bytes, base = upload
+    try:
+        plan(midi_bytes, start, bars)
+    except InfillError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": f"could not read the upload as MIDI: {e}"}), 400
+
+    unique_str = _unique_string()
+    try:
+        result = _generator(version).infill_batch.remote(
+            midi_bytes, start=start, bars=bars, temperature=temperature,
+            top_k=top_k, n_samples=2,
+        )
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+    paths = [
+        _save_midi(m, f"{base}_{unique_str}", f"inf{i}", version)
+        for i, m in enumerate(result["midis"])
+    ]
+    return jsonify({
+        "message": "Infill generated",
+        "requestId": unique_str,
+        "model": version,
+        "midiUrl1": url_for("serve_user_midi",
+                            filename=os.path.basename(paths[0]), _external=True),
+        "midiUrl2": url_for("serve_user_midi",
+                            filename=os.path.basename(paths[1]), _external=True),
+        "start": result["start"],
+        "bars": result["bars"],
+        "barsAvailable": result["bars_available"],
+        "contextBars": result["context"],
+        "spanSeconds": result["span_seconds"],
+        "generatedNotes": result["generated_notes"],
+    })
 
 
 # v1 text-encoding streaming routes: the text format is retired.

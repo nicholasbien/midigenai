@@ -403,10 +403,11 @@ if __name__ == "__main__":
                         help="v4: share of accompaniment docs whose target is one "
                              "track (\"add a bass\") rather than every remaining one")
     parser.add_argument("--infill-windows", type=int, default=1,
-                        help="v4: span-infill docs per file. 1 keeps the capability "
-                             "at ~9%% of the corpus instead of 17%%; nothing at "
-                             "inference uses infill yet, so the budget is better "
-                             "spent on continuation and accompaniment")
+                        help="v4: span-infill docs per file. 1 "
+                             "keeps the capability at ~9%% of the corpus instead of "
+                             "17%%. Chosen when nothing at inference used infill; "
+                             "/api/infill does now, so revisit on the next build "
+                             "(PLAN.md workstream 10)")
     parser.add_argument("--window-bars", type=int, default=16,
                         help="v4: bars per accompaniment window")
     parser.add_argument("--context-bars", type=int, default=16,

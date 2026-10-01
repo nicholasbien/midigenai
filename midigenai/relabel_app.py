@@ -94,6 +94,13 @@ def select_dir(args) -> None:
     ceiling to read against.
     """
     pairs_dir = Path(args.pairs).resolve()
+    # Stored relative to the repo when the pairs live inside it, so a set
+    # generated on one machine (or in a cloud session) and copied into
+    # another checkout still resolves; the hub runs from the repo root.
+    try:
+        stored_dir = str(pairs_dir.relative_to(Path.cwd().resolve()))
+    except ValueError:
+        stored_dir = str(pairs_dir)
     ids = sorted({f.name[:-len("_prompt.mid")]
                   for f in pairs_dir.glob("*_prompt.mid")
                   if (pairs_dir / f"{f.name[:-len('_prompt.mid')]}_a.mid").exists()})
@@ -102,10 +109,10 @@ def select_dir(args) -> None:
     rng = random.Random(args.seed)
     rng.shuffle(ids)
     picked = ids[:args.n]
-    rows = [{"set": args.name, "pairs_dir": str(pairs_dir), "pair_id": pid,
+    rows = [{"set": args.name, "pairs_dir": stored_dir, "pair_id": pid,
              "original": None} for pid in picked]
     for pid in rng.sample(picked, min(args.dup, len(picked))):
-        rows.append({"set": args.name, "pairs_dir": str(pairs_dir),
+        rows.append({"set": args.name, "pairs_dir": stored_dir,
                      "pair_id": pid, "original": None, "is_repeat": True})
     rng.shuffle(rows)
     for i, r in enumerate(rows):
@@ -192,7 +199,18 @@ def build_roll(pairs_dir: Path, pid: str, side: str, cache: Path) -> tuple[dict,
         tempo = float(meta.get("tempo_bpm") or 120.0)
         mode = meta.get("mode", "continue")
 
-    if mode == "accompany":
+    gap_ticks = None
+    if mode == "infill":
+        # The side file is the kept bars with the fill in place: it plays from
+        # the top, and the roll shades the gap rather than a prompt region.
+        tl = Score(str(cont_path))
+        tpq = max(tl.ticks_per_quarter, 1)
+        prompt_ticks = 0
+        gb = meta.get("gap_beats") or [0, 0]
+        gap_ticks = (gb[0] * tpq, gb[1] * tpq)
+        url_name = f"{pid}_{side}.mid"
+        served_from = pairs_dir
+    elif mode == "accompany":
         # The side file is the condition already mixed with its accompaniment,
         # so there is nothing to prepend and no instant where "the model takes
         # over" — both parts sound from the first beat. prompt_ticks 0 leaves
@@ -247,8 +265,12 @@ def build_roll(pairs_dir: Path, pid: str, side: str, cache: Path) -> tuple[dict,
             notes.append({"s": round(n.start * spt, 3),
                           "e": round((n.start + n.duration) * spt, 3),
                           "p": int(n.pitch), "v": int(n.velocity),
-                          "d": bool(t.is_drum), "prompt": n.start < prompt_ticks})
+                          "d": bool(t.is_drum),
+                          "prompt": (not gap_ticks[0] <= n.start < gap_ticks[1]) if gap_ticks
+                          else n.start < prompt_ticks})
     roll = {"notes": notes, "prompt_end_s": round(prompt_ticks * spt, 3)}
+    if gap_ticks:
+        roll["gap_s"] = [round(gap_ticks[0] * spt, 3), round(gap_ticks[1] * spt, 3)]
     return roll, f"{'pairs' if served_from is pairs_dir else 'cache'}/{url_name}"
 
 
@@ -283,8 +305,11 @@ class Source:
         for m in self.manifest[:5]:
             mp = Path(m["pairs_dir"]) / f"{m['pair_id']}.json"
             try:
-                if json.loads(mp.read_text()).get("mode") == "accompany":
+                mode = json.loads(mp.read_text()).get("mode")
+                if mode == "accompany":
                     return "accompaniment"
+                if mode == "infill":
+                    return "infill"
             except Exception:
                 continue
         return "continuation"
@@ -463,8 +488,9 @@ def build_app(args):
             meta = json.loads(mp.read_text()) if mp.exists() else {}
             mode = meta.get("mode", "continue")
             prompt_roll = None
-            if mode == "accompany":
-                # the condition on its own, so it can be seen as well as heard
+            if mode in ("accompany", "infill"):
+                # the condition (or the kept bars, gap silent) on its own, so
+                # it can be seen as well as heard
                 prompt_roll = _roll_of(pairs_dir / f"{pid}_prompt.mid",
                                        float(meta.get("tempo_bpm") or 120.0))
         except Exception as e:

@@ -182,3 +182,30 @@ the default. The judge is better when asked to have fewer opinions: on
 material unlike the authored-MIDI val sets, its judgements about
 musicality and defects cost agreement, and "does this belong to the same
 piece" is what it can reliably hear.
+
+
+## Infill (2026-09-29, unvalidated)
+
+Infill pairs (`pairgen --mode infill`) get their own rubric,
+`prompts/judge_infill.txt`, picked automatically from the pair's meta when
+`--prompt` is not given (continuation and accompaniment keep `fit_only`). It
+is `fit_only`'s question with the other end added: does the fill join the
+bars before the gap AND lead into the bars after it. The judge is shown the
+kept bars once with the gap printed as `(missing)`, then only each fill's
+own bars on the same bar numbers, the way accompaniment shows only the added
+parts.
+
+No agreement figure exists yet. Validate it the same way as the others,
+against the labeler's votes on `evals/labeling_infill_*`, before using its
+labels as a reward:
+
+    python -m midigenai.llm_judge validate --labels evals/labeling_infill_v5rl_ab/labels.jsonl --limit 0
+    python -m midigenai.llm_judge label --pairs evals/labeling_infill_v5rl_vs_orig/pairs \
+        --out evals/reward/judge_infill_vs_orig_labels.jsonl
+    python -m midigenai.infill_eval --set evals/labeling_infill_v5rl_vs_orig \
+        --labels evals/reward/judge_infill_vs_orig_labels.jsonl
+
+On a `--vs-original` set the judge's model-vs-original rate is the number to
+read, but it only means something next to the labeler's rate on the same
+pairs; a judge that prefers the original 70% of the time where the labeler
+is at 55% is measuring its own prior.
