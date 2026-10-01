@@ -27,6 +27,7 @@ import uuid
 import modal as _modal
 from flask import Flask, Response, jsonify, request, send_from_directory, url_for
 from flask_cors import CORS
+from symusic import Score
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
@@ -116,7 +117,16 @@ def _read_upload():
     if file.tell() > 1 * 1024 * 1024:
         return Response("File is too large", status=400)
     file.seek(0)
-    return file.read(), os.path.splitext(secure_filename(file.filename))[0]
+    midi_bytes = file.read()
+    # Parsed here so a file that isn't MIDI is the caller's 400, not a 500
+    # raised from deep inside generation (or after a Modal container spun up).
+    try:
+        Score.from_midi(midi_bytes)
+    except Exception as e:
+        bad = jsonify({"error": f"could not read the upload as MIDI: {e}"})
+        bad.status_code = 400
+        return bad
+    return midi_bytes, os.path.splitext(secure_filename(file.filename))[0]
 
 
 def _two_samples_response(midi_bytes: bytes, base: str, temperature: float,
@@ -149,12 +159,48 @@ def _two_samples_response(midi_bytes: bytes, base: str, temperature: float,
     })
 
 
+class BadParam(ValueError):
+    """A query value the request can't be served with; becomes a 400."""
+
+
+@app.errorhandler(BadParam)
+def _bad_param(e):
+    return jsonify({"error": str(e)}), 400
+
+
+def _number(name: str, default, cast):
+    """A numeric query param. Omitted means the default; a value that doesn't
+    parse is an error rather than a silent fallback to the default (which is
+    what `request.args.get(type=...)` does)."""
+    raw = request.args.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        return cast(raw)
+    except ValueError:
+        raise BadParam(f"{name} must be a number, got {raw!r}") from None
+
+
 def _gen_params():
-    return (
-        request.args.get("temperature", default=1.2, type=float),
-        request.args.get("top_k", default=50, type=int),
-        request.args.get("max_new_tokens", default=512, type=int),
-    )
+    """(temperature, top_k, max_new_tokens), validated.
+
+    temperature must be in (0, 2]: 0 divides the logits by ~0, which is
+    greedy decoding, so both returned samples come out the same.
+    top_k must be at least 1: top_k=0 keeps no tokens and sampling fails.
+    Above the vocabulary size it just means "all of them" (the model clamps).
+    max_new_tokens is clamped to the context window in Modal.
+    """
+    temperature = _number("temperature", 1.2, float)
+    top_k = _number("top_k", 50, int)
+    max_new_tokens = _number("max_new_tokens", 512, int)
+    if not 0 < temperature <= 2:     # also rejects nan and inf
+        raise BadParam(f"temperature must be in (0, 2], got {temperature}")
+    if top_k < 1:
+        raise BadParam(f"top_k must be at least 1 (omit it for the default, 50), "
+                       f"got {top_k}")
+    if max_new_tokens < 1:
+        raise BadParam(f"max_new_tokens must be at least 1, got {max_new_tokens}")
+    return temperature, top_k, max_new_tokens
 
 
 def _instrument():
@@ -176,11 +222,16 @@ def _instrument():
 def _model_version() -> str:
     """The checkpoint the request asked for.
 
-    The site's dropdown sends `model=v2|v3|v4`; anything unrecognized falls
-    back to the default rather than erroring, so an old cached frontend keeps
-    working. The returned value is a volume subfolder, not raw user input.
+    Omitted means the default. A name this server doesn't serve is a 400:
+    falling back would answer with a different model under the caller's
+    label, which is how a retired v1 kept "working" as v4. The site reads the
+    list from `/` and only offers what is served. The returned value is a
+    volume subfolder, not raw user input.
     """
-    asked = request.args.get("model") or request.form.get("model")
+    asked = (request.args.get("model") or request.form.get("model") or "").strip()
+    if asked and asked not in SERVED_VERSIONS:
+        raise BadParam(f"unknown model {asked!r}; this server has "
+                       f"{', '.join(sorted(SERVED_VERSIONS))}")
     return resolve_version(asked)
 
 
