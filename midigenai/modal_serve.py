@@ -81,6 +81,25 @@ ACCOMPANIMENT_VERSIONS = ("v5-rl", "v5", "v4", "v4-large")
 INFILL_VERSIONS = ACCOMPANIMENT_VERSIONS
 
 
+# An accompaniment take with no notes at all is resampled up to this many
+# times. Since #73 keeps leading empty bars in place, a take that stays
+# silent for the whole window comes back empty instead of being slid
+# forward (1 take in 12 on the live v5-rl right after that deploy). A
+# stopgap while the cause is measured; see accompany_batch.
+ACCOMPANY_EMPTY_RETRIES = 2
+
+
+def first_nonempty(draw, retries: int = ACCOMPANY_EMPTY_RETRIES):
+    """Call `draw()` -> (result, n_notes) until a result has notes, at most
+    1 + `retries` times. Returns (result, n_notes, draws). The last draw is
+    returned even if it is empty: an honest empty take beats an error."""
+    for i in range(retries + 1):
+        result, n = draw()
+        if n:
+            break
+    return result, n, i + 1
+
+
 def resolve_version(name: str | None) -> str:
     """Map a `model=` value to a volume subfolder, falling back to the default."""
     return SERVED_VERSIONS.get((name or "").strip(), SERVED_VERSIONS[DEFAULT_VERSION])
@@ -575,13 +594,18 @@ class MidiGen:
             names = [*names, *tempo_tokens(window, tempo=tempo_bpm)]
         header = self.gen.sp.header_ids_for(self.gen.tokenizer, names)
 
-        midis, note_counts = [], []
-        for _ in range(n_samples):
+        def draw():
             new_ids = list(self.gen.accompany(
                 cond_ids, bars, header=header,
                 temperature=temperature, top_k=top_k))
             answer = self.gen.tokenizer.decode(new_ids)
-            note_counts.append(sum(len(tr.notes) for tr in answer.tracks))
+            return answer, sum(len(tr.notes) for tr in answer.tracks)
+
+        midis, note_counts, draws = [], [], []
+        for _ in range(n_samples):
+            answer, n, k = first_nonempty(draw)
+            note_counts.append(n)
+            draws.append(k)
             midis.append(self._score_to_bytes(overlay(condition, answer), out_tempo))
 
         beats_per_bar = 4.0
@@ -598,6 +622,7 @@ class MidiGen:
             "track_names": [tr.name or "" for tr in window.tracks],
             "condition_notes": sum(len(tr.notes) for tr in condition.tracks),
             "generated_notes": note_counts,
+            "draws": draws,                     # >1 = an empty take was resampled
             "instrument": family,
             "header": names,
             "tempo_bpm": tempo_bpm,
