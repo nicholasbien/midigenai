@@ -134,3 +134,26 @@ def test_asking_for_the_conditions_own_family_is_a_single_token():
     names, family = accompaniment_header(score, cond_index=0, instrument="piano")
     assert family == "Piano"
     assert [n for n in names if n.startswith("Inst_")] == ["Inst_Piano"]
+
+
+def test_accompaniment_ban_ids_hold_the_request():
+    """drums -> only drum notes possible; no request or a pitched one over a
+    drumless condition -> no kit; a condition with drums leaves drums open."""
+    from midigenai.modal_serve import accompaniment_ban_ids
+    from midigenai.sequence_format import Specials
+    from midigenai.tokenizer import build_tokenizer
+    tok = build_tokenizer(scheme="v4")
+    sp, v = Specials.from_tokenizer(tok), tok.vocab
+    drum_ids = {i for k, i in v.items() if k.startswith("PitchDrum_") or k == "Program_-1"}
+    pitched_ids = {i for k, i in v.items() if k.startswith("Pitch_")}
+
+    ban = set(accompaniment_ban_ids(tok, sp, "Drums", cond_has_drums=False))
+    assert pitched_ids <= ban and v["Program_33"] in ban
+    assert not drum_ids & ban and {sp.sep, sp.mask} <= ban
+
+    for family in (None, "Bass"):
+        ban = set(accompaniment_ban_ids(tok, sp, family, cond_has_drums=False))
+        assert drum_ids <= ban and not pitched_ids & ban
+
+    ban = set(accompaniment_ban_ids(tok, sp, None, cond_has_drums=True))
+    assert not drum_ids & ban and not pitched_ids & ban
