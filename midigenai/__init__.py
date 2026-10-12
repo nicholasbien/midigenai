@@ -11,6 +11,7 @@ Public surface:
 from .generate import Generator, Note
 from .hub import (
     load_from_hub,
+    remote_from_hub,
     download_files,
     list_hub_versions,
     DEFAULT_REPO,
@@ -21,6 +22,7 @@ __all__ = [
     "Generator",
     "Note",
     "load_from_hub",
+    "remote_from_hub",
     "download_files",
     "list_hub_versions",
     "DEFAULT_REPO",
