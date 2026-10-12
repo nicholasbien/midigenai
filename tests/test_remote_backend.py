@@ -51,6 +51,7 @@ def test_spec_carries_the_sampling_contract_and_postprocess_runs_here(tok_path):
                               min_new_tokens=3, seed=11, stop_after_bars=2))
     assert seen["prompt"] == [g.bos_id, g.bar_id, note]
     assert (seen["max_new_tokens"], seen["temperature"], seen["top_k"], seen["min_new_tokens"], seen["seed"]) == (40, 0.9, 20, 3, 11)
+    assert seen["vocab_size"] == len(g.tokenizer.vocab)
     assert seen["eos_id"] == g.eos_id and seen["bar_id"] == g.bar_id and seen["stop_after_bars"] == 2
     assert set(seen["ban_ids"]) == set(g.default_ban_ids()) and set(seen["stop_ids"]) == set(g.stop_ids)
     assert set(seen["timesig_ids"]) == set(g.timesig_ids) and seen["trim_leading_bars"] is True

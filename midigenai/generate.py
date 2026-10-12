@@ -539,6 +539,7 @@ class Generator:
         reproduce torch's draws)."""
         return {
             "prompt": [int(t) for t in prompt_ids],
+            "vocab_size": len(self.tokenizer.vocab),          # the decoder can check its model matches
             "max_new_tokens": int(max_new_tokens),
             "max_seq_len": int(self.max_seq_len),
             "temperature": float(temperature),

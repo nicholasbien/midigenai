@@ -242,7 +242,10 @@ export async function decodeLoop(step, spec, { onToken, signal, rand } = {}) {
   for (let i = 0; i < spec.max_new_tokens; i++) {
     if ((i === 0 ? prompt.length : prompt.length + i) > maxSeq) break;      // as generate: no position past the context
     if (signal && signal.aborted) throw signal.reason || new Error("aborted");
-    const tok = sample(await step(feed), i, draw);
+    const logits = await step(feed);
+    if (i === 0 && spec.vocab_size && logits.length !== spec.vocab_size)
+      throw new Error(`the model has ${logits.length} tokens and the prompt's tokenizer ${spec.vocab_size}: another version`);
+    const tok = sample(logits, i, draw);
     out.push(tok);
     if (onToken) onToken(tok, i);
     if (stop(tok)) break;

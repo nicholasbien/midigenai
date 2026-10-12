@@ -100,3 +100,9 @@ test("model paths and sizes come from the manifest", () => {
   assert.equal(modelBase("v5-rl", "https://example.org/r/"), "https://example.org/r/v5-rl/onnx/");
   assert.deepEqual(sizes({ files: { gpu: { bytes: 3 }, cpu: { bytes: 4 } } }), { gpu: 3, cpu: 4 });
 });
+
+test("a model of another vocabulary is refused before sampling", async () => {
+  const step = async () => flat();
+  await assert.rejects(decodeLoop(step, spec({ vocab_size: V + 1 })), /another version/);
+  assert.equal((await decodeLoop(step, spec({ vocab_size: V, max_new_tokens: 2 }))).length, 2);
+});
