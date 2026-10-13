@@ -98,7 +98,8 @@ def test_bad_params_are_refused_before_modal(client, route, query, needle):
 def test_unknown_model_lists_what_is_served(client):
     c, _ = client
     r = _upload(c, "/api/upload_midi_v2", "model=v9")
-    assert "v5-rl" in r.json["error"] and "v2" in r.json["error"]
+    assert "v5-base" in r.json["error"] and "v2" in r.json["error"]
+    assert "v5-rl" not in r.json["error"]                  # the old name works but isn't offered
 
 
 def test_bad_params_on_the_preset_route(client):

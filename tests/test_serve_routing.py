@@ -60,3 +60,17 @@ def test_empty_accompaniment_takes_are_resampled():
     assert first_nonempty(lambda: next(empties), retries=2) == ("c", 0, 3)
     first = iter([("ok", 3)])
     assert first_nonempty(lambda: next(first)) == ("ok", 3, 1)
+
+
+def test_v5_names():
+    """v5 is the GRPO model (folder v5-rl), v5-base the model before it (folder
+    v5); the old name v5-rl still reaches the GRPO model but isn't listed."""
+    from midigenai.hub import folder, name_of
+    from midigenai.modal_serve import VERSION_ALIASES
+    assert DEFAULT_VERSION == "v5"
+    assert resolve_version("v5") == resolve_version("v5-rl") == resolve_version(None) == "v5-rl"
+    assert resolve_version("v5-base") == "v5"
+    assert not set(VERSION_ALIASES) & set(SERVED_VERSIONS)
+    for name in ("v5", "v5-base", "v5-rl", "v4", "v4-large", "v3"):
+        assert folder(name) == resolve_version(name)          # the Hub and the server agree
+    assert [name_of(f) for f in ("v5-rl", "v5", "v4")] == ["v5", "v5-base", "v4"]
