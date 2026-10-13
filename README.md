@@ -53,6 +53,39 @@ Over HTTP: `/api/infill?start=2&bars=2` returns the whole file with bars 3-4
 replaced. Spans of 1-4 bars with at least one kept bar on each side, the shape
 the model was trained on.
 
+### In the browser
+
+The model also runs in a web page, on [onnxruntime-web](https://onnxruntime.ai/docs/tutorials/web/): WebGPU
+where the browser has it, WebAssembly otherwise. Prompts stay in Python, which needs no torch for this:
+a `remote` Generator hands each generation to a decoder you supply and postprocesses what comes back.
+
+```python
+from midigenai import remote_from_hub
+
+gen = remote_from_hub(decode=ask_the_page)   # decode(spec) -> sampled ids; spec is plain JSON
+ids = list(gen.generate_ids(gen.encode_midi_file("riff.mid"), max_new_tokens=512, stop_after_bars=4))
+```
+
+The page side is [`midigenai/web/midigen-web.mjs`](midigenai/web/midigen-web.mjs) (shipped with the package):
+
+```js
+import * as ort from "./ort.webgpu.bundle.min.mjs";     // onnxruntime-web 1.30
+import { detect, loadModel } from "./midigen-web.mjs";
+const model = await loadModel({ ort, engine: (await detect()).recommended, onProgress });
+const ids = await model.decode(spec);
+```
+
+The model files are on the Hub under `VERSION/onnx/` (`python -m midigenai.export_onnx --version v5 --out DIR`
+makes them; `pip install "midigenai[onnx]"`). Each is downloaded once and kept in the browser's cache:
+
+| Engine | Weights | Download | 500-token prompt + 256 new |
+|---|---|---|---|
+| `gpu` (WebGPU) | 4-bit | 73 MB | 2.8 s on an M-series Mac in Chrome |
+| `cpu` (WebAssembly) | 8-bit | 115 MB | 7.3 s on that Mac, 6.0 s on an iPhone (one thread) |
+
+plus onnxruntime-web's own 27 MB `.wasm`. Both agree with the fp32 model on 99% of next tokens. A seed repeats
+a result in the browser but not torch's (each has its own random numbers). JS tests: `node --test tests/web/*.test.mjs`.
+
 ## Checkpoints
 
 | Version | Params | Notes |

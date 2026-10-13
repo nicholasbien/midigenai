@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Iterator
 
-import torch
-
-from .model import ModelConfig, MusicTransformer
 from .tokenizer import build_tokenizer, is_v4, load_tokenizer
+
+# torch is imported where it is used, so the tokenizer, the prompt layouts and the `remote` backend (the model
+# running somewhere else, such as a browser: see `Generator` and web/) work without it installed.
 
 
 def _auto_device() -> torch.device:
@@ -32,6 +32,7 @@ def _auto_device() -> torch.device:
     Override with OMN_USE_MPS=1 if you have a larger model where MPS pays off.
     """
     import os
+    import torch
     if torch.cuda.is_available():
         return torch.device("cuda")
     if os.environ.get("OMN_USE_MPS") == "1" and torch.backends.mps.is_available():
@@ -147,12 +148,13 @@ def densest_track(score) -> int:
 class Generator:
     def __init__(
         self,
-        checkpoint_path: str | Path,
+        checkpoint_path: str | Path | None,
         tokenizer_path: str | Path | None = None,
         device: torch.device | None = None,
         inference_seq_len: int = 8192,
-        dtype: torch.dtype | str = torch.float16,
+        dtype: torch.dtype | str = "float16",
         backend: str = "auto",
+        decode=None,
     ):
         """
         `backend`: "mlx", "torch", or "auto" (default). On Apple silicon with
@@ -168,7 +170,25 @@ class Generator:
         per-step KV-cache concat moves half the bytes. RMSNorm and sampling
         logits are computed in fp32 internally regardless. Pass torch.float32
         to exactly reproduce pre-fp16 outputs.
+
+        `backend="remote"`: the model runs somewhere else and `decode(spec)` returns the sampled ids for one
+        generation (spec: see `remote_spec`). No checkpoint and no torch: only the tokenizer is loaded, and
+        everything around the sampling (prompt layouts, context fit, `postprocess`) still runs here. The
+        browser runner in web/midigen-web.mjs is one such decoder.
         """
+        if backend == "remote":
+            if decode is None or tokenizer_path is None:
+                raise ValueError("backend='remote' needs decode= and tokenizer_path")
+            self.backend = backend
+            self._decode = decode
+            self.dtype = dtype
+            self.device = None
+            self.model = None
+            self.max_seq_len = inference_seq_len
+            self._init_tokenizer(tokenizer_path, None, checkpoint_path)
+            return
+        import torch
+        from .model import ModelConfig, MusicTransformer
         if backend == "auto":
             try:
                 import mlx.core  # noqa: F401
@@ -209,7 +229,9 @@ class Generator:
         # Hard ceiling on prompt + generated tokens (the torch RoPE table has
         # exactly this many rows; decoding past it crashes attention).
         self.max_seq_len = cfg.max_seq_len
+        self._init_tokenizer(tokenizer_path, cfg.vocab_size, checkpoint_path)
 
+    def _init_tokenizer(self, tokenizer_path, vocab_size: int | None, checkpoint_path) -> None:
         self.tokenizer = (
             load_tokenizer(tokenizer_path) if tokenizer_path else build_tokenizer()
         )
@@ -217,11 +239,11 @@ class Generator:
         # token rather than failing, so the output is plausible-looking
         # nonsense. Checking the one number that must agree turns that into
         # an error naming both sides.
-        if len(self.tokenizer.vocab) != cfg.vocab_size:
+        if vocab_size is not None and len(self.tokenizer.vocab) != vocab_size:
             raise ValueError(
                 f"tokenizer/checkpoint mismatch: tokenizer has "
                 f"{len(self.tokenizer.vocab)} tokens, checkpoint was trained "
-                f"with {cfg.vocab_size}. They are from different runs "
+                f"with {vocab_size}. They are from different runs "
                 f"(checkpoint={checkpoint_path}, tokenizer={tokenizer_path})."
             )
         self.bos_id = self._special_id("BOS_None", "BOS")
@@ -435,7 +457,8 @@ class Generator:
         if self._needs_bos(prompt_ids):
             prompt_ids = [self.bos_id, *prompt_ids]
         raw = self._generate_raw(prompt_ids, max_new_tokens, temperature, top_k,
-                                 min_new_tokens, seed, ban_ids)
+                                 min_new_tokens, seed, ban_ids,
+                                 stop_after_bars=stop_after_bars, trim_leading_bars=trim_leading_bars)
         yield from self.postprocess(
             prompt_ids, raw,
             stop_after_bars=stop_after_bars,
@@ -503,8 +526,44 @@ class Generator:
                     return
             yield t
 
+    def remote_spec(self, prompt_ids, max_new_tokens, temperature, top_k, min_new_tokens, seed,
+                    ban_ids=None, stop_after_bars=None, trim_leading_bars=True) -> dict:
+        """One generation for a `remote` decoder, as plain JSON. The decoder samples exactly as
+        `MusicTransformer.generate` does: logits / temperature, `ban_ids` masked, `eos_id` masked for the first
+        `min_new_tokens` steps, top-k, then a draw; it stops after yielding `eos_id`, at `max_new_tokens`, or
+        once `prompt` + output would pass `max_seq_len`. It MAY also stop early wherever `postprocess` would
+        stop reading anyway, which saves most of the budget on bar-limited tasks: at the first of `stop_ids`, or
+        once it has emitted more than `stop_after_bars` Bar tokens counting from the first token that is not a
+        Bar or TimeSig (all Bars count when `trim_leading_bars` is false). `postprocess` gets fewer bars than
+        that count can, so stopping there never cuts what it keeps. `seed`: the decoder's own RNG (it does not
+        reproduce torch's draws)."""
+        return {
+            "prompt": [int(t) for t in prompt_ids],
+            "vocab_size": len(self.tokenizer.vocab),          # the decoder can check its model matches
+            "max_new_tokens": int(max_new_tokens),
+            "max_seq_len": int(self.max_seq_len),
+            "temperature": float(temperature),
+            "top_k": int(top_k) if top_k is not None else None,
+            "min_new_tokens": int(min_new_tokens),
+            "eos_id": self.eos_id,
+            "ban_ids": sorted(int(t) for t in (ban_ids or [])),
+            "stop_ids": sorted(int(t) for t in self.stop_ids),
+            "bar_id": self.bar_id,
+            "timesig_ids": sorted(int(t) for t in self.timesig_ids),
+            # postprocess only counts bars on the v4 line
+            "stop_after_bars": int(stop_after_bars) if stop_after_bars and self.v4 else None,
+            "trim_leading_bars": bool(trim_leading_bars),
+            "seed": None if seed is None else int(seed),
+        }
+
     def _generate_raw(self, prompt_ids, max_new_tokens, temperature, top_k,
-                      min_new_tokens, seed, ban_ids=None) -> Iterator[int]:
+                      min_new_tokens, seed, ban_ids=None, stop_after_bars=None,
+                      trim_leading_bars=True) -> Iterator[int]:
+        if self.backend == "remote":
+            spec = self.remote_spec(prompt_ids, max_new_tokens, temperature, top_k, min_new_tokens, seed,
+                                    ban_ids, stop_after_bars, trim_leading_bars)
+            yield from (int(t) for t in self._decode(spec))
+            return
         if self.backend == "mlx":
             import mlx.core as mx
             if seed is not None:
@@ -519,6 +578,7 @@ class Generator:
                 ban_ids=ban_ids or None,
             )
             return
+        import torch
         if seed is not None:
             torch.manual_seed(seed)
         prompt = torch.tensor([prompt_ids], dtype=torch.long, device=self.device)

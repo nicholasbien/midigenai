@@ -112,7 +112,7 @@ def test_infill_bans_early_stops(gen, monkeypatch):
     """The gap is exactly `bars` bars: EOS/BOS may not end it early."""
     seen = {}
 
-    def fake(prompt_ids, max_new_tokens, temperature, top_k, min_new_tokens, seed, ban_ids=None):
+    def fake(prompt_ids, max_new_tokens, temperature, top_k, min_new_tokens, seed, ban_ids=None, **_):
         seen["ban"], seen["max"] = set(ban_ids), max_new_tokens
         return iter([])
     monkeypatch.setattr(gen, "_generate_raw", fake)

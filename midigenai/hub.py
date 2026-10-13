@@ -83,6 +83,22 @@ def load_from_hub(
     return Generator(checkpoint_path=ckpt, tokenizer_path=tok, **generator_kwargs)
 
 
+def remote_from_hub(
+    decode,
+    version: Optional[str] = None,
+    repo_id: Optional[str] = None,
+    revision: Optional[str] = None,
+    **generator_kwargs,
+):
+    """A `Generator` whose model runs elsewhere (`backend="remote"`): only the
+    version's tokenizer is downloaded, and `decode(spec)` samples each
+    generation (see `Generator.remote_spec`). Needs no torch."""
+    from huggingface_hub import hf_hub_download
+    from .generate import Generator
+    tok = hf_hub_download(repo_id or DEFAULT_REPO, TOKENIZER_FILENAME, subfolder=folder(version), revision=revision)
+    return Generator(checkpoint_path=None, tokenizer_path=tok, backend="remote", decode=decode, **generator_kwargs)
+
+
 def download_files(
     version: Optional[str] = None,
     repo_id: Optional[str] = None,

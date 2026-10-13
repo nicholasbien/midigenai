@@ -31,6 +31,7 @@ dependencies = [
 eval = ["muspy"]
 grading = ["flask"]
 mlx = ["mlx>=0.30; sys_platform == 'darwin'"]
+onnx = ["onnx", "onnxruntime", "onnxscript"]   # python -m midigenai.export_onnx
 serve = ["flask", "flask-cors", "modal"]
 
 [project.urls]
@@ -39,3 +40,6 @@ Model = "https://huggingface.co/nicholasbien/midigenai"
 
 [tool.setuptools]
 packages = ["midigenai", "midigenai.data"]
+
+[tool.setuptools.package-data]
+midigenai = ["web/*.mjs"]   # the browser runner (README "In the browser")

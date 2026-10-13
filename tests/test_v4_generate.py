@@ -186,7 +186,7 @@ def test_accompany_keeps_a_leading_rest_and_sizes_its_budget(gen, monkeypatch):
     from midigenai.generate import ACCOMP_TOKENS_PER_BAR, accompaniment_budget
     bar, ts = gen.bar_id, gen.tokenizer.vocab["TimeSig_4/4"]
     pos = next(v for k, v in gen.tokenizer.vocab.items() if k.startswith("Position_"))
-    def fake(prompt_ids, max_new_tokens, temperature, top_k, min_new_tokens, seed, ban_ids=None):
+    def fake(prompt_ids, max_new_tokens, temperature, top_k, min_new_tokens, seed, ban_ids=None, **_):
         return iter([bar, ts, bar, ts, pos, pos, bar])
     monkeypatch.setattr(gen, "_generate_raw", fake)
     out = list(gen.accompany([bar, ts] * 4, 4))
