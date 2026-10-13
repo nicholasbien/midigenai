@@ -556,6 +556,46 @@ class Generator:
             "seed": None if seed is None else int(seed),
         }
 
+    def decode_spec(self, spec: dict) -> list[int]:
+        """Sample one `remote_spec` with this Generator's own model: the other side of `backend="remote"`, for a
+        server that samples specs built elsewhere (a web page's prompt, web/midigen-prompt.mjs). It follows the
+        contract `remote_spec` states, as web/midigen-web.mjs does in a browser: the spec's ban list, EOS held back
+        for `min_new_tokens`, top-k, `seed` on this backend's RNG, and an early stop at the first stop token or one
+        Bar past `stop_after_bars`. Returns the raw ids; the caller postprocesses them (`generate_ids` does)."""
+        if self.backend == "remote":
+            raise ValueError("decode_spec samples with a model; this Generator's runs elsewhere")
+        vocab = len(self.tokenizer.vocab)
+        if int(spec.get("vocab_size") or vocab) != vocab:
+            raise ValueError(f"the spec is for a {spec.get('vocab_size')}-token vocabulary; this model has {vocab}")
+        prompt = [int(t) for t in spec["prompt"]]
+        if not prompt or not all(0 <= t < vocab for t in prompt):
+            raise ValueError("the prompt must be token ids of this model")
+        if int(spec.get("eos_id", self.eos_id)) != self.eos_id:
+            raise ValueError("the spec's eos_id is not this model's")
+        max_seq = min(int(spec.get("max_seq_len") or self.max_seq_len), self.max_seq_len)
+        max_new = max(0, min(int(spec["max_new_tokens"]), max_seq - len(prompt)))
+        stops = {int(t) for t in spec.get("stop_ids") or []} | {self.eos_id}
+        timesigs = {int(t) for t in spec.get("timesig_ids") or []}
+        bar, limit = spec.get("bar_id"), spec.get("stop_after_bars") or 0
+        started, bars = not spec.get("trim_leading_bars", True), 0
+        out: list[int] = []
+        for t in self._generate_raw(prompt, max_new, float(spec.get("temperature", 1.0)), spec.get("top_k"),
+                                    int(spec.get("min_new_tokens") or 0), spec.get("seed"),
+                                    ban_ids=[int(t) for t in spec.get("ban_ids") or []]):
+            out.append(t)
+            if t in stops:
+                break
+            if limit:
+                if not started:
+                    if t == bar or t in timesigs:
+                        continue
+                    started = True
+                if t == bar:
+                    bars += 1
+                    if bars > limit:
+                        break
+        return out
+
     def _generate_raw(self, prompt_ids, max_new_tokens, temperature, top_k,
                       min_new_tokens, seed, ban_ids=None, stop_after_bars=None,
                       trim_leading_bars=True) -> Iterator[int]:
