@@ -34,7 +34,7 @@ from werkzeug.utils import secure_filename
 from midigenai.attributes import is_auto_instrument, resolve_family
 # The version allowlist lives with the Modal app so the two can't drift.
 from midigenai.modal_serve import (
-    ACCOMPANIMENT_VERSIONS, INFILL_VERSIONS, SERVED_VERSIONS, resolve_version,
+    ACCOMPANIMENT_VERSIONS, INFILL_VERSIONS, SERVED_VERSIONS, VERSION_ALIASES, resolve_version,
 )
 
 env = os.environ.get("ENV", "dev")
@@ -230,7 +230,7 @@ def _model_version() -> str:
     volume subfolder, not raw user input.
     """
     asked = (request.args.get("model") or request.form.get("model") or "").strip()
-    if asked and asked not in SERVED_VERSIONS:
+    if asked and asked not in SERVED_VERSIONS and asked not in VERSION_ALIASES:
         raise BadParam(f"unknown model {asked!r}; this server has "
                        f"{', '.join(sorted(SERVED_VERSIONS))}")
     return resolve_version(asked)

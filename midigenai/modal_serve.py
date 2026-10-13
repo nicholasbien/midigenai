@@ -50,7 +50,7 @@ MODELS_ROOT = "/models"
 CKPT_FILENAME = "ckpt_final.pt"
 TOKENIZER_FILENAME = "tokenizer.json"
 
-DEFAULT_VERSION = "v5-rl"
+DEFAULT_VERSION = "v5"
 
 # Every request and what it returned, one folder per call (log_generation).
 GENERATIONS_VOLUME_NAME = "midigenai-generations"
@@ -61,13 +61,20 @@ GENERATIONS_ROOT = "/generations"
 # Anything not listed here is rejected rather than passed through, so a
 # stray query param can't make the server look for an arbitrary path.
 SERVED_VERSIONS = {
-    "v5-rl": "v5-rl",   # v5 after GRPO; the default
-    "v5": "v5",         # v5 base
+    "v5": "v5",            # v5 after GRPO (named v5-rl until 2026-10); the default
+    "v5-base": "v5-base",  # v5 before GRPO (named v5 until 2026-10)
     "v4": "v4",
     "v4-large": "v4-large",
     "v3": "v3",
     "v2": "v2-100m",
 }
+
+# Earlier names that still reach their model, so an old link, cached page or
+# client keeps working. They are accepted but not listed on `/`. The Hub and
+# the volume also keep a v5-rl/ copy of v5/ for callers that ask for that
+# folder directly (midigenai releases before 2026-10, whose default it was,
+# and `Cls.from_name(...)(version="v5-rl")`); scripts/rename_v5.py made it.
+VERSION_ALIASES = {"v5-rl": "v5"}
 
 # Volume subfolders that can answer /api/accompany: accompaniment is a v4
 # document type (Task_accomp + SEP), and v2/v3 were never trained on it.
@@ -75,7 +82,7 @@ SERVED_VERSIONS = {
 # hands back -- for the v4 line the key and the folder are the same string.
 # Kept next to the allowlist so the server and the site's mode lock can't
 # drift apart; the health endpoint publishes it.
-ACCOMPANIMENT_VERSIONS = ("v5-rl", "v5", "v4", "v4-large")
+ACCOMPANIMENT_VERSIONS = ("v5", "v5-base", "v4", "v4-large")
 # Span infill is the other v4 document type (Task_infill + MASK + SEP), so the
 # same checkpoints answer /api/infill.
 INFILL_VERSIONS = ACCOMPANIMENT_VERSIONS
@@ -102,7 +109,8 @@ def first_nonempty(draw, retries: int = ACCOMPANY_EMPTY_RETRIES):
 
 def resolve_version(name: str | None) -> str:
     """Map a `model=` value to a volume subfolder, falling back to the default."""
-    return SERVED_VERSIONS.get((name or "").strip(), SERVED_VERSIONS[DEFAULT_VERSION])
+    name = (name or "").strip()
+    return SERVED_VERSIONS.get(VERSION_ALIASES.get(name, name), SERVED_VERSIONS[DEFAULT_VERSION])
 
 
 def accompaniment_header(window, cond_index, instrument: str | None = None):
@@ -246,7 +254,7 @@ def sync_from_hub(version: str = DEFAULT_VERSION, repo_id: str = "nicholasbien/m
     import shutil
     from huggingface_hub import hf_hub_download
 
-    subfolder = SERVED_VERSIONS.get(version, version)
+    subfolder = SERVED_VERSIONS.get(VERSION_ALIASES.get(version, version), version)
     dest = os.path.join(MODELS_ROOT, subfolder)
     os.makedirs(dest, exist_ok=True)
     for filename in (CKPT_FILENAME, TOKENIZER_FILENAME):

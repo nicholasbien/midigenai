@@ -60,3 +60,26 @@ def test_empty_accompaniment_takes_are_resampled():
     assert first_nonempty(lambda: next(empties), retries=2) == ("c", 0, 3)
     first = iter([("ok", 3)])
     assert first_nonempty(lambda: next(first)) == ("ok", 3, 1)
+
+
+def test_v5_names():
+    """Since 2026-10 v5 is the GRPO model and v5-base the model before it, each
+    in the folder of its name; the old name v5-rl still reaches the GRPO model
+    but isn't listed."""
+    from midigenai.hub import ALIASES, folder
+    from midigenai.modal_serve import VERSION_ALIASES
+    assert DEFAULT_VERSION == "v5"
+    assert resolve_version("v5") == resolve_version("v5-rl") == resolve_version(None) == "v5"
+    assert resolve_version("v5-base") == "v5-base"
+    assert ALIASES == VERSION_ALIASES and not set(VERSION_ALIASES) & set(SERVED_VERSIONS)
+    for name in ("v5", "v5-base", "v5-rl", "v4", "v4-large", "v3"):
+        assert folder(name) == resolve_version(name)          # the Hub and the server agree
+
+
+def test_hub_versions_leave_out_old_names(monkeypatch):
+    import huggingface_hub
+    from midigenai.hub import list_hub_versions
+    files = ["README.md", "v5/ckpt_final.pt", "v5-base/ckpt_final.pt", "v5-rl/ckpt_final.pt",
+             "v5-rl/tokenizer.json", "v4/ckpt_final.pt", "v5/onnx/manifest.json"]
+    monkeypatch.setattr(huggingface_hub.HfApi, "list_repo_files", lambda self, repo, revision=None: files)
+    assert list_hub_versions() == ["v4", "v5", "v5-base"]

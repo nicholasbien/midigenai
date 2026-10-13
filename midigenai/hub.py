@@ -9,10 +9,10 @@ The repo is laid out as one subfolder per trained model:
 
     nicholasbien/midigenai
     ├── README.md
-    ├── v4/                   # current default
+    ├── v5/                   # current default
     │   ├── ckpt_final.pt
     │   └── tokenizer.json
-    └── v3/                   # earlier versions stay available
+    └── v4/                   # earlier versions stay available
         ├── ckpt_final.pt
         └── tokenizer.json
 
@@ -26,11 +26,16 @@ from midigenai import load_from_hub, list_hub_versions
 gen = load_from_hub()
 
 # explicit version
-gen = load_from_hub(version="v3")        # pin an older checkpoint; default is v5-rl
+gen = load_from_hub(version="v3")        # pin an older checkpoint; default is v5
 
 # discover what's available on the hub
-print(list_hub_versions())   # ["v4", "v3", ...]
+print(list_hub_versions())   # ["v5", "v5-base", "v4", ...]
 ```
+
+Until 2026-10 the GRPO-tuned v5 was called `v5-rl` and the model before it
+`v5`; now they are `v5` and `v5-base`, in folders of those names. `v5-rl`
+still loads `v5` (`ALIASES`), and the repo keeps a `v5-rl/` copy for
+releases of this package from before the rename, whose default it was.
 
 To change the default for a whole shell session without code edits:
 
@@ -46,7 +51,17 @@ from pathlib import Path
 from typing import Optional
 
 DEFAULT_REPO = os.environ.get("MIDIGENAI_REPO_ID", "nicholasbien/midigenai")
-DEFAULT_VERSION = os.environ.get("MIDIGENAI_VERSION", "v5-rl")
+DEFAULT_VERSION = os.environ.get("MIDIGENAI_VERSION", "v5")
+
+# Earlier names that still load their model (see the module docstring).
+ALIASES = {"v5-rl": "v5"}
+
+
+def folder(version: Optional[str] = None) -> str:
+    """The Hub subfolder that holds `version` (default: `DEFAULT_VERSION`)."""
+    v = (version or DEFAULT_VERSION).strip()
+    return ALIASES.get(v, v)
+
 
 CKPT_FILENAME = "ckpt_final.pt"
 TOKENIZER_FILENAME = "tokenizer.json"
@@ -75,16 +90,16 @@ def download_files(
 ) -> tuple[Path, Path]:
     """Download just the files; return (ckpt_path, tokenizer_path)."""
     from huggingface_hub import hf_hub_download
-    version = version or DEFAULT_VERSION
+    sub = folder(version)
     repo_id = repo_id or DEFAULT_REPO
-    ckpt = hf_hub_download(repo_id, CKPT_FILENAME, subfolder=version, revision=revision)
-    tok = hf_hub_download(repo_id, TOKENIZER_FILENAME, subfolder=version, revision=revision)
+    ckpt = hf_hub_download(repo_id, CKPT_FILENAME, subfolder=sub, revision=revision)
+    tok = hf_hub_download(repo_id, TOKENIZER_FILENAME, subfolder=sub, revision=revision)
     return Path(ckpt), Path(tok)
 
 
 def list_hub_versions(repo_id: Optional[str] = None, revision: Optional[str] = None) -> list[str]:
     """List the available model versions (subfolders containing a checkpoint)
-    on the given HF repo."""
+    on the given HF repo; copies kept under an old name (`ALIASES`) are left out."""
     from huggingface_hub import HfApi
     repo_id = repo_id or DEFAULT_REPO
     api = HfApi()
@@ -92,6 +107,6 @@ def list_hub_versions(repo_id: Optional[str] = None, revision: Optional[str] = N
     versions = sorted({
         f.split("/", 1)[0]
         for f in files
-        if "/" in f and f.split("/", 1)[1] == CKPT_FILENAME
+        if "/" in f and f.split("/", 1)[1] == CKPT_FILENAME and f.split("/", 1)[0] not in ALIASES
     })
     return versions
