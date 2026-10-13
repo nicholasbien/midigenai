@@ -58,7 +58,7 @@ the model was trained on.
 | Version | Params | Notes |
 |---|---|---|
 | **`v5`** (default) | 113M | v5 after GRPO (called `v5-rl` until 2026-10; that name still works). Preferred over the base in blind A/B: 13–1 continuation, 9–1 accompaniment |
-| `v5-base` | 113M | v5 before GRPO: rebuilt corpus, audio transcriptions, drum-label fix |
+| `v5-base` | 113M | v5 before GRPO (called `v5` until 2026-10): rebuilt corpus, audio transcriptions, drum-label fix |
 | `v4` | 113M | previous default |
 | `v4-large` | 202M | v4 at 202M; near-even with v4 in blind labels |
 

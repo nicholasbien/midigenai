@@ -61,8 +61,8 @@ GENERATIONS_ROOT = "/generations"
 # Anything not listed here is rejected rather than passed through, so a
 # stray query param can't make the server look for an arbitrary path.
 SERVED_VERSIONS = {
-    "v5": "v5-rl",      # v5 after GRPO (named v5-rl until 2026-10); the default
-    "v5-base": "v5",    # v5 before GRPO
+    "v5": "v5",            # v5 after GRPO (named v5-rl until 2026-10); the default
+    "v5-base": "v5-base",  # v5 before GRPO (named v5 until 2026-10)
     "v4": "v4",
     "v4-large": "v4-large",
     "v3": "v3",
@@ -70,7 +70,10 @@ SERVED_VERSIONS = {
 }
 
 # Earlier names that still reach their model, so an old link, cached page or
-# client keeps working. They are accepted but not listed on `/`.
+# client keeps working. They are accepted but not listed on `/`. The Hub and
+# the volume also keep a v5-rl/ copy of v5/ for callers that ask for that
+# folder directly (midigenai releases before 2026-10, whose default it was,
+# and `Cls.from_name(...)(version="v5-rl")`); scripts/rename_v5.py made it.
 VERSION_ALIASES = {"v5-rl": "v5"}
 
 # Volume subfolders that can answer /api/accompany: accompaniment is a v4
@@ -79,7 +82,7 @@ VERSION_ALIASES = {"v5-rl": "v5"}
 # hands back -- for the v4 line the key and the folder are the same string.
 # Kept next to the allowlist so the server and the site's mode lock can't
 # drift apart; the health endpoint publishes it.
-ACCOMPANIMENT_VERSIONS = ("v5-rl", "v5", "v4", "v4-large")
+ACCOMPANIMENT_VERSIONS = ("v5", "v5-base", "v4", "v4-large")
 # Span infill is the other v4 document type (Task_infill + MASK + SEP), so the
 # same checkpoints answer /api/infill.
 INFILL_VERSIONS = ACCOMPANIMENT_VERSIONS

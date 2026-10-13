@@ -9,10 +9,10 @@ The repo is laid out as one subfolder per trained model:
 
     nicholasbien/midigenai
     ├── README.md
-    ├── v4/                   # current default
+    ├── v5/                   # current default
     │   ├── ckpt_final.pt
     │   └── tokenizer.json
-    └── v3/                   # earlier versions stay available
+    └── v4/                   # earlier versions stay available
         ├── ckpt_final.pt
         └── tokenizer.json
 
@@ -32,10 +32,10 @@ gen = load_from_hub(version="v3")        # pin an older checkpoint; default is v
 print(list_hub_versions())   # ["v5", "v5-base", "v4", ...]
 ```
 
-A version's name is its folder, except where `FOLDERS` says otherwise: `v5`
-(the default) is the GRPO-tuned model in `v5-rl/`, its name until 2026-10, and
-`v5-base` is the model before GRPO in `v5/`. `v5-rl` still loads the same
-model as `v5`.
+Until 2026-10 the GRPO-tuned v5 was called `v5-rl` and the model before it
+`v5`; now they are `v5` and `v5-base`, in folders of those names. `v5-rl`
+still loads `v5` (`ALIASES`), and the repo keeps a `v5-rl/` copy for
+releases of this package from before the rename, whose default it was.
 
 To change the default for a whole shell session without code edits:
 
@@ -53,19 +53,15 @@ from typing import Optional
 DEFAULT_REPO = os.environ.get("MIDIGENAI_REPO_ID", "nicholasbien/midigenai")
 DEFAULT_VERSION = os.environ.get("MIDIGENAI_VERSION", "v5")
 
-# Names whose Hub subfolder is not the name itself (see the module docstring).
-FOLDERS = {"v5": "v5-rl", "v5-base": "v5"}
+# Earlier names that still load their model (see the module docstring).
+ALIASES = {"v5-rl": "v5"}
 
 
 def folder(version: Optional[str] = None) -> str:
     """The Hub subfolder that holds `version` (default: `DEFAULT_VERSION`)."""
     v = (version or DEFAULT_VERSION).strip()
-    return FOLDERS.get(v, v)
+    return ALIASES.get(v, v)
 
-
-def name_of(subfolder: str) -> str:
-    """The version name for a Hub subfolder (`folder`'s inverse)."""
-    return next((n for n, f in FOLDERS.items() if f == subfolder), subfolder)
 
 CKPT_FILENAME = "ckpt_final.pt"
 TOKENIZER_FILENAME = "tokenizer.json"
@@ -102,15 +98,15 @@ def download_files(
 
 
 def list_hub_versions(repo_id: Optional[str] = None, revision: Optional[str] = None) -> list[str]:
-    """List the available model versions (subfolders containing a checkpoint,
-    by name: `v5-rl/` is listed as v5) on the given HF repo."""
+    """List the available model versions (subfolders containing a checkpoint)
+    on the given HF repo; copies kept under an old name (`ALIASES`) are left out."""
     from huggingface_hub import HfApi
     repo_id = repo_id or DEFAULT_REPO
     api = HfApi()
     files = api.list_repo_files(repo_id, revision=revision)
     versions = sorted({
-        name_of(f.split("/", 1)[0])
+        f.split("/", 1)[0]
         for f in files
-        if "/" in f and f.split("/", 1)[1] == CKPT_FILENAME
+        if "/" in f and f.split("/", 1)[1] == CKPT_FILENAME and f.split("/", 1)[0] not in ALIASES
     })
     return versions

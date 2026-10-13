@@ -123,4 +123,10 @@ def test_an_upload_that_is_not_midi_is_a_400(client, route, data):
 def test_empty_model_means_the_default(client):
     c, _ = client
     r = _upload(c, "/api/upload_midi_v2", "model=")
-    assert r.status_code == 200 and r.json["model"] == "v5-rl"
+    assert r.status_code == 200 and r.json["model"] == "v5"
+
+
+def test_the_old_name_reaches_the_same_model(client):
+    c, _ = client
+    r = _upload(c, "/api/upload_midi_v2", "model=v5-rl")
+    assert r.status_code == 200 and r.json["model"] == "v5"
