@@ -86,6 +86,20 @@ makes them; `pip install "midigenai[onnx]"`). Each is downloaded once and kept i
 plus onnxruntime-web's own 27 MB `.wasm`. Both agree with the fp32 model on 99% of next tokens. A seed repeats
 a result in the browser but not torch's (each has its own random numbers). JS tests: `node --test tests/web/*.test.mjs`.
 
+The prompts can be built in the page too, with no Python at all:
+[`midigenai/web/midigen-prompt.mjs`](midigenai/web/midigen-prompt.mjs) is the `remote` Generator's side in
+JavaScript (the REMI tokenizer from a version's `tokenizer.json`, the v4 prompt layouts, the attribute header,
+`postprocess`, span infill), and gives the ids Python gives (`tests/test_web_prompt.py` checks it against MidiTok
+and symusic on random scores). Its decoder can be the page's model or a GPU: the deployed `MidiGen.decode(spec)`
+samples a spec with the full model (`Generator.decode_spec`), so one prompt runs either place.
+
+```js
+import { loadGenerator, headerForScore } from "./midigen-prompt.mjs";
+const g = await loadGenerator({ version: "v5", decode: (spec) => model.decode(spec) });   // or a server's decode
+const ids = await g.continueIds(g.tokenizer.encode(score), { header: g.headerIdsFor(headerForScore(score, { tempo: 120 })), bars: 4 });
+const answer = g.tokenizer.decode(ids);                 // a Score (plain data, symusic's fields)
+```
+
 ## Checkpoints
 
 | Version | Params | Notes |

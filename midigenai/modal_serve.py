@@ -6,6 +6,7 @@ Deploys as app `midigenai-serve`, class `MidiGen`:
 - accompany_batch(): parts to play with the upload
 - infill_batch():  regenerate a span of bars inside the upload
 - stream_notes():   yields JSON-line note dicts as the model emits events
+- decode():         samples a prompt the caller built (Generator.remote_spec), for web pages
 
 Checkpoints live in the `midigenai-models` Modal Volume, one subfolder per
 version, mirroring the Hugging Face repo layout:
@@ -668,6 +669,31 @@ class MidiGen:
             "midi": midis[0],
             "midis": midis,
         }
+
+    @modal.method()
+    def decode(self, spec: dict, client: str | None = None) -> dict:
+        """One generation whose prompt the caller built (`Generator.remote_spec`; a web page builds it with
+        web/midigen-prompt.mjs, as the site's gen does): {"ids": the sampled ids}, raw, which the caller
+        postprocesses as `generate_ids` does. The same contract web/midigen-web.mjs samples in a browser, so a
+        page can sample either place with one prompt (Generator.decode_spec). Logged like the others: the
+        prompt as prompt.mid, the spec and the ids in request.json."""
+        params = dict(spec)
+        prompt_midi = self._ids_to_midi(spec.get("prompt") or [])
+        try:
+            ids = self.gen.decode_spec(spec)
+        except Exception as e:
+            self._log("decode", params, prompt_midi, client=client, error=f"{type(e).__name__}: {e}")
+            raise
+        self._log("decode", params, prompt_midi, result={"ids": ids, "generated_tokens": len(ids)}, client=client)
+        return {"ids": ids}
+
+    def _ids_to_midi(self, ids) -> bytes:
+        """Best effort, for the log: a prompt's ids as MIDI (b"" when they don't decode)."""
+        try:
+            vocab = len(self.gen.tokenizer.vocab)
+            return self._to_midi_bytes([int(t) for t in ids if 0 <= int(t) < vocab], None)
+        except Exception:  # noqa: BLE001
+            return b""
 
     @modal.method()
     def infill_batch(
