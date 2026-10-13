@@ -198,3 +198,25 @@ def test_accompany_keeps_a_leading_rest_and_sizes_its_budget(gen, monkeypatch):
     assert asked["trim_leading_bars"] is False
     # a dense condition raises it above the floor
     assert accompaniment_budget(4000, 4) == 2 * 1000 * 4 + 64
+
+
+def test_decode_spec_samples_what_generate_ids_would(gen):
+    """A remote Generator whose decoder is another Generator's decode_spec (a server sampling a page's prompt)
+    returns what that Generator's own generate_ids does with the same seed: the early stop only saves work."""
+    d = Path(tempfile.mkdtemp())
+    save_tokenizer(build_tokenizer(scheme="v4"), d / "tokenizer.json")
+    remote = Generator(checkpoint_path=None, tokenizer_path=d / "tokenizer.json", backend="remote",
+                       decode=gen.decode_spec, inference_seq_len=512)
+    prompt = [gen.bos_id, *gen.tokenizer(_phrase()).ids]
+    for seed, kw in [(1, {}), (2, {"stop_after_bars": 1}), (3, {"stop_after_bars": 2, "trim_leading_bars": False}),
+                     (4, {"min_new_tokens": 30, "ban_ids": [gen.eos_id, gen.bar_id]})]:
+        want = list(gen.generate_ids(prompt, max_new_tokens=60, temperature=1.3, top_k=40, seed=seed, **kw))
+        got = list(remote.generate_ids(prompt, max_new_tokens=60, temperature=1.3, top_k=40, seed=seed, **kw))
+        assert got == want, (seed, kw)
+    spec = remote.remote_spec(prompt, 60, 1.0, 50, 0, 5, [gen.bar_id], None, True)
+    ids = gen.decode_spec(spec)
+    assert gen.bar_id not in ids and ids == gen.decode_spec(spec)          # bans held, the seed repeats
+    with pytest.raises(ValueError, match="vocabulary"):
+        gen.decode_spec({**spec, "vocab_size": spec["vocab_size"] + 1})
+    with pytest.raises(ValueError, match="token ids"):
+        gen.decode_spec({**spec, "prompt": [10 ** 6]})
