@@ -1,7 +1,7 @@
 """Export a checkpoint to ONNX for the browser runner (web/midigen-web.mjs).
 
-    python -m midigenai.export_onnx --version v5-rl --out dist/v5-rl/onnx
-    python -m midigenai.export_onnx --version v5-rl --out dist/v5-rl/onnx --upload    # then to the HF repo, needs HF_TOKEN
+    python -m midigenai.export_onnx --version v5 --out dist/v5/onnx
+    python -m midigenai.export_onnx --version v5 --out dist/v5/onnx --upload    # then to the HF repo, needs HF_TOKEN
 
 Two graphs of one decoder step with a KV cache, one per browser engine, because what is fast differs:
 
@@ -194,8 +194,8 @@ def main(argv=None) -> None:
     ap.add_argument("--repo", default=None, help="HF repo for --upload (default: the package's)")
     a = ap.parse_args(argv)
 
-    from .hub import DEFAULT_REPO, DEFAULT_VERSION, download_files
-    version = a.version or DEFAULT_VERSION
+    from .hub import DEFAULT_REPO, download_files, folder
+    version = folder(a.version)
     if a.checkpoint:
         ckpt, tok = Path(a.checkpoint), Path(a.tokenizer) if a.tokenizer else None
     else:

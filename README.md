@@ -75,7 +75,7 @@ const model = await loadModel({ ort, engine: (await detect()).recommended, onPro
 const ids = await model.decode(spec);
 ```
 
-The model files are on the Hub under `VERSION/onnx/` (`python -m midigenai.export_onnx --version v5-rl --out DIR`
+The model files are on the Hub under `VERSION/onnx/` (`python -m midigenai.export_onnx --version v5 --out DIR`
 makes them; `pip install "midigenai[onnx]"`). Each is downloaded once and kept in the browser's cache:
 
 | Engine | Weights | Download | 500-token prompt + 256 new |

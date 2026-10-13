@@ -21,7 +21,8 @@
 // min_new_tokens steps) EOS masked, top-k, a draw. A seed repeats a result on this module's RNG, not torch's.
 
 export const HUB = "https://huggingface.co/nicholasbien/midigenai/resolve/main";
-export const DEFAULT_VERSION = "v5-rl";
+export const DEFAULT_VERSION = "v5";
+export const ALIASES = { "v5-rl": "v5" };          // earlier names (midigenai.hub.ALIASES)
 export const CACHE_NAME = "midigenai-onnx";
 export const ENGINES = {
   gpu: { label: "GPU (WebGPU, 4-bit)", quant: "q4" },
@@ -29,7 +30,7 @@ export const ENGINES = {
 };
 
 export function modelBase(version = DEFAULT_VERSION, hub = HUB) {
-  return `${hub.replace(/\/+$/, "")}/${version}/onnx/`;
+  return `${hub.replace(/\/+$/, "")}/${ALIASES[version] || version}/onnx/`;
 }
 
 export async function fetchManifest(base = modelBase(), fetchImpl = (...a) => globalThis.fetch(...a)) {

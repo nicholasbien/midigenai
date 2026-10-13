@@ -95,8 +95,7 @@ def remote_from_hub(
     generation (see `Generator.remote_spec`). Needs no torch."""
     from huggingface_hub import hf_hub_download
     from .generate import Generator
-    version = version or DEFAULT_VERSION
-    tok = hf_hub_download(repo_id or DEFAULT_REPO, TOKENIZER_FILENAME, subfolder=version, revision=revision)
+    tok = hf_hub_download(repo_id or DEFAULT_REPO, TOKENIZER_FILENAME, subfolder=folder(version), revision=revision)
     return Generator(checkpoint_path=None, tokenizer_path=tok, backend="remote", decode=decode, **generator_kwargs)
 
 

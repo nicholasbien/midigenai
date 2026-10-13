@@ -97,7 +97,8 @@ test("an aborted signal stops between steps", async () => {
 });
 
 test("model paths and sizes come from the manifest", () => {
-  assert.equal(modelBase("v5-rl", "https://example.org/r/"), "https://example.org/r/v5-rl/onnx/");
+  assert.equal(modelBase("v5-base", "https://example.org/r/"), "https://example.org/r/v5-base/onnx/");
+  assert.equal(modelBase("v5-rl", "https://example.org/r/"), "https://example.org/r/v5/onnx/");    // its old name
   assert.deepEqual(sizes({ files: { gpu: { bytes: 3 }, cpu: { bytes: 4 } } }), { gpu: 3, cpu: 4 });
 });
 
