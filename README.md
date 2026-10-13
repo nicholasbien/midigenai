@@ -83,7 +83,7 @@ Each takes the options and returns the fields of the matching `/api` route (`tra
 | `generator.mjs` | `Generator`: prompt layouts, context fit, bar padding, `postprocess` |
 | `tasks.mjs` | `modal_serve`'s continuation / accompaniment / infill, track choice, infill splice |
 | `midigen-web.mjs` | the model: download, WebGPU / WebAssembly sessions, sampling |
-| `midigen-prompt.mjs` | the same prompt side on plain score data, for a page that parses MIDI itself (below) |
+| `midigen-prompt.mjs` | a thin layer over the modules above for scores a page builds itself (below) |
 
 They give the same tokens and byte-identical MIDI files as the Python code on the presets and a set of odd files
 (`tests/web/make_fixtures.py` makes the golden files; `node --test tests/web/*.test.mjs` checks them). Training,
@@ -109,9 +109,10 @@ makes them; `pip install "midigenai[onnx]"`). Each is downloaded once and kept i
 plus onnxruntime-web's own 27 MB `.wasm`. Both agree with the fp32 model on 99% of next tokens. A seed repeats
 a result in the browser but not torch's (each has its own random numbers).
 
-Pages that already hold a parsed score (rather than MIDI bytes) can use
-[`midigenai/web/midigen-prompt.mjs`](midigenai/web/midigen-prompt.mjs) instead: the `remote` Generator's side on
-plain score data (symusic's field names), checked against MidiTok and symusic by `tests/test_web_prompt.py`. Either
+Pages that build their own scores (rather than parsing MIDI bytes) can use
+[`midigenai/web/midigen-prompt.mjs`](midigenai/web/midigen-prompt.mjs): the same tokenizer, header, Generator and
+infill plan, taking scores with symusic's Python field names (`is_drum`, `time_signatures`, tempos in `qpm`) and
+putting the version on each spec; `tests/test_web_prompt.py` checks it against MidiTok and symusic. Either
 layer's decoder can be the page's model or a GPU: the deployed `MidiGen.decode(spec)` samples a spec with the full
 model (`Generator.decode_spec`), so one prompt runs either place.
 
