@@ -56,23 +56,45 @@ the model was trained on.
 ### In the browser
 
 The model also runs in a web page, on [onnxruntime-web](https://onnxruntime.ai/docs/tutorials/web/): WebGPU
-where the browser has it, WebAssembly otherwise. Prompts stay in Python, which needs no torch for this:
-a `remote` Generator hands each generation to a decoder you supply and postprocesses what comes back.
+where the browser has it, WebAssembly otherwise. Everything the server does around the model is in JS too
+(`midigenai/web/`, shipped with the package), so a page needs no server at all:
+
+```js
+import * as ort from "./ort.webgpu.bundle.min.mjs";     // onnxruntime-web 1.30
+import { detect } from "./midigen-web.mjs";
+import { loadMidigen } from "./tasks.mjs";
+
+const mg = await loadMidigen({ ort, engine: (await detect()).recommended, onProgress });
+const cont = await mg.generate(midiBytes, { maxNewTokens: 512 });              // continuation
+const acc = await mg.accompany(midiBytes, { bars: 8, instrument: "bass" });    // parts to play along
+const inf = await mg.infill(midiBytes, { start: 2, bars: 2 });                 // redo bars 3-4
+play(acc.midis[0]);                                                             // MIDI file bytes
+mg.tracks(midiBytes);                                                           // what a track picker needs
+```
+
+Each takes the options and returns the fields of the matching `/api` route (`track`, `tempoBpm`, `nSamples`,
+`temperature`, `topK`, `seed`; `onToken` and an AbortSignal `signal` for progress and cancelling). The modules:
+
+| File | Ports |
+|---|---|
+| `midi.mjs` | symusic: reading and writing MIDI, resample, clip, bar lines |
+| `tokenizer.mjs` | MidiTok REMI for the v4/v5 `tokenizer.json` (encode and decode) |
+| `attributes.mjs` | the attribute header, instrument names, drum-track detection |
+| `generator.mjs` | `Generator`: prompt layouts, context fit, bar padding, `postprocess` |
+| `tasks.mjs` | `modal_serve`'s continuation / accompaniment / infill, track choice, infill splice |
+| `midigen-web.mjs` | the model: download, WebGPU / WebAssembly sessions, sampling |
+
+They give the same tokens and byte-identical MIDI files as the Python code on the presets and a set of odd files
+(`tests/web/make_fixtures.py` makes the golden files; `node --test tests/web/*.test.mjs` checks them). Training,
+evals, data and the Ableton tools stay in Python.
+
+Python can also drive the browser model: a `remote` Generator hands each generation to a decoder you supply.
 
 ```python
 from midigenai import remote_from_hub
 
 gen = remote_from_hub(decode=ask_the_page)   # decode(spec) -> sampled ids; spec is plain JSON
 ids = list(gen.generate_ids(gen.encode_midi_file("riff.mid"), max_new_tokens=512, stop_after_bars=4))
-```
-
-The page side is [`midigenai/web/midigen-web.mjs`](midigenai/web/midigen-web.mjs) (shipped with the package):
-
-```js
-import * as ort from "./ort.webgpu.bundle.min.mjs";     // onnxruntime-web 1.30
-import { detect, loadModel } from "./midigen-web.mjs";
-const model = await loadModel({ ort, engine: (await detect()).recommended, onProgress });
-const ids = await model.decode(spec);
 ```
 
 The model files are on the Hub under `VERSION/onnx/` (`python -m midigenai.export_onnx --version v5 --out DIR`
@@ -84,7 +106,7 @@ makes them; `pip install "midigenai[onnx]"`). Each is downloaded once and kept i
 | `cpu` (WebAssembly) | 8-bit | 115 MB | 7.3 s on that Mac, 6.0 s on an iPhone (one thread) |
 
 plus onnxruntime-web's own 27 MB `.wasm`. Both agree with the fp32 model on 99% of next tokens. A seed repeats
-a result in the browser but not torch's (each has its own random numbers). JS tests: `node --test tests/web/*.test.mjs`.
+a result in the browser but not torch's (each has its own random numbers).
 
 ## Checkpoints
 

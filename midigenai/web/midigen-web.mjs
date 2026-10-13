@@ -1,9 +1,10 @@
 // midigen-web: midigenai's decoder in a web page, on onnxruntime-web (WebGPU or WebAssembly).
 //
 // The model files come from `python -m midigenai.export_onnx` and live on the hub next to each checkpoint, in
-// VERSION/onnx/ with a manifest.json. Prompts are still built in Python: a `Generator(backend="remote")` hands
-// out one spec per generation (`Generator.remote_spec`: prompt ids and the sampling settings, as JSON), this
-// module samples the answer on the device, and the ids go back to Python, which decodes them as usual.
+// VERSION/onnx/ with a manifest.json. Each generation is one spec (`Generator.remote_spec`: prompt ids and the
+// sampling settings, as JSON), and this module samples the answer on the device. The specs come from
+// generator.mjs / tasks.mjs in the same page (loadMidigen there wraps all of it), or from a Python
+// `Generator(backend="remote")`, which decodes the ids it gets back as usual.
 //
 //   import * as ort from "./ort.webgpu.bundle.min.mjs";        // onnxruntime-web 1.30; the page serves its .wasm
 //   import { detect, loadModel } from "./midigen-web.mjs";
